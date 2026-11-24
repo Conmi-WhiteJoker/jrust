@@ -1,0 +1,7 @@
+[package]
+name = "jrust-verify"
+version = "0.1.0"
+edition = "2021"
+
+# 独立 workspace：避免被上层 crate 当成成员
+[workspace]

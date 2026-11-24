@@ -1,0 +1,8 @@
+[package]
+name = "jrust"
+version = "0.1.0"
+edition = "2021"
+description = "jrust：把 Java 风格源码转译成可读 Rust 的教学工具（MVP）"
+license = "MIT"
+
+[dependencies]

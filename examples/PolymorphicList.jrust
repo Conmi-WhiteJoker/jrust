@@ -1,0 +1,31 @@
+// 示例 3：多态集合
+// List<Animal> → Vec<Box<dyn Animal>>：trait 对象需要显式装箱。
+import java.util.List;
+import java.util.ArrayList;
+
+public interface Animal {
+    String speak();
+}
+
+public class Dog implements Animal {
+    public String speak() {
+        return "Woof";
+    }
+}
+
+public class Cat implements Animal {
+    public String speak() {
+        return "Meow";
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        List<Animal> animals = new ArrayList<>();
+        animals.add(new Dog());
+        animals.add(new Cat());
+        for (Animal a : animals) {
+            System.out.println(a.speak());
+        }
+    }
+}

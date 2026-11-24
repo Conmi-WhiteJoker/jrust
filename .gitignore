@@ -1,0 +1,6 @@
+# 构建产物
+/target/
+/verify/target/
+
+# verify.sh 每次从 examples 复制生成的 .rs
+/verify/src/bin/

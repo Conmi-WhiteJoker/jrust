@@ -1,0 +1,28 @@
+// 示例 2：类与接口（interface → trait，构造器 → new）
+public interface Shape {
+    double area();
+    String name();
+}
+
+public class Circle implements Shape {
+    private double radius;
+
+    public Circle(double radius) {
+        this.radius = radius;
+    }
+
+    public double area() {
+        return 3.14159 * this.radius * this.radius;
+    }
+
+    public String name() {
+        return "Circle";
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Shape s = new Circle(2.0);
+        System.out.println(s.name() + " area=" + s.area());
+    }
+}
