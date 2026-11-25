@@ -50,6 +50,7 @@ cargo build
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 |
 | `switch` | （后续版本映射到 `match`） | MVP 未实现 |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 |
+| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释 |
 | `import` | 忽略（`List` 已在 prelude） | |
 | `private` / `public` | 私有 / `pub` | |
 

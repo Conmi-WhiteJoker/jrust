@@ -169,6 +169,8 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    /// jrust 扩展：`move x` 显式移走 x 的所有权（Rust 中赋值本身就是 move）。
+    Move,
 }
 
 #[derive(Debug, Clone)]

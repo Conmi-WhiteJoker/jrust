@@ -35,6 +35,8 @@ pub enum Kw {
     For,
     New,
     This,
+    /// jrust 自有扩展关键字：显式移交所有权
+    Move,
     True,
     False,
     Null,
@@ -76,6 +78,7 @@ pub fn keyword(s: &str) -> Option<Kw> {
         "for" => Kw::For,
         "new" => Kw::New,
         "this" => Kw::This,
+        "move" => Kw::Move,
         "true" => Kw::True,
         "false" => Kw::False,
         "null" => Kw::Null,

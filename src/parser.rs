@@ -1106,6 +1106,14 @@ impl Parser {
             self.bump();
             return self.parse_unary();
         }
+        if self.check_kw(Kw::Move) {
+            self.bump();
+            let e = self.parse_unary();
+            return Expr::Unary {
+                op: UnOp::Move,
+                expr: Box::new(e),
+            };
+        }
         self.parse_postfix()
     }
 
@@ -1282,6 +1290,7 @@ fn kw_text(k: Kw) -> &'static str {
         Kw::For => "for",
         Kw::New => "new",
         Kw::This => "this",
+        Kw::Move => "move",
         Kw::True => "true",
         Kw::False => "false",
         Kw::Null => "null",

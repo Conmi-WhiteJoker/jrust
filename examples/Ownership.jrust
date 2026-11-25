@@ -1,10 +1,13 @@
 // 示例 4：所有权移动（jrust 刻意不自动 clone）
 // Java 的 `String b = a;` 是两个引用指向同一对象；
 // Rust 的 `let b = a;` 是把所有权搬走，a 之后不能再用。
+// jrust 扩展关键字 move 可以把这个意图显式写出来。
 public class Ownership {
     public static void main(String[] args) {
         String a = "hello";
-        String b = a;
-        System.out.println(b);
+        String b = move a;
+        String c = "world";
+        String d = c;
+        System.out.println(b + " " + d);
     }
 }

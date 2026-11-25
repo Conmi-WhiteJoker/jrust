@@ -357,13 +357,27 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
-                if let Expr::Ident(src) = init {
-                    if !ty.is_copy_scalar() && env.vars.contains_key(src) {
-                        self.emit(&format!(
-                            "// jrust 提示: `{}` 是移动语义——所有权从 `{}` 转给 `{}`，之后再用 `{}` 会被借用检查器拒绝；需要两份就写 `{}.clone()`。",
-                            src, src, name, src, src
-                        ));
+                match init {
+                    Expr::Ident(src) => {
+                        if !ty.is_copy_scalar() && env.vars.contains_key(src) {
+                            self.emit(&format!(
+                                "// jrust 提示: `{}` 是移动语义——所有权从 `{}` 转给 `{}`，之后再用 `{}` 会被借用检查器拒绝；需要两份就写 `{}.clone()`。",
+                                src, src, name, src, src
+                            ));
+                        }
                     }
+                    Expr::Unary {
+                        op: UnOp::Move,
+                        expr,
+                    } => {
+                        if let Expr::Ident(src) = &**expr {
+                            self.emit(&format!(
+                                "// jrust 提示: 显式 `move` —— 所有权从 `{}` 搬到 `{}`。Rust 的赋值本身就是 move，所以产物与不加 `move` 相同；这个关键字只是把意图写出来。",
+                                src, name
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
                 let ty_str = self.rust_type(ty);
                 let init_str = self.gen_expr(init, env, Some(ty));
@@ -510,13 +524,11 @@ impl<'a> Codegen<'a> {
                 let r = self.gen_expr(rhs, env, None);
                 format!("{} {} {}", l, binop_str(*op), r)
             }
-            Expr::Unary { op, expr } => {
-                let inner = self.gen_expr(expr, env, None);
-                match op {
-                    UnOp::Not => format!("!{}", inner),
-                    UnOp::Neg => format!("-{}", inner),
-                }
-            }
+            Expr::Unary { op, expr } => match op {
+                UnOp::Not => format!("!{}", self.gen_expr(expr, env, None)),
+                UnOp::Neg => format!("-{}", self.gen_expr(expr, env, None)),
+                UnOp::Move => self.gen_move(expr, env),
+            },
             Expr::Index(a, b) => {
                 let x = self.gen_expr(a, env, None);
                 let y = self.gen_expr(b, env, None);
@@ -525,6 +537,43 @@ impl<'a> Codegen<'a> {
             Expr::Paren(inner) => {
                 let x = self.gen_expr(inner, env, expect);
                 format!("({})", x)
+            }
+        }
+    }
+
+    /// `move x`：产物就是 `x`（Rust 的赋值/传参本身就是 move），
+    /// 但会校验目标是否合法，并对 Copy 类型给出教学性报错。
+    fn gen_move(&mut self, inner: &Expr, env: &mut Env) -> String {
+        match inner {
+            Expr::Ident(n) => {
+                let info = env
+                    .vars
+                    .get(n)
+                    .map(|t| (t.is_copy_scalar(), self.rust_type(t)));
+                match info {
+                    Some((true, tn)) => {
+                        self.err(
+                            format!("`move {}`：`{}` 的类型是 {}，属于 Copy 标量", n, n, tn),
+                            "i32 / f64 / bool / char 赋值时自动复制，没有所有权可搬；`move` 只用于 String、Vec、struct 等拥有堆数据的类型。",
+                        );
+                    }
+                    None => {
+                        self.err(
+                            format!("`move {}`：变量 `{}` 未声明", n, n),
+                            "先声明变量，再搬走它的所有权。",
+                        );
+                    }
+                    _ => {}
+                }
+                self.gen_expr(inner, env, None)
+            }
+            Expr::Field(..) | Expr::Index(..) => self.gen_expr(inner, env, None),
+            _ => {
+                self.err(
+                    "`move` 只能作用于变量、字段或下标",
+                    "字面量和临时表达式没有可搬走的所有权；`move` 的目标必须是已经存在的值。",
+                );
+                self.gen_expr(inner, env, None)
             }
         }
     }
