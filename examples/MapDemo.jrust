@@ -1,0 +1,20 @@
+// 示例 9：Map<K, V> → HashMap<K, V>
+import java.util.Map;
+import java.util.HashMap;
+
+public class MapDemo {
+    public static void main(String[] args) {
+        // put/size/get/containsKey 一一对应 insert/len/get(Option)/contains_key
+        Map<String, Integer> ages = new HashMap<>();
+        ages.put("alice", 30);
+        ages.put("bob", 25);
+        println("size={}", ages.size());
+        println("alice={}", ages.get("alice"));
+        println("has carol={}", ages.containsKey("carol"));
+
+        // 键值类型也可以是标量
+        HashMap<Integer, String> names = new HashMap<>();
+        names.put(1, "one");
+        println("{} -> {}", 1, names.get(1));
+    }
+}

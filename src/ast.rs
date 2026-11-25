@@ -16,6 +16,8 @@ pub enum Type {
     /// Rust 原生标量类型名（`i32` / `u64` / `f64` / `usize` / `bool` ...），原样输出。
     RustPrim(String),
     List(Box<Type>),
+    /// `Map<K, V>` / `HashMap<K, V>` → `HashMap<K, V>`
+    Map(Box<Type>, Box<Type>),
     Array(Box<Type>),
     /// 用户自定义类型（class 或 interface 的名字）
     Named(String),

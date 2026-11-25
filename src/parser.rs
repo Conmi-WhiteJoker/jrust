@@ -587,6 +587,13 @@ impl Parser {
                 self.bump();
                 match name.as_str() {
                     "String" => Type::String,
+                    // Java 包装类型按对应的 Rust 标量处理（Map 的键值类型常用）。
+                    "Integer" => Type::Int,
+                    "Long" => Type::Long,
+                    "Double" => Type::Double,
+                    "Float" => Type::Float,
+                    "Boolean" => Type::Boolean,
+                    "Character" => Type::Char,
                     // Rust 原生标量类型名，直接接受并原样输出。
                     "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32"
                     | "u64" | "u128" | "usize" | "f32" | "f64" | "bool" => {
@@ -608,18 +615,21 @@ impl Parser {
                         }
                     }
                     "Map" | "HashMap" => {
-                        self.diags.push(
-                            Diag::error(line, "jrust MVP 暂不支持 Map").with_hint(
-                                "Rust 目标是 HashMap<K, V>，初版先不映射；需要时用两个 List 过渡。",
-                            ),
-                        );
                         if self.eat_punct("<") {
-                            let _ = self.parse_type();
-                            self.eat_punct(",");
-                            let _ = self.parse_type();
+                            let k = self.parse_type().unwrap_or(Type::String);
+                            self.expect_punct(",");
+                            let v = self.parse_type().unwrap_or(Type::String);
                             self.expect_punct(">");
+                            Type::Map(Box::new(k), Box::new(v))
+                        } else {
+                            self.diags.push(
+                                Diag::error(line, "jrust 不支持 raw type（不带类型参数的 Map）")
+                                    .with_hint(
+                                        "写成 `Map<String, Integer>`；Rust 的 HashMap<K, V> 必须写明键值类型，没有泛型擦除。",
+                                    ),
+                            );
+                            Type::Map(Box::new(Type::String), Box::new(Type::String))
                         }
-                        Type::Named("Map".to_string())
                     }
                     _ => Type::Named(name),
                 }

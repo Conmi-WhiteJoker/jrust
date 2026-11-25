@@ -83,6 +83,10 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `new ArrayList<>()` | `Vec::new()` | |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | |
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 |
+| `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 |
+| `new HashMap<>()` | `HashMap::new()` | 无参构造 |
+| `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | |
+| `map.get(k)` | `map.get(&k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；先用 `containsKey` 判断 |
 | `switch` | （后续版本映射到 `match`） | MVP 未实现 |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 |
 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` |
@@ -109,7 +113,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
-- 不支持泛型声明、`Map`、字段初始化、接口 static 方法、数组 `new`。
+- 不支持泛型声明、字段初始化、接口 static 方法、数组 `new`。
+- `Map` 只支持 `put` / `get` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 不支持字符串 `+` 拼接（只允许出现在 `println` 参数里，由 jrust 展开）。
 
 ## 目录结构

@@ -67,6 +67,7 @@ enum Value {
     Char(char),
     Str(String),
     List(Rc<RefCell<Vec<Value>>>),
+    Map(Rc<RefCell<HashMap<String, Value>>>),
     Obj(Rc<RefCell<Instance>>),
     Unit,
 }
@@ -101,7 +102,7 @@ impl Value {
             Value::Bool(b) => b.to_string(),
             Value::Char(c) => c.to_string(),
             Value::Str(s) => s.clone(),
-            Value::List(_) | Value::Obj(_) => self.debug_repr(),
+            Value::List(_) | Value::Obj(_) | Value::Map(_) => self.debug_repr(),
             Value::Unit => "()".to_string(),
         }
     }
@@ -119,6 +120,18 @@ impl Value {
                 let items = items.borrow();
                 let inner: Vec<String> = items.iter().map(|v| v.debug_repr()).collect();
                 format!("[{}]", inner.join(", "))
+            }
+            Value::Map(entries) => {
+                let entries = entries.borrow();
+                let mut pairs: Vec<String> = entries
+                    .iter()
+                    .map(|(k, v)| {
+                        let shown = k.get(2..).unwrap_or(k);
+                        format!("{}: {}", shown, v.debug_repr())
+                    })
+                    .collect();
+                pairs.sort();
+                format!("{{{}}}", pairs.join(", "))
             }
             Value::Obj(obj) => {
                 let inst = obj.borrow();
@@ -150,6 +163,7 @@ impl Value {
             Value::Char(_) => "char",
             Value::Str(_) => "String",
             Value::List(_) => "List",
+            Value::Map(_) => "Map",
             Value::Obj(obj) => return obj.borrow().class.clone(),
             Value::Unit => "void",
         }
@@ -169,6 +183,7 @@ fn type_str(t: &Type) -> String {
         Type::String => "String".into(),
         Type::RustPrim(name) => name.clone(),
         Type::List(inner) => format!("List<{}>", type_str(inner)),
+        Type::Map(k, v) => format!("Map<{}, {}>", type_str(k), type_str(v)),
         Type::Array(inner) => format!("{}[]", type_str(inner)),
         Type::Named(name) => name.clone(),
     }
@@ -185,6 +200,7 @@ fn default_value(t: &Type) -> Value {
         Type::Char => Value::Char('\0'),
         Type::String => Value::Str(String::new()),
         Type::List(_) | Type::Array(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
+        Type::Map(_, _) => Value::Map(Rc::new(RefCell::new(HashMap::new()))),
         Type::Named(_) | Type::Void => Value::Unit,
     }
 }
@@ -878,6 +894,16 @@ impl<'a> Interp<'a> {
         ) {
             return Ok(Value::List(Rc::new(RefCell::new(Vec::new()))));
         }
+        if matches!(class, "HashMap" | "Map") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    line,
+                    "jrust MVP 只支持无参的 new HashMap<>()",
+                )
+                .with_hint("先 `new HashMap<>()`，再用 `put` 逐个插入。"));
+            }
+            return Ok(Value::Map(Rc::new(RefCell::new(HashMap::new()))));
+        }
         let decl: &'a ClassDecl = match self.classes.get(class) {
             Some(d) => *d,
             None => {
@@ -1028,6 +1054,44 @@ impl<'a> Interp<'a> {
                     other => Err(RuntimeError::new(
                         line,
                         format!("List 没有方法 `{}`", other),
+                    )),
+                },
+                Value::Map(rc) => match name {
+                    "put" => {
+                        if args.len() != 2 {
+                            return Err(RuntimeError::new(line, "put 需要键和值两个参数"));
+                        }
+                        let k = self.eval(&args[0])?;
+                        let v = self.eval_place_take(&args[1])?;
+                        rc.borrow_mut().insert(map_key(&k), v);
+                        Ok(Value::Unit)
+                    }
+                    "size" => Ok(Value::Int(rc.borrow().len() as i64)),
+                    "isEmpty" => Ok(Value::Bool(rc.borrow().is_empty())),
+                    "containsKey" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "containsKey 需要一个键"));
+                        }
+                        let k = self.eval(&args[0])?;
+                        Ok(Value::Bool(rc.borrow().contains_key(&map_key(&k))))
+                    }
+                    "get" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "get 需要一个键"));
+                        }
+                        let k = self.eval(&args[0])?;
+                        match rc.borrow().get(&map_key(&k)) {
+                            Some(v) => Ok(v.clone()),
+                            None => Err(RuntimeError::new(
+                                line,
+                                format!("Map.get: 键 `{}` 不存在", k.display()),
+                            )
+                            .with_hint("先用 containsKey 判断；Rust 的 get 返回 Option，不会给 null。")),
+                        }
+                    }
+                    other => Err(RuntimeError::new(
+                        line,
+                        format!("Map 没有方法 `{}`", other),
                     )),
                 },
                 Value::Obj(_) => {
@@ -1211,6 +1275,18 @@ fn index_error(line: usize, index: usize, len: usize) -> RuntimeError {
         line,
         format!("下标越界: 访问 [{}]，但长度是 {}", index, len),
     )
+}
+
+/// Map 的键在解释器里统一存成带类型标签的字符串，避免 `1` 与 `"1"` 混淆。
+fn map_key(v: &Value) -> String {
+    match v {
+        Value::Int(n) => format!("i:{}", n),
+        Value::Str(s) => format!("s:{}", s),
+        Value::Bool(b) => format!("b:{}", b),
+        Value::Double(f) => format!("d:{}", f),
+        Value::Char(c) => format!("c:{}", c),
+        other => format!("o:{}", other.debug_repr()),
+    }
 }
 
 fn stmt_line(s: &Stmt) -> usize {

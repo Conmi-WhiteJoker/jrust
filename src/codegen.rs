@@ -104,6 +104,11 @@ impl<'a> Codegen<'a> {
             Type::String => "String".to_string(),
             Type::RustPrim(name) => name.clone(),
             Type::List(inner) => format!("Vec<{}>", self.rust_type(inner)),
+            Type::Map(k, v) => format!(
+                "HashMap<{}, {}>",
+                self.rust_type(k),
+                self.rust_type(v)
+            ),
             Type::Array(inner) => format!("Vec<{}>", self.rust_type(inner)),
             Type::Named(n) => {
                 if self.ifaces.contains(n) {
@@ -133,6 +138,10 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             self.emit(&format!("use {};", imp.replace('.', "::")));
+        }
+        // Map 统一映射到 std::collections::HashMap；未用到时由 allow(unused_imports) 兜住。
+        if !seen.contains("std.collections.HashMap") {
+            self.emit("use std::collections::HashMap;");
         }
         self.blank();
 
@@ -653,6 +662,59 @@ impl<'a> Codegen<'a> {
         }
 
         let recv_ty = recv.as_ref().and_then(|r| self.infer_type(r, env));
+        if let Some(Type::Map(k_ty, v_ty)) = &recv_ty {
+            let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
+            match name {
+                "size" => return format!("{}.len()", r),
+                "isEmpty" => return format!("{}.is_empty()", r),
+                "put" => {
+                    if args.len() != 2 {
+                        self.err(
+                            "put 需要键和值两个参数",
+                            "例如 `m.put(\"a\", 1)`；Rust 对应 `insert`。",
+                        );
+                    }
+                    let k = args
+                        .first()
+                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
+                        .unwrap_or_default();
+                    let v = args
+                        .get(1)
+                        .map(|a| self.gen_expr(a, env, Some(v_ty)))
+                        .unwrap_or_default();
+                    return format!("{}.insert({}, {})", r, k, v);
+                }
+                "get" => {
+                    if args.len() != 1 {
+                        self.err("get 需要一个键", "例如 `m.get(\"a\")`。");
+                    }
+                    let k = args
+                        .first()
+                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
+                        .unwrap_or_default();
+                    // Rust 的 get 返回 Option<&V>；键缺失时 Java 得到 null，jrust 没有 null，
+                    // 这里取拥有所有权的值，缺失即 panic（可用 containsKey 先判断）。
+                    return format!("{}.get(&{}).cloned().unwrap()", r, k);
+                }
+                "containsKey" => {
+                    if args.len() != 1 {
+                        self.err("containsKey 需要一个键", "例如 `m.containsKey(\"a\")`。");
+                    }
+                    let k = args
+                        .first()
+                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
+                        .unwrap_or_default();
+                    return format!("{}.contains_key(&{})", r, k);
+                }
+                other => {
+                    self.err(
+                        format!("Map 没有方法 `{}`", other),
+                        "MVP 支持 put / get / size / containsKey / isEmpty。",
+                    );
+                    return format!("{}.{}()", r, other);
+                }
+            }
+        }
         let is_list = matches!(recv_ty, Some(Type::List(_)));
         let elem_is_trait = match &recv_ty {
             Some(Type::List(inner)) => matches!(&**inner, Type::Named(n) if self.ifaces.contains(n)),
