@@ -1,0 +1,22 @@
+// 静态常量：`static final` → 模块级 `const`（JR-D8）。
+public class Limits {
+    public static final int N = 3;
+    public static final double SCALE = 2.5;
+    public static final boolean ON = true;
+    public static final String NAME = "jrust";
+
+    public int triple(int x) {
+        return x * N;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Limits l = new Limits();
+        println(Limits.N);
+        println(Limits.SCALE);
+        println(Limits.ON);
+        println(Limits.NAME);
+        println(l.triple(2));
+    }
+}

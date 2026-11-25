@@ -1,0 +1,4 @@
+// 可变静态字段应报 JR3013。
+public class Counter {
+    public static int C = 0;
+}

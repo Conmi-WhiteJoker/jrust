@@ -447,6 +447,7 @@ impl Parser {
 
         let mut vis = Vis::Package;
         let mut is_static = false;
+        let mut is_final = false;
         loop {
             if self.eat_kw(Kw::Public) {
                 vis = Vis::Public;
@@ -461,7 +462,8 @@ impl Parser {
             } else if self.eat_kw(Kw::Static) {
                 is_static = true;
             } else if self.eat_kw(Kw::Final) {
-                // final 对字段是「不可变」，对方法是「不可覆写」，Rust 默认即不可变 / 无继承
+                // final 对字段是「不可变」（static final → const），对方法是「不可覆写」
+                is_final = true;
             } else {
                 break;
             }
@@ -550,21 +552,61 @@ impl Parser {
                     "类型参数写在类上（`class Box<T>`）；字段类型直接用 `T`。",
                 );
             }
-            if self.check_punct("=") {
-                self.err_hint(
-                    "jrust MVP 不支持字段初始化",
-                    "在构造器里给字段赋值；Rust 对应结构体字面量 `Self { field: value }`。",
-                );
-                self.skip_to_stmt_end();
+            if is_static {
+                if !is_final {
+                    self.diags.push(
+                        Diag::error_code(
+                            member_line,
+                            "JR3013",
+                            "jrust 不支持可变的静态字段（static 非 final）",
+                        )
+                        .with_hint(
+                            "Rust 的可变全局需要 `static mut` + unsafe，与值语义冲突；把状态放进对象字段，或用参数传递。",
+                        ),
+                    );
+                    if self.eat_punct("=") {
+                        let _ = self.parse_expr();
+                    }
+                    self.eat_punct(";");
+                } else if self.eat_punct("=") {
+                    let init = self.parse_expr();
+                    self.expect_punct(";");
+                    class.fields.push(Field {
+                        vis,
+                        is_static: true,
+                        is_final: true,
+                        init: Some(init),
+                        ty,
+                        name,
+                        line: member_line,
+                    });
+                } else {
+                    self.err_hint(
+                        "静态常量必须带初始值",
+                        "写成 `public static final int N = 3;`；Rust 的 `const` 要求声明处给出编译期常量。",
+                    );
+                    self.eat_punct(";");
+                }
             } else {
-                self.expect_punct(";");
+                if self.check_punct("=") {
+                    self.err_hint(
+                        "jrust MVP 不支持字段初始化",
+                        "在构造器里给字段赋值；Rust 对应结构体字面量 `Self { field: value }`。",
+                    );
+                    self.skip_to_stmt_end();
+                } else {
+                    self.expect_punct(";");
+                }
+                class.fields.push(Field {
+                    vis,
+                    is_static: false,
+                    is_final,
+                    init: None,
+                    ty,
+                    name,
+                    line: member_line,
+                });
             }
-            class.fields.push(Field {
-                vis,
-                ty,
-                name,
-                line: member_line,
-            });
         }
     }
 

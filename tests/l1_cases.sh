@@ -93,6 +93,7 @@ run_ok ok_concat
 run_ok ok_generic
 run_ok ok_generic_iface_enum
 run_ok ok_generic_bounds
+run_ok ok_const
 run_closure
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
@@ -107,6 +108,7 @@ run_neg neg_cfor_step JR2003 "步长不为 1"
 run_neg neg_cfor_dir JR2003 "方向不一致"
 run_neg neg_newarray_type JR3014 "只支持标量 / String"
 run_neg neg_wildcard JR3010 "trait object"
+run_neg neg_mutable_static JR3013 "可变全局"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

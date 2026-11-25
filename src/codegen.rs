@@ -104,6 +104,7 @@ impl<'a> Codegen<'a> {
                 let ok = c
                     .fields
                     .iter()
+                    .filter(|f| !is_const_field(f))
                     .all(|f| type_cloneable(&f.ty, &snapshot, &params));
                 if !ok && cloneable.remove(&c.name) {
                     changed = true;
@@ -275,8 +276,7 @@ impl<'a> Codegen<'a> {
                 };
                 match base {
                     Some(Type::Named(c)) => self.classes.get(&c).and_then(|cd| {
-                        cd.fields
-                            .iter()
+                        instance_fields(cd)
                             .find(|x| &x.name == f)
                             .map(|x| x.ty.clone())
                     }),
@@ -636,6 +636,33 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `static final` 字段 → 模块级 `pub const`（JR-D8）。
+    fn gen_consts(&mut self, class: &ClassDecl) {
+        let consts: Vec<&Field> = class.fields.iter().filter(|f| is_const_field(f)).collect();
+        for f in &consts {
+            self.marker(f.line);
+            self.cur_line = f.line;
+            let vis = if f.vis == Vis::Public { "pub " } else { "" };
+            let ty = if f.ty == Type::String {
+                "&str".to_string()
+            } else {
+                self.rust_type(&f.ty)
+            };
+            let val = match (&f.init, &f.ty) {
+                (Some(Expr::Str(s)), Type::String) => format!("{:?}", s),
+                (Some(init), _) => {
+                    let mut env = Env::new(Type::Void);
+                    self.gen_expr(init, &mut env, Some(&f.ty))
+                }
+                (None, _) => String::new(),
+            };
+            self.emit(&format!("{}const {}: {} = {};", vis, f.name, ty, val));
+        }
+        if !consts.is_empty() {
+            self.blank();
+        }
+    }
+
     fn gen_class(&mut self, class: &ClassDecl) {
         let tparams = type_param_decl(&class.type_params);
         let phantom = phantom_params(class);
@@ -643,16 +670,17 @@ impl<'a> Codegen<'a> {
             &mut self.generic_params,
             class.type_params.iter().map(|p| p.name.clone()).collect(),
         );
+        self.gen_consts(class);
         self.marker(class.line);
         if self.cloneable.contains(&class.name) {
             self.emit("#[derive(Clone)]");
         }
-        if class.fields.is_empty() && phantom.is_empty() {
+        if instance_fields(class).next().is_none() && phantom.is_empty() {
             self.emit(&format!("pub struct {}{};", class.name, tparams));
         } else {
             self.emit(&format!("pub struct {}{} {{", class.name, tparams));
             self.indent += 1;
-            for f in &class.fields {
+            for f in instance_fields(class) {
                 self.marker(f.line);
                 let vis = if f.vis == Vis::Public { "pub " } else { "" };
                 self.emit(&format!("{}{}: {},", vis, f.name, self.rust_type(&f.ty)));
@@ -735,13 +763,14 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_main_class(&mut self, class: &ClassDecl, main: &Method) {
-        if !class.fields.is_empty() || class.methods.len() > 1 {
+        if instance_fields(class).next().is_some() || class.methods.len() > 1 {
             self.cur_line = class.line;
             self.err(
                 "含 main 的类只能有 main 方法",
-                "jrust MVP 把 main 当作程序入口；其它字段和方法请放进独立的类。",
+                "jrust MVP 把 main 当作程序入口；其它字段和方法请放进独立的类（static final 常量除外）。",
             );
         }
+        self.gen_consts(class);
         self.marker(main.line);
         let throws = !main.throws.is_empty();
         if throws {
@@ -793,9 +822,15 @@ impl<'a> Codegen<'a> {
                     value,
                     ..
                 } if matches!(**recv, Expr::This) => {
-                    let field_ty = class
-                        .fields
-                        .iter()
+                    if class.fields.iter().any(|f| &f.name == field && is_const_field(f)) {
+                        self.cur_line = ctor.line;
+                        self.err(
+                            format!("不能给静态常量 `{}` 赋值", field),
+                            "static final 转发为 `const`，编译期固定；构造器里只给实例字段赋值。",
+                        );
+                        continue;
+                    }
+                    let field_ty = instance_fields(class)
                         .find(|f| &f.name == field)
                         .map(|f| f.ty.clone());
                     self.cur_line = ctor.line;
@@ -1355,6 +1390,12 @@ impl<'a> Codegen<'a> {
             Expr::This => "self".to_string(),
             Expr::Field(recv, name) => {
                 if let Expr::Ident(en) = &**recv {
+                    if let Some(cd) = self.classes.get(en) {
+                        if cd.fields.iter().any(|f| &f.name == name && is_const_field(f)) {
+                            // 静态常量在产物里是模块级 `const`：`Cls.N` → `N`。
+                            return name.clone();
+                        }
+                    }
                     if let Some(ed) = self.enums.get(en) {
                         if ed
                             .variants
@@ -1963,6 +2004,11 @@ impl<'a> Codegen<'a> {
             Expr::NewArray { elem, .. } => Some(Type::Array(Box::new(elem.clone()))),
             Expr::Field(recv, f) => {
                 if let Expr::Ident(en) = &**recv {
+                    if let Some(cd) = self.classes.get(en) {
+                        if let Some(x) = cd.fields.iter().find(|x| &x.name == f && is_const_field(x)) {
+                            return Some(x.ty.clone());
+                        }
+                    }
                     if self
                         .enums
                         .get(en)
@@ -1973,9 +2019,7 @@ impl<'a> Codegen<'a> {
                 }
                 if let Some((cname, map)) = self.infer_type(recv, env).and_then(|t| self.type_binding(&t)) {
                     if let Some(cd) = self.classes.get(&cname) {
-                        return cd
-                            .fields
-                            .iter()
+                        return instance_fields(cd)
                             .find(|x| &x.name == f)
                             .map(|x| subst_type(&x.ty, &map));
                     }
@@ -2112,10 +2156,19 @@ fn bound_text(ty: &Type) -> String {
     }
 }
 
+/// `static final` 字段：产物是模块级 `const`，不属于结构体（JR-D8）。
+fn is_const_field(f: &Field) -> bool {
+    f.is_static && f.is_final
+}
+
+fn instance_fields(class: &ClassDecl) -> impl Iterator<Item = &Field> {
+    class.fields.iter().filter(|f| !is_const_field(f))
+}
+
 /// Rust 要求每个类型参数都被字段用到；没用到的用 PhantomData 占位（`class Box<T> {}`）。
 fn phantom_params(class: &ClassDecl) -> Vec<String> {
     let mut used = HashSet::new();
-    for f in &class.fields {
+    for f in instance_fields(class) {
         collect_type_params(&f.ty, &mut used);
     }
     class

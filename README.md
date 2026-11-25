@@ -126,6 +126,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
+| `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -145,7 +146,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
-- 不支持字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
+- 不支持实例字段初始化（`static final` 常量除外）、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。

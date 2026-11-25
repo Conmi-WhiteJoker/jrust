@@ -93,6 +93,11 @@ pub struct Constructor {
 #[derive(Debug, Clone)]
 pub struct Field {
     pub vis: Vis,
+    /// `static final` 字段：→ 模块级 `pub const`，不进入结构体。
+    pub is_static: bool,
+    pub is_final: bool,
+    /// 仅 `static final` 字段有初始值（Java 静态常量必须带初值）。
+    pub init: Option<Expr>,
     pub ty: Type,
     pub name: String,
     pub line: usize,
