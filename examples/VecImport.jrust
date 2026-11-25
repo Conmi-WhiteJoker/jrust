@@ -1,4 +1,7 @@
-// 示例 8：Rust 风格 import（非 java.* 路径原样生成 use）与 Vec<T>
+// 示例 8：import 的两种走向，以及 Vec<T>
+// 1) java.* 路径被忽略：List 已内置映射到 Vec，写不写 import 都一样
+import java.util.List;
+// 2) 非 java.* 路径原样转成 Rust 的 use（圆点换 ::）
 import std.vec.Vec;
 
 public class VecImport {

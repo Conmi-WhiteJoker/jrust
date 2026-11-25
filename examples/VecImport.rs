@@ -4,42 +4,42 @@
 use std::vec::Vec;
 use std::collections::HashMap;
 
-// jrust:L5
+// jrust:L8
 fn main() {
-    // jrust:L7
-    let mut v: Vec<i32> = Vec::new();
-    // jrust:L8
-    v.push(1);
-    // jrust:L9
-    v.push(2);
     // jrust:L10
-    v.push(3);
+    let mut v: Vec<i32> = Vec::new();
     // jrust:L11
-    println!("size={}", v.len());
+    v.push(1);
     // jrust:L12
-    println!("v[1]={}", v[1]);
+    v.push(2);
+    // jrust:L13
+    v.push(3);
+    // jrust:L14
+    println!("size={}", v.len());
     // jrust:L15
+    println!("v[1]={}", v[1]);
+    // jrust:L18
     let mut sum: i32 = 0;
-    // jrust:L16
+    // jrust:L19
     for x in &v {
-        // jrust:L17
+        // jrust:L20
         sum = sum + x;
     }
-    // jrust:L19
-    println!("sum={}", sum);
     // jrust:L22
-    let mut names: Vec<String> = Vec::new();
-    // jrust:L23
-    names.push(("alpha").to_string());
-    // jrust:L24
-    names.push(("beta").to_string());
+    println!("sum={}", sum);
     // jrust:L25
-    println!("{} {}", names[0], names[1]);
+    let mut names: Vec<String> = Vec::new();
+    // jrust:L26
+    names.push(("alpha").to_string());
+    // jrust:L27
+    names.push(("beta").to_string());
     // jrust:L28
+    println!("{} {}", names[0], names[1]);
+    // jrust:L31
     let mut also: Vec<String> = Vec::new();
-    // jrust:L29
+    // jrust:L32
     also.push(("same").to_string());
-    // jrust:L30
+    // jrust:L33
     println!("{}", also[0]);
 }
 

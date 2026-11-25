@@ -82,31 +82,33 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 ## 保留的语法
 
-| Java 写法 | jrust 产物 | 说明 |
-|---|---|---|
-| `public class Foo` | `pub struct Foo` + `impl Foo` | 数据与行为拆成两块 |
-| `interface Foo` | `pub trait Foo` | |
-| `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl |
-| `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 |
-| `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | |
-| `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 |
-| `1_000_000` | `1000000` | Java 7+ 的下划线分隔符；`_` 只能夹在数字之间，否则报诊断。Rust 的 `42u8` 类型后缀不支持，类型写在声明上即可（`u8 b = 42;`） |
-| `String` | `String` | 字符串字面量自动补 `.to_string()` |
-| `List<T>` | `Vec<T>`；`T` 是 interface 时 `Vec<Box<dyn T>>` | |
-| `new ArrayList<>()` | `Vec::new()` | |
-| `list.add(x)` / `list.size()` | `push(x)` / `len()` | |
-| `for (T x : list)` | `for x in &list` | 借用而不是移动 |
-| `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 |
-| `new HashMap<>()` | `HashMap::new()` | 无参构造 |
-| `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | |
-| `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 |
-| `switch` | （后续版本映射到 `match`） | MVP 未实现 |
-| `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 |
-| `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` |
-| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 |
-| `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 |
-| `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 |
-| `private` / `public` | 私有 / `pub` | |
+下表每条语法都有可运行示例：`examples/` 下 `Xxx.jrust` 源码与 jrust 生成的 `Xxx.rs` 产物成对出现。
+
+| Java 写法 | jrust 产物 | 说明 | 示例 |
+|---|---|---|---|
+| `public class Foo` | `pub struct Foo` + `impl Foo` | 数据与行为拆成两块 | [ClassInterface](examples/ClassInterface.jrust) |
+| `interface Foo` | `pub trait Foo` | | [ClassInterface](examples/ClassInterface.jrust) |
+| `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl | [ClassInterface](examples/ClassInterface.jrust) |
+| `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 | [ClassInterface](examples/ClassInterface.jrust) |
+| `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | | [RustTypes](examples/RustTypes.jrust) |
+| `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 | [RustTypes](examples/RustTypes.jrust) |
+| `1_000_000` | `1000000` | Java 7+ 的下划线分隔符；`_` 只能夹在数字之间，否则报诊断。Rust 的 `42u8` 类型后缀不支持，类型写在声明上即可（`u8 b = 42;`） | [RustTypes](examples/RustTypes.jrust) |
+| `String` | `String` | 字符串字面量自动补 `.to_string()` | [HelloWorld](examples/HelloWorld.jrust) |
+| `List<T>` | `Vec<T>`；`T` 是 interface 时 `Vec<Box<dyn T>>` | | [VecImport](examples/VecImport.jrust) |
+| `new ArrayList<>()` | `Vec::new()` | | [VecImport](examples/VecImport.jrust) |
+| `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport.jrust) |
+| `for (T x : list)` | `for x in &list` | 借用而不是移动 | [VecImport](examples/VecImport.jrust) |
+| `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo.jrust) |
+| `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo.jrust) |
+| `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo.jrust) |
+| `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 | [MapDemo](examples/MapDemo.jrust) |
+| `switch` | （后续版本映射到 `match`） | MVP 未实现 | — |
+| `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort.jrust) |
+| `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` | [PrintShort](examples/PrintShort.jrust) |
+| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
+| `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
+| `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
+| `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -140,7 +142,9 @@ src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推�
 src/interp.rs   树遍历解释器（run / debug 共用，保留移动语义）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
-examples/       5 个示例：HelloWorld、类与接口、多态集合、所有权移动、move 边界
+examples/       9 个示例（各含 .jrust 源码 + 生成的 .rs）：
+                HelloWorld、ClassInterface、PolymorphicList、Ownership、MoveEdges、
+                PrintShort、RustTypes、MapDemo、VecImport
 tests/          move 非法边界用例 + 解释/编译输出对拍
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```
@@ -149,6 +153,8 @@ verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 ve
 
 宏只能看到 token，看不到「学生写错时应该怎么解释」，而且产物被编译器吞掉、不可见。
 独立 CLI 的价值就在于**产物是显式的、可对照的**——这才是学习工具。
+
+或许某一天，这个项目能独当一面，到时可能独立进行编译，这样就减少了很多转化的操作。
 
 ## 许可
 
