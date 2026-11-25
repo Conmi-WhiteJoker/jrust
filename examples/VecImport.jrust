@@ -1,0 +1,13 @@
+// 示例 8：Rust 风格 import（非 java.* 路径原样生成 use）与 Vec<T>
+import std.vec.Vec;
+
+public class VecImport {
+    public static void main(String[] args) {
+        // Vec<T> 与 List<T> 同义：都生成 Vec<T>，add/get/size 用法不变
+        Vec<int> v = new Vec<>();
+        v.add(1);
+        v.add(2);
+        println("size={}", v.size());
+        println(v.get(0));
+    }
+}

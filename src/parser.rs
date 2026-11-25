@@ -592,16 +592,16 @@ impl Parser {
                     | "u64" | "u128" | "usize" | "f32" | "f64" | "bool" => {
                         Type::RustPrim(name)
                     }
-                    "List" | "ArrayList" | "Collection" | "LinkedList" => {
+                    "List" | "ArrayList" | "Collection" | "LinkedList" | "Vec" => {
                         if self.eat_punct("<") {
                             let inner = self.parse_type().unwrap_or(Type::String);
                             self.expect_punct(">");
                             Type::List(Box::new(inner))
                         } else {
                             self.diags.push(
-                                Diag::error(line, "jrust 不支持 raw type（不带类型参数的 List）")
+                                Diag::error(line, "jrust 不支持 raw type（不带类型参数）")
                                     .with_hint(
-                                        "写成 `List<Animal>`；Rust 的 Vec<T> 必须写明元素类型，没有泛型擦除。",
+                                        "写成 `List<Animal>` 或 `Vec<Animal>`；Rust 的 Vec<T> 必须写明元素类型，没有泛型擦除。",
                                     ),
                             );
                             Type::List(Box::new(Type::String))

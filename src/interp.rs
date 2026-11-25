@@ -872,7 +872,10 @@ impl<'a> Interp<'a> {
 
     fn eval_new(&mut self, class: &str, args: &[Expr]) -> Result<Value, RuntimeError> {
         let line = self.cur_line;
-        if matches!(class, "ArrayList" | "LinkedList" | "List" | "Collection") {
+        if matches!(
+            class,
+            "ArrayList" | "LinkedList" | "List" | "Collection" | "Vec"
+        ) {
             return Ok(Value::List(Rc::new(RefCell::new(Vec::new()))));
         }
         let decl: &'a ClassDecl = match self.classes.get(class) {

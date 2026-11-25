@@ -123,7 +123,17 @@ impl<'a> Codegen<'a> {
             src_name
         ));
         self.emit("// 每段代码前的 `// jrust:L<行号>` 指向 .jrust 源码行。");
-        self.emit("#![allow(dead_code, unused_variables, unused_mut)]");
+        self.emit("#![allow(dead_code, unused_variables, unused_mut, unused_imports)]");
+        // `java.*` 的 import 只需让 jrust 认识类型名，不生成代码；
+        // 其余路径当作 Rust 的 use 原样输出（圆点转 `::`），例如 import std.vec.Vec;
+        let imports = self.prog.imports.clone();
+        let mut seen = std::collections::HashSet::new();
+        for imp in &imports {
+            if imp.starts_with("java.") || !seen.insert(imp.clone()) {
+                continue;
+            }
+            self.emit(&format!("use {};", imp.replace('.', "::")));
+        }
         self.blank();
 
         let prog = self.prog;
