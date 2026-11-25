@@ -21,6 +21,9 @@ pub enum Type {
     Array(Box<Type>),
     /// 用户自定义类型（class 或 interface 的名字）
     Named(String),
+    /// 带类型实参的用户类型：`Box<Integer>` → `Box<i32>`。
+    /// 声明侧的 `T` 仍是 `Named("T")`，只有使用处才带实参。
+    Generic(String, Vec<Type>),
     /// `T?` 表示可空类型 → `Option<T>`。
     Nullable(Box<Type>),
 }
@@ -58,6 +61,8 @@ pub struct Param {
 pub struct Method {
     pub vis: Vis,
     pub is_static: bool,
+    /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
+    pub type_params: Vec<String>,
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
@@ -86,6 +91,8 @@ pub struct Field {
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
     pub name: String,
+    /// 类级类型参数：`class Box<T>` 里的 `T`。
+    pub type_params: Vec<String>,
     pub implements: Vec<String>,
     pub fields: Vec<Field>,
     pub ctor: Option<Constructor>,
@@ -280,6 +287,8 @@ pub enum Expr {
     },
     New {
         class: String,
+        /// `new Box<Integer>(..)` 的实参；钻石 `new Box<>(..)` 为空。
+        type_args: Vec<Type>,
         args: Vec<Expr>,
     },
     /// `new T[n]` → `vec![默认值; n]`；元素类型在 parser 已限定为标量 / String。

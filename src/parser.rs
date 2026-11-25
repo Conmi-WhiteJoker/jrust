@@ -368,13 +368,11 @@ impl Parser {
 
         let prev_name = std::mem::replace(&mut self.class_name, name.clone());
 
-        if self.check_punct("<") {
-            self.err_hint(
-                "jrust MVP 不支持泛型类",
-                "先写具体类型；Rust 的泛型写作 `struct Foo<T>`，后续版本再支持。",
-            );
-            self.skip_generic_args();
-        }
+        let type_params = if self.check_punct("<") {
+            self.parse_type_params()
+        } else {
+            Vec::new()
+        };
 
         let mut implements = Vec::new();
         if self.eat_kw(Kw::Extends) {
@@ -405,6 +403,7 @@ impl Parser {
 
         let mut class = ClassDecl {
             name: name.clone(),
+            type_params,
             implements,
             fields: Vec::new(),
             ctor: None,
@@ -462,9 +461,22 @@ impl Parser {
             }
         }
 
+        // 方法级类型参数：`public <T> T id(T x)`。
+        let type_params = if self.check_punct("<") {
+            self.parse_type_params()
+        } else {
+            Vec::new()
+        };
+
         // 构造器：名字 == 类名，且后面紧跟 `(`
         if let Tok::Ident(n) = self.peek().clone() {
             if n == class.name && matches!(self.peek_at(1), Tok::Punct("(")) {
+                if !type_params.is_empty() {
+                    self.err_hint(
+                        "jrust MVP 不支持构造器单独声明类型参数",
+                        "把类型参数提到类上（`class Box<T>`），或改用具体类型。",
+                    );
+                }
                 let ctor_line = self.line();
                 self.bump(); // 类名
                 let params = self.parse_params();
@@ -517,6 +529,7 @@ impl Parser {
             class.methods.push(Method {
                 vis,
                 is_static,
+                type_params,
                 name,
                 ret: ty,
                 params,
@@ -525,6 +538,12 @@ impl Parser {
                 line: mline,
             });
         } else {
+            if !type_params.is_empty() {
+                self.err_hint(
+                    "字段不能声明类型参数",
+                    "类型参数写在类上（`class Box<T>`）；字段类型直接用 `T`。",
+                );
+            }
             if self.check_punct("=") {
                 self.err_hint(
                     "jrust MVP 不支持字段初始化",
@@ -611,6 +630,58 @@ impl Parser {
     }
 
     // ---------- 类型 ----------
+
+    /// 解析声明侧的类型参数列表：`<T, U>`。
+    fn parse_type_params(&mut self) -> Vec<String> {
+        let mut v = Vec::new();
+        if !self.eat_punct("<") {
+            return v;
+        }
+        if self.eat_punct(">") {
+            self.err("类型参数列表不能为空");
+            return v;
+        }
+        loop {
+            let name = self.expect_ident();
+            if self.eat_kw(Kw::Extends) {
+                self.err_hint(
+                    "jrust MVP 不支持泛型上界（T extends X）",
+                    "Rust 写作 `T: X`；当前版本请去掉上界，或把类型参数换成具体类型。",
+                );
+                let _ = self.parse_type();
+            }
+            v.push(name);
+            if self.eat_punct(",") {
+                continue;
+            }
+            break;
+        }
+        self.expect_punct(">");
+        v
+    }
+
+    /// 解析使用侧的类型实参：`<Integer>` 或钻石 `<>`（返回空列表）。
+    fn parse_generic_args(&mut self) -> Vec<Type> {
+        let mut v = Vec::new();
+        if !self.eat_punct("<") {
+            return v;
+        }
+        if self.eat_punct(">") {
+            return v;
+        }
+        loop {
+            match self.parse_type() {
+                Some(t) => v.push(t),
+                None => break,
+            }
+            if self.eat_punct(",") {
+                continue;
+            }
+            break;
+        }
+        self.expect_punct(">");
+        v
+    }
 
     fn parse_type(&mut self) -> Option<Type> {
         let line = self.line();
@@ -700,6 +771,23 @@ impl Parser {
                 return None;
             }
         };
+
+        // 使用侧类型实参：`Box<Integer>`、`Pair<String, Integer>`。
+        if let Type::Named(n) = &base {
+            if self.check_punct("<") {
+                let n = n.clone();
+                let aline = self.line();
+                let args = self.parse_generic_args();
+                if args.is_empty() {
+                    self.diags.push(
+                        Diag::error(aline, "类型位置的泛型实参不能为空").with_hint(
+                            "钻石写法 `<>` 只能跟在 `new` 后面；声明变量时写全，如 `Box<Integer> b`。",
+                        ),
+                    );
+                }
+                base = Type::Generic(n, args);
+            }
+        }
 
         while self.check_punct("[") && matches!(self.peek_at(1), Tok::Punct("]")) {
             self.bump();
@@ -1747,9 +1835,11 @@ impl Parser {
                     return e;
                 }
                 let class = self.expect_ident();
-                if self.check_punct("<") {
-                    self.skip_generic_args();
-                }
+                let type_args = if self.check_punct("<") {
+                    self.parse_generic_args()
+                } else {
+                    Vec::new()
+                };
                 if self.check_punct("[") {
                     self.diags.push(
                         Diag::error(self.line(), "jrust MVP 不支持 new 数组").with_hint(
@@ -1775,7 +1865,11 @@ impl Parser {
                     Expr::Ident("Vec::new()".to_string())
                 } else {
                     let args = self.parse_args();
-                    Expr::New { class, args }
+                    Expr::New {
+                        class,
+                        type_args,
+                        args,
+                    }
                 }
             }
             Tok::Ident(n) => {

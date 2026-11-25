@@ -108,6 +108,9 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic | [Nullable](examples/Nullable.jrust) |
 | `T? x` | `Option<T>` | `T? x = null;` → `None`；`T? x = v;` → `Some(v)`；`x == null` / `x != null` → `is_none()` / `is_some()`；对 `T?` 直接调用 `T` 的方法报 `JR3006` | [Nullable](examples/Nullable.jrust) |
 | `T v = x;`（`x` 是 `T?`） | `let v: T = x.clone().unwrap();` | 显式解包：`None` 会 panic（等价于 Java 的 NPE）；先用 `if (x != null)` 判空 | [Nullable](examples/Nullable.jrust) |
+| `class Box<T> { T value; ... }` | `pub struct Box<T>` + `impl<T: Clone> Box<T>` | 字段未使用的类型参数补 `PhantomData` 占位（`class Tag<T> {}`） | [Generics](examples/Generics.jrust) |
+| `new Box<Integer>(v)` / `new Box<>(v)` | `Box::<i32>::new(v)` / `Box::new(v)` | 钻石写法由左侧声明类型推断实参；构造器形参里的 `T` 按实参替换（字符串字面量自动 `.to_string()`） | [Generics](examples/Generics.jrust) |
+| `public <T> T id(T x)` | `pub fn id<T: Clone>(x: T) -> T` | 方法级类型参数写在方法名后；v1 统一要求 `T: Clone` | [Generics](examples/Generics.jrust) |
 | `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
 | `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
 | `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
@@ -138,7 +141,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
-- 不支持泛型声明、字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化。
+- 不支持字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型只支持类与方法（泛型 `interface` / `enum`、`<T extends X>` 上界仍会报解释性错误）。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。

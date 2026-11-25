@@ -1,0 +1,39 @@
+// 泛型：类声明、方法声明、类型实参 / 钻石写法、未使用类型参数（PhantomData）。
+public class Box<T> {
+    private T value;
+
+    public Box(T value) {
+        this.value = value;
+    }
+
+    public T get() {
+        return this.value;
+    }
+}
+
+public class Tag<T> {
+}
+
+public class Util {
+    public <T> T identity(T x) {
+        return x;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Box<Integer> a = new Box<Integer>(42);
+        println(a.get());
+
+        Box<String> b = new Box<>("hello");
+        println(b.get() + "!");
+        String s = b.get();
+        println(s + s);
+
+        Tag<Integer> tag = new Tag<Integer>();
+
+        Util u = new Util();
+        println(u.identity(3) + u.identity(4));
+        println(u.identity("ab"));
+    }
+}
