@@ -14,6 +14,9 @@
 ```bash
 cargo build
 
+# 新建最小项目（生成 <目录>/main.jrust，目录必须不存在）
+./target/debug/jrust new /tmp/hello-jrust
+
 # 转译（输出到同目录的 .rs）
 ./target/debug/jrust build examples/HelloWorld.jrust
 

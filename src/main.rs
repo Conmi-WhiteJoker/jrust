@@ -52,6 +52,13 @@ fn main() -> ExitCode {
             }
             exit_code(debug_one(Path::new(&args[2])))
         }
+        "new" => {
+            if args.len() != 3 {
+                print_usage();
+                return ExitCode::FAILURE;
+            }
+            exit_code(new_project(Path::new(&args[2])))
+        }
         "dap" => dap_main(),
         "-h" | "--help" | "help" => {
             print_usage();
@@ -82,6 +89,7 @@ fn print_usage() {
         "jrust {} —— Java 风格的 Rust 转译器（教学项目）
 
 用法:
+  jrust new <目录>                         新建一个最小项目（main.jrust）
   jrust build <文件.jrust> [更多文件...]   转译成同名 .rs
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
@@ -94,6 +102,33 @@ fn print_usage() {
   - 遇到 jrust 砍掉的 Java 特性时，会解释 Rust 为什么这么要求",
         env!("CARGO_PKG_VERSION")
     );
+}
+
+/// `jrust new` 写出的最小项目。文件名固定为 `main.jrust`：OpenIDEA 插件的运行配置
+/// 以它作为项目触发标记，类名与文件名不必一致。
+const NEW_PROJECT_MAIN: &str = r#"public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello, jrust!");
+    }
+}
+"#;
+
+fn new_project(dir: &Path) -> bool {
+    if dir.exists() {
+        eprintln!("{} 已存在，请换一个名称或先删除它", dir.display());
+        return false;
+    }
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("无法创建 {}: {}", dir.display(), e);
+        return false;
+    }
+    let main = dir.join("main.jrust");
+    if let Err(e) = std::fs::write(&main, NEW_PROJECT_MAIN) {
+        eprintln!("无法写入 {}: {}", main.display(), e);
+        return false;
+    }
+    println!("已创建 jrust 项目 {}", dir.display());
+    true
 }
 
 fn build_one(path: &Path) -> bool {
