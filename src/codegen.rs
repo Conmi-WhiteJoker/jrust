@@ -1017,8 +1017,15 @@ impl<'a> Codegen<'a> {
         self.gen_consts(class);
         self.marker(main.line);
         let throws = !main.throws.is_empty();
+        // `public static async void main(...)` → `#[tokio::main] async fn main()`（JR-S5）。
+        if main.is_async {
+            self.emit("#[tokio::main]");
+        }
         if throws {
-            self.emit(&format!("fn main() -> Result<(), {}> {{", ERROR_ENUM));
+            let a = if main.is_async { "async " } else { "" };
+            self.emit(&format!("{}fn main() -> Result<(), {}> {{", a, ERROR_ENUM));
+        } else if main.is_async {
+            self.emit("async fn main() {");
         } else {
             self.emit("fn main() {");
         }

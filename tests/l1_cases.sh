@@ -123,6 +123,8 @@ run_ok ok_shared
 run_ok ok_sync
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
+run_build_has ok_async_main '#\[tokio::main\]'
+run_build_has ok_async_main 'async fn main'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"

@@ -1,0 +1,6 @@
+// 异步入口（JR-S5）：async main → #[tokio::main] async fn main()。
+public class Main {
+    public static async void main(String[] args) {
+        System.out.println("async main");
+    }
+}
