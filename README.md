@@ -20,9 +20,36 @@ cargo build
 # 端到端验证：转译 examples/*.jrust，再用 cargo 编译产物
 ./verify.sh
 
+# 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
+./target/debug/jrust run examples/Ownership.jrust
+
+# 命令行调试
+./target/debug/jrust debug examples/Ownership.jrust
+
+# 解释执行 vs 编译执行 输出对拍
+./tests/interp_parity.sh
+
 # move 的非法边界用例（每种都应报错并给出提示）
 ./tests/move_cases.sh
 ```
+
+## 解释执行与调试（方案 C）
+
+除了「转译成 `.rs`」，jrust 还内置了一个树遍历解释器，直接执行 AST：
+
+- `jrust run <文件>`：不经过 `rustc`，立即执行并打印结果。
+- `jrust debug <文件>`：命令行调试器，断点、单步、变量查看都作用在 `.jrust` 行号上。
+  命令：`break <行>` / `run` / `next` / `step` / `out` / `print <名字>` / `where` / `list` / `quit`。
+- `jrust dap`：以 DAP（Debug Adapter Protocol）适配器方式运行，供 IDE 连接
+  （stdio 上 `Content-Length` + JSON-RPC，已实现 initialize / launch / setBreakpoints /
+  configurationDone / threads / stackTrace / scopes / variables / continue / next /
+  stepIn / stepOut / evaluate / disconnect）。
+
+解释器同样保留移动语义：`String b = a;` 之后再看 `a` 会得到
+「使用已移动的值」运行时错误，并提示所有权只能转移一次。
+
+`tests/interp_parity.sh` 对每个示例比较 `jrust run` 与「转译 + cargo 跑二进制」的
+stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 ## 设计原则
 
@@ -85,8 +112,11 @@ src/lexer.rs    手写词法分析（不引解析框架，便于阅读）
 src/parser.rs   递归下降语法分析 + 解释性诊断
 src/ast.rs      Java 风格的 AST（不含任何 Rust 概念）
 src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推断）
+src/interp.rs   树遍历解释器（run / debug 共用，保留移动语义）
+src/debug.rs    命令行调试器 + DAP 适配器
+src/json.rs     零依赖 JSON（只服务 DAP）
 examples/       5 个示例：HelloWorld、类与接口、多态集合、所有权移动、move 边界
-tests/          move 关键字的非法边界用例（move_cases.sh）
+tests/          move 非法边界用例 + 解释/编译输出对拍
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```
 
