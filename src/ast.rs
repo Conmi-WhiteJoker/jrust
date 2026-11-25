@@ -282,6 +282,11 @@ pub enum Expr {
         class: String,
         args: Vec<Expr>,
     },
+    /// `new T[n]` → `vec![默认值; n]`；元素类型在 parser 已限定为标量 / String。
+    NewArray {
+        elem: Type,
+        len: Box<Expr>,
+    },
     Binary {
         op: BinOp,
         lhs: Box<Expr>,

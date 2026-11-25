@@ -97,6 +97,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `String` | `String` | 字符串字面量自动补 `.to_string()` | [HelloWorld](examples/HelloWorld.jrust) |
 | `List<T>` | `Vec<T>`；`T` 是 interface 时 `Vec<Box<dyn T>>` | | [VecImport](examples/VecImport.jrust) |
 | `new ArrayList<>()` | `Vec::new()` | | [VecImport](examples/VecImport.jrust) |
+| `int[] a = new int[n]` | `let mut a: Vec<i32> = vec![0; (n) as usize];` | 元素只支持标量 / `String`（默认值 `0` / `0.0` / `false` / `String::new()`）；`a.size()` / `a[i]` / 增强 for 与 `List` 一致；`new Foo[n]` 报 `JR3014` | [L1 用例](tests/conformance/L1/ok_newarray.jrust) |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport.jrust) |
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 | [VecImport](examples/VecImport.jrust) |
 | `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor.jrust) |
@@ -136,7 +137,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
-- 不支持泛型声明、字段初始化、接口 static 方法、数组 `new`。
+- 不支持泛型声明、字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。

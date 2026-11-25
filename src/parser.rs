@@ -1038,7 +1038,10 @@ impl Parser {
             | Tok::Kw(Kw::Boolean)
             | Tok::Kw(Kw::Char) => true,
             Tok::Ident(_) => {
-                matches!(self.peek_at(1), Tok::Ident(_))
+                matches!(self.peek_at(1), Tok::Ident(_) | Tok::Punct("<"))
+                    // `Foo[] x`
+                    || (matches!(self.peek_at(1), Tok::Punct("["))
+                        && matches!(self.peek_at(2), Tok::Punct("]")))
                     // `Foo? x`
                     || (matches!(self.peek_at(1), Tok::Punct("?"))
                         && matches!(self.peek_at(2), Tok::Ident(_)))
@@ -1254,6 +1257,81 @@ impl Parser {
         }
     }
 
+    /// `new T[n]`：只在「类型 token 紧跟 `[`」时接管。
+    ///
+    /// 元素类型限定为标量 / String（都能给出确定默认值）；`new Foo[n]` 这类需要
+    /// `Default` 的类型报 `JR3014`，并提示改用 `Vec` + `push`。
+    fn try_new_array(&mut self) -> Option<Expr> {
+        if !matches!(self.peek_at(1), Tok::Punct("[")) {
+            return None;
+        }
+        let elem = match self.peek() {
+            Tok::Kw(Kw::Int) => Some(Type::Int),
+            Tok::Kw(Kw::Long) => Some(Type::Long),
+            Tok::Kw(Kw::Double) => Some(Type::Double),
+            Tok::Kw(Kw::Float) => Some(Type::Float),
+            Tok::Kw(Kw::Boolean) => Some(Type::Boolean),
+            Tok::Kw(Kw::Char) => Some(Type::Char),
+            Tok::Ident(n) => match n.as_str() {
+                "String" => Some(Type::String),
+                "Integer" => Some(Type::Int),
+                "Long" => Some(Type::Long),
+                "Double" => Some(Type::Double),
+                "Float" => Some(Type::Float),
+                "Boolean" => Some(Type::Boolean),
+                "Character" => Some(Type::Char),
+                "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32"
+                | "u64" | "u128" | "usize" | "f32" | "f64" | "bool" => {
+                    Some(Type::RustPrim(n.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        self.bump(); // 元素类型
+        self.bump(); // [
+        if self.check_punct("]") {
+            self.bump();
+            self.err_hint(
+                "数组字面量初始化 `new T[]{...}` 暂不支持",
+                "长度写在方括号里：`new int[3]`；要初值就逐个下标赋值，或改用 `List` + `add`。",
+            );
+            self.skip_body();
+            return Some(Expr::Ident("<错误>".to_string()));
+        }
+        let len = self.parse_expr();
+        self.expect_punct("]");
+        if self.check_punct("[") {
+            self.err_hint(
+                "不支持多维数组 `new T[n][m]`",
+                "用 `List<List<T>>` 逐层创建，或先建一维 `new T[n * m]` 再自己算下标。",
+            );
+            while self.eat_punct("[") {
+                let _ = self.parse_expr();
+                self.expect_punct("]");
+            }
+        }
+        match elem {
+            Some(t) => Some(Expr::NewArray {
+                elem: t,
+                len: Box::new(len),
+            }),
+            None => {
+                self.diags.push(
+                    Diag::error_code(
+                        self.line(),
+                        "JR3014",
+                        "`new T[n]` 的元素类型目前只支持标量 / String",
+                    )
+                    .with_hint(
+                        "对象数组用 `List<Foo>` 加 `add(new Foo(...))`；Rust 的 `vec![默认值; n]` 要求元素实现 Default。",
+                    ),
+                );
+                Some(Expr::Ident("<错误>".to_string()))
+            }
+        }
+    }
+
     fn looks_like_decl(&self) -> bool {
         match self.peek() {
             Tok::Kw(Kw::Int)
@@ -1269,11 +1347,12 @@ impl Parser {
                 ) {
                     true
                 } else {
-                    matches!(
-                        self.peek_at(1),
-                        Tok::Ident(_) | Tok::Punct("<") | Tok::Punct("[")
-                    ) || (matches!(self.peek_at(1), Tok::Punct("?"))
-                        && matches!(self.peek_at(2), Tok::Ident(_)))
+                    matches!(self.peek_at(1), Tok::Ident(_) | Tok::Punct("<"))
+                        // `Foo[] x`：只有 `[` 紧跟 `]` 才是数组类型，`a[0]` 是下标。
+                        || (matches!(self.peek_at(1), Tok::Punct("["))
+                            && matches!(self.peek_at(2), Tok::Punct("]")))
+                        || (matches!(self.peek_at(1), Tok::Punct("?"))
+                            && matches!(self.peek_at(2), Tok::Ident(_)))
                 }
             }
             _ => false,
@@ -1664,6 +1743,9 @@ impl Parser {
             }
             Tok::Kw(Kw::New) => {
                 self.bump();
+                if let Some(e) = self.try_new_array() {
+                    return e;
+                }
                 let class = self.expect_ident();
                 if self.check_punct("<") {
                     self.skip_generic_args();

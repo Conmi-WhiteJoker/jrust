@@ -907,6 +907,29 @@ impl<'a> Interp<'a> {
                 }
             }
             Expr::New { class, args } => self.eval_new(class, args),
+            Expr::NewArray { elem, len } => {
+                let line = self.cur_line;
+                let n = match self.eval(len)? {
+                    Value::Int(k) if k >= 0 => k as usize,
+                    Value::Int(k) => {
+                        return Err(RuntimeError::new(
+                            line,
+                            format!("数组长度不能为负数: {}", k),
+                        )
+                        .with_hint("Java 会抛 NegativeArraySizeException；先保证长度 >= 0。"))
+                    }
+                    other => {
+                        return Err(RuntimeError::new(
+                            line,
+                            format!("数组长度需要 int，实际是 {}", other.type_name()),
+                        ))
+                    }
+                };
+                Ok(Value::List(Rc::new(RefCell::new(vec![
+                    default_value(elem);
+                    n
+                ]))))
+            }
             Expr::Call { recv, name, args } => self.eval_call(recv.as_deref(), name, args),
             Expr::Closure { .. } => {
                 let line = self.cur_line;

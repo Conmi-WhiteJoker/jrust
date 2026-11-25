@@ -1,0 +1,36 @@
+public class Main {
+    public static void main(String[] args) {
+        int[] nums = new int[4];
+        nums[0] = 10;
+        nums[2] = 30;
+        println(nums.size());
+        println(nums[0]);
+        println(nums[1]);
+        println(nums[2]);
+        println(nums[3]);
+
+        String[] names = new String[2];
+        names[0] = "alpha";
+        println(names[0] + "!");
+        println(names.size());
+
+        int n = 3;
+        long[] big = new long[n];
+        big[n - 1] = 7;
+        println(big.size());
+        println(big[2]);
+
+        boolean[] flags = new boolean[2];
+        println(flags[0]);
+        println(flags[1]);
+
+        double[] ds = new double[2];
+        println(ds[0]);
+
+        int sum = 0;
+        for (int x : nums) {
+            sum += x;
+        }
+        println(sum);
+    }
+}

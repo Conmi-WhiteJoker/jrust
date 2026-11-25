@@ -170,10 +170,28 @@ impl<'a> Codegen<'a> {
         type_cloneable(ty, &self.cloneable)
     }
 
+    /// `new T[n]` 的默认元素值。元素类型已在 parser 限定为标量 / String。
+    fn array_default(&self, elem: &Type) -> String {
+        match elem {
+            Type::Double | Type::Float => "0.0".to_string(),
+            Type::Boolean => "false".to_string(),
+            Type::Char => "'\\0'".to_string(),
+            Type::String => "String::new()".to_string(),
+            Type::RustPrim(n) if n == "bool" => "false".to_string(),
+            Type::RustPrim(n) if n.starts_with('f') => "0.0".to_string(),
+            _ => "0".to_string(),
+        }
+    }
+
     /// 赋值目标 / 声明处的静态类型（用于判断是否要 clone）。
     fn target_type(&self, expr: &Expr, env: &Env) -> Option<Type> {
         match expr {
             Expr::Ident(n) => env.vars.get(n).cloned(),
+            Expr::Index(base, _) => match self.infer_type(base, env) {
+                Some(Type::Array(inner)) => Some(*inner),
+                Some(Type::List(inner)) => Some(*inner),
+                _ => None,
+            },
             Expr::Field(recv, f) => {
                 let base = match &**recv {
                     Expr::This => env.self_class.clone().map(Type::Named),
@@ -1215,6 +1233,15 @@ impl<'a> Codegen<'a> {
                 }
                 inner
             }
+            Expr::NewArray { elem, len } => {
+                let default = self.array_default(elem);
+                // 字面量长度直接写数字，避免产物里出现多余的 `as usize`。
+                let n = match &**len {
+                    Expr::Int(k) if *k >= 0 => k.to_string(),
+                    _ => format!("({}) as usize", self.gen_expr(len, env, Some(&Type::Int))),
+                };
+                format!("vec![{}; {}]", default, n)
+            }
             Expr::Binary { op, lhs, rhs } => {
                 if *op == BinOp::Add && (expr_is_str_literal(lhs) || expr_is_str_literal(rhs)) {
                     self.err(
@@ -1257,7 +1284,12 @@ impl<'a> Codegen<'a> {
             Expr::Index(a, b) => {
                 let x = self.gen_expr(a, env, None);
                 let y = self.gen_expr(b, env, None);
-                format!("{}[{}]", x, y)
+                // Rust 的索引必须是 usize；字面量交给编译器推断，变量统一转。
+                let idx = match &**b {
+                    Expr::Int(k) if *k >= 0 => y,
+                    _ => format!("({}) as usize", y),
+                };
+                format!("{}[{}]", x, idx)
             }
             Expr::Paren(inner) => {
                 let x = self.gen_expr(inner, env, expect);
@@ -1516,17 +1548,20 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        let is_list = matches!(recv_ty, Some(Type::List(_)));
+        // `T[]`（`new T[n]`）与 `List<T>` 在产物里都是 `Vec`，方法映射共享。
+        let is_list = matches!(recv_ty, Some(Type::List(_)) | Some(Type::Array(_)));
         let elem_is_trait = match &recv_ty {
-            Some(Type::List(inner)) => matches!(&**inner, Type::Named(n) if self.ifaces.contains(n)),
+            Some(Type::List(inner) | Type::Array(inner)) => {
+                matches!(&**inner, Type::Named(n) if self.ifaces.contains(n))
+            }
             _ => false,
         };
         let elem_is_string = match &recv_ty {
-            Some(Type::List(inner)) => matches!(&**inner, Type::String),
+            Some(Type::List(inner) | Type::Array(inner)) => matches!(&**inner, Type::String),
             _ => false,
         };
         let elem_ty = match &recv_ty {
-            Some(Type::List(inner)) => Some((**inner).clone()),
+            Some(Type::List(inner) | Type::Array(inner)) => Some((**inner).clone()),
             _ => None,
         };
         let param_types = self.call_param_types(recv, name, env);
@@ -1689,6 +1724,7 @@ impl<'a> Codegen<'a> {
             Expr::Ident(n) => env.vars.get(n).cloned(),
             Expr::This => env.self_class.clone().map(Type::Named),
             Expr::New { class, .. } => Some(Type::Named(class.clone())),
+            Expr::NewArray { elem, .. } => Some(Type::Array(Box::new(elem.clone()))),
             Expr::Field(recv, f) => {
                 if let Expr::Ident(en) = &**recv {
                     if self
@@ -2092,6 +2128,7 @@ fn expr_uses_ident(e: &Expr, want: &str) -> bool {
                 || args.iter().any(|a| expr_uses_ident(a, want))
         }
         Expr::New { args, .. } => args.iter().any(|a| expr_uses_ident(a, want)),
+        Expr::NewArray { len, .. } => expr_uses_ident(len, want),
         Expr::Binary { lhs, rhs, .. } => expr_uses_ident(lhs, want) || expr_uses_ident(rhs, want),
         Expr::Unary { expr, .. } => expr_uses_ident(expr, want),
         Expr::Index(a, b) => expr_uses_ident(a, want) || expr_uses_ident(b, want),

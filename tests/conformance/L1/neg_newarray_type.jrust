@@ -1,0 +1,6 @@
+public class Main {
+    public static void main(String[] args) {
+        Foo[] xs = new Foo[3];
+        println(xs.size());
+    }
+}

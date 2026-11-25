@@ -88,6 +88,7 @@ run_ok ok_enum_switch
 run_ok ok_bool_switch
 run_ok ok_nullable
 run_ok ok_cfor
+run_ok ok_newarray
 run_closure
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
@@ -100,6 +101,7 @@ run_neg neg_null_assign JR3005 "改用一个非空值"
 run_neg neg_nullable_method JR3006 "先判空再取出来"
 run_neg neg_cfor_step JR2003 "步长不为 1"
 run_neg neg_cfor_dir JR2003 "方向不一致"
+run_neg neg_newarray_type JR3014 "只支持标量 / String"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]
