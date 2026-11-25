@@ -27,7 +27,7 @@ fn main() {
     // jrust:L19
     let mut v: Vec<String> = Vec::new();
     // jrust:L20
-    v.push(a);
+    v.push((a).to_string());
     // jrust:L21
     // jrust 提示: 显式 `move` —— 所有权从 `v` 搬到 `w`。Rust 的赋值本身就是 move，所以产物与不加 `move` 相同；这个关键字只是把意图写出来。
     let w: Vec<String> = v;

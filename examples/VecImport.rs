@@ -12,8 +12,33 @@ fn main() {
     // jrust:L9
     v.push(2);
     // jrust:L10
-    println!("size={}", v.len());
+    v.push(3);
     // jrust:L11
-    println!("{}", v[0]);
+    println!("size={}", v.len());
+    // jrust:L12
+    println!("v[1]={}", v[1]);
+    // jrust:L15
+    let mut sum: i32 = 0;
+    // jrust:L16
+    for x in &v {
+        // jrust:L17
+        sum = sum + x;
+    }
+    // jrust:L19
+    println!("sum={}", sum);
+    // jrust:L22
+    let mut names: Vec<String> = Vec::new();
+    // jrust:L23
+    names.push(("alpha").to_string());
+    // jrust:L24
+    names.push(("beta").to_string());
+    // jrust:L25
+    println!("{} {}", names[0], names[1]);
+    // jrust:L28
+    let mut also: Vec<String> = Vec::new();
+    // jrust:L29
+    also.push(("same").to_string());
+    // jrust:L30
+    println!("{}", also[0]);
 }
 

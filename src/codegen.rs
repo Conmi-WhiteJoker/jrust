@@ -658,12 +658,23 @@ impl<'a> Codegen<'a> {
             Some(Type::List(inner)) => matches!(&**inner, Type::Named(n) if self.ifaces.contains(n)),
             _ => false,
         };
+        let elem_is_string = match &recv_ty {
+            Some(Type::List(inner)) => matches!(&**inner, Type::String),
+            _ => false,
+        };
 
         let mut arg_strs = Vec::new();
         for a in args {
-            if is_list && name == "add" && elem_is_trait {
+            if is_list && name == "add" {
                 let inner = self.gen_expr(a, env, None);
-                arg_strs.push(format!("Box::new({})", inner));
+                if elem_is_trait {
+                    arg_strs.push(format!("Box::new({})", inner));
+                } else if elem_is_string {
+                    // Vec<String> 的 push 需要 String，字面量要补 to_string()
+                    arg_strs.push(format!("({}).to_string()", inner));
+                } else {
+                    arg_strs.push(inner);
+                }
             } else {
                 arg_strs.push(self.gen_expr(a, env, None));
             }

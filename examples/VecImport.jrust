@@ -3,11 +3,30 @@ import std.vec.Vec;
 
 public class VecImport {
     public static void main(String[] args) {
-        // Vec<T> 与 List<T> 同义：都生成 Vec<T>，add/get/size 用法不变
+        // Vec<T> 与 List<T> 同义：都生成 Vec<T>，add/size/get 对应 push/len/下标
         Vec<int> v = new Vec<>();
         v.add(1);
         v.add(2);
+        v.add(3);
         println("size={}", v.size());
-        println(v.get(0));
+        println("v[1]={}", v.get(1));
+
+        // for-each 遍历 Vec<int>：生成 for x in &v
+        int sum = 0;
+        for (int x : v) {
+            sum = sum + x;
+        }
+        println("sum={}", sum);
+
+        // 元素类型换成 String 同样适用
+        Vec<String> names = new Vec<>();
+        names.add("alpha");
+        names.add("beta");
+        println("{} {}", names.get(0), names.get(1));
+
+        // 老写法 List<T> + ArrayList 与 Vec<T> 完全等价
+        List<String> also = new ArrayList<>();
+        also.add("same");
+        println(also.get(0));
     }
 }
