@@ -116,6 +116,31 @@ const PUNCTS: &[&str] = &[
     "&", "|",
 ];
 
+/// 扫描一段数字，允许 Java 风格的下划线分隔（`1_000`）。
+///
+/// `_` 只能夹在数字之间：`1_`、`1__0`、`1._5` 都会记一条诊断（同一个字面量只记一次），
+/// 但扫描继续，让第一轮就能把同一行里其它的错误一起报出来。
+fn scan_digits(
+    chars: &[char],
+    mut i: usize,
+    line: usize,
+    bad_underscore: &mut bool,
+    diags: &mut Vec<Diag>,
+) -> usize {
+    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '_') {
+        if chars[i] == '_' {
+            let prev_is_digit = i > 0 && chars[i - 1].is_ascii_digit();
+            let next_is_digit = chars.get(i + 1).map_or(false, |c| c.is_ascii_digit());
+            if (!prev_is_digit || !next_is_digit) && !*bad_underscore {
+                *bad_underscore = true;
+                diags.push(Diag::error(line, "`_` 只能夹在数字之间用于分隔，例如 `1_000`"));
+            }
+        }
+        i += 1;
+    }
+    i
+}
+
 pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
     let chars: Vec<char> = src.chars().collect();
     let mut i = 0usize;
@@ -256,21 +281,23 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
         if c.is_ascii_digit() {
             let start_line = line;
             let start = i;
-            while i < chars.len() && chars[i].is_ascii_digit() {
-                i += 1;
-            }
+            let mut bad_underscore = false;
+            i = scan_digits(&chars, i, start_line, &mut bad_underscore, &mut diags);
             let mut is_float = false;
-            if i < chars.len() && chars[i] == '.' && chars.get(i + 1).map_or(false, |d| d.is_ascii_digit())
+            if i < chars.len()
+                && chars[i] == '.'
+                && chars
+                    .get(i + 1)
+                    .map_or(false, |d| d.is_ascii_digit() || *d == '_')
             {
                 is_float = true;
                 i += 1;
-                while i < chars.len() && chars[i].is_ascii_digit() {
-                    i += 1;
-                }
+                i = scan_digits(&chars, i, start_line, &mut bad_underscore, &mut diags);
             }
             let text: String = chars[start..i].iter().collect();
+            let clean: String = text.chars().filter(|c| *c != '_').collect();
             if is_float {
-                match text.parse::<f64>() {
+                match clean.parse::<f64>() {
                     Ok(v) => toks.push(Token {
                         tok: Tok::Float(v),
                         line: start_line,
@@ -278,7 +305,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
                     Err(_) => diags.push(Diag::error(start_line, format!("无法解析浮点数 `{}`", text))),
                 }
             } else {
-                match text.parse::<i64>() {
+                match clean.parse::<i64>() {
                     Ok(v) => toks.push(Token {
                         tok: Tok::Int(v),
                         line: start_line,

@@ -6,6 +6,7 @@ public class RustTypes {
         i32 a = 40;
         i32 b = 2;
         i32 sum = a + b;
+        i32 thousand = 1_000;
         i64 big = 9000000000;
         i128 huge = 1234567890123;
         u8 small = 200;
@@ -15,6 +16,7 @@ public class RustTypes {
         bool ok = true;
 
         System.out.println(sum);
+        System.out.println(thousand);
         System.out.println(big);
         System.out.println(huge);
         System.out.println(small);
