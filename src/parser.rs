@@ -830,14 +830,13 @@ impl Parser {
                         body,
                         line,
                     })
+                } else if self.check_punct("(") {
+                    self.parse_c_for(line)
                 } else {
-                    self.diags.push(
-                        Diag::error(line, "jrust 不支持 C 风格的 for(初始化; 条件; 步进)")
-                            .with_hint(
-                                "改用增强 for：`for (Animal a : animals)`。需要计数时用 `int i = 0; while (i < n) { ...; i += 1; }`。",
-                            ),
+                    self.err_hint(
+                        "`for` 后面缺少 `(`",
+                        "写成 `for (int i = 0; i < n; i++) { ... }` 或 `for (T x : xs) { ... }`。",
                     );
-                    self.skip_parens();
                     self.skip_body();
                     None
                 }
@@ -1086,6 +1085,173 @@ impl Parser {
             i += 1;
         }
         false
+    }
+
+    /// C 风格计数循环。形状不支持时统一报 JR2003 并跳到循环体之后，
+    /// 不生成可能死循环或语义不同的代码。
+    fn parse_c_for(&mut self, line: usize) -> Option<Stmt> {
+        self.expect_punct("(");
+        let ty = if self.eat_kw(Kw::Int) {
+            Type::Int
+        } else if self.eat_kw(Kw::Long) {
+            Type::Long
+        } else {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的初始化只支持 `int i = ...` / `long i = ...`",
+                "写成 `for (int i = 0; i < n; i++) { ... }`。",
+            );
+        };
+        let name = self.expect_ident();
+        if !self.eat_punct("=") {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的初始化缺少 `=`",
+                "写成 `for (int i = 0; i < n; i++) { ... }`。",
+            );
+        }
+        let start = self.parse_expr();
+        if !self.eat_punct(";") {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的初始化后缺少 `;`",
+                "三段之间用 `;` 分隔：`for (int i = 0; i < n; i++)`。",
+            );
+        }
+        let cond = self.parse_expr();
+        if !self.eat_punct(";") {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的条件后缺少 `;`",
+                "三段之间用 `;` 分隔：`for (int i = 0; i < n; i++)`。",
+            );
+        }
+        let step_name = self.expect_ident();
+        let (descending, step_ok) = if self.eat_punct("++") {
+            (false, true)
+        } else if self.eat_punct("--") {
+            (true, true)
+        } else if self.eat_punct("+=") {
+            (false, self.eat_int_one())
+        } else if self.eat_punct("-=") {
+            (true, self.eat_int_one())
+        } else {
+            (false, false)
+        };
+        if !step_ok {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的步进只支持 `i++`、`i--`、`i += 1`、`i -= 1`",
+                "步长不为 1 时改用 while：`int i = 0; while (i < n) { ...; i += 2; }`。",
+            );
+        }
+        if step_name != name {
+            return self.c_for_bail(
+                line,
+                format!(
+                    "C 风格 for 的步进变量 `{}` 与初始化变量 `{}` 不一致",
+                    step_name, name
+                ),
+                "三段都用同一个计数变量，例如 `for (int i = 0; i < n; i++)`。",
+            );
+        }
+        let (op, lhs, rhs) = match cond {
+            Expr::Binary { op, lhs, rhs } => (op, lhs, rhs),
+            _ => {
+                return self.c_for_bail(
+                    line,
+                    "C 风格 for 的条件必须是 `i < n` 形式的比较",
+                    "条件写成 `i < n`、`i <= n`、`i > n` 或 `i >= n`。",
+                )
+            }
+        };
+        let (inclusive, cond_descending) = match op {
+            BinOp::Lt => (false, false),
+            BinOp::Le => (true, false),
+            BinOp::Gt => (false, true),
+            BinOp::Ge => (true, true),
+            _ => {
+                return self.c_for_bail(
+                    line,
+                    "C 风格 for 的条件只支持 `<`、`<=`、`>`、`>=`",
+                    "条件写成 `i < n`、`i <= n`、`i > n` 或 `i >= n`。",
+                )
+            }
+        };
+        if !matches!(&*lhs, Expr::Ident(n) if *n == name) {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的条件左侧必须是计数变量",
+                format!("写成 `{} < n` 这样的形式。", name),
+            );
+        }
+        if cond_descending != descending {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 的步进方向与条件方向不一致",
+                "自增配 `i < n` / `i <= n`，自减配 `i > n` / `i >= n`。",
+            );
+        }
+        if !self.eat_punct(")") {
+            return self.c_for_bail(
+                line,
+                "C 风格 for 头部缺少 `)`",
+                "三段之后用 `)` 收尾：`for (int i = 0; i < n; i++)`。",
+            );
+        }
+        let body = self.parse_body();
+        Some(Stmt::ForRange {
+            ty,
+            name,
+            start,
+            end: *rhs,
+            inclusive,
+            descending,
+            body,
+            line,
+        })
+    }
+
+    fn c_for_bail(
+        &mut self,
+        line: usize,
+        msg: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Option<Stmt> {
+        self.diags
+            .push(Diag::error_code(line, "JR2003", msg).with_hint(hint));
+        self.skip_until_rparen();
+        self.skip_body();
+        None
+    }
+
+    /// `(` 已被消费时，跳到与之配对的 `)` 之后。
+    fn skip_until_rparen(&mut self) {
+        let mut depth = 1i32;
+        while !self.at_eof() {
+            if self.check_punct("(") {
+                depth += 1;
+                self.bump();
+            } else if self.check_punct(")") {
+                depth -= 1;
+                self.bump();
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                self.bump();
+            }
+        }
+    }
+
+    /// 只接受步长 1：`i += 1` / `i -= 1`。
+    fn eat_int_one(&mut self) -> bool {
+        if matches!(self.peek(), Tok::Int(1)) {
+            self.bump();
+            true
+        } else {
+            false
+        }
     }
 
     fn looks_like_decl(&self) -> bool {

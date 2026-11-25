@@ -413,7 +413,10 @@ impl<'a> Interp<'a> {
         let mut flow = Flow::Normal;
         for st in stmts {
             // while / foreach 在循环体每轮自己打点，避免同一行连续停两次。
-            if !matches!(st, Stmt::While { .. } | Stmt::ForEach { .. }) {
+            if !matches!(
+                st,
+                Stmt::While { .. } | Stmt::ForEach { .. } | Stmt::ForRange { .. }
+            ) {
                 if let Err(e) = self.tick(stmt_line(st)) {
                     self.pop_scope();
                     return Err(e);
@@ -550,6 +553,59 @@ impl<'a> Interp<'a> {
                         Flow::Return(v) => return Ok(Flow::Return(v)),
                         _ => {}
                     }
+                }
+                Ok(Flow::Normal)
+            }
+            Stmt::ForRange {
+                ty,
+                name,
+                start,
+                end,
+                inclusive,
+                descending,
+                body,
+                line,
+            } => {
+                let sv = self.eval(start)?;
+                let s = self.int_of(sv, *line)?;
+                let ev = self.eval(end)?;
+                let e = self.int_of(ev, *line)?;
+                let step: i64 = if *descending { -1 } else { 1 };
+                let mut i = s;
+                loop {
+                    let go = if *descending {
+                        if *inclusive {
+                            i >= e
+                        } else {
+                            i > e
+                        }
+                    } else if *inclusive {
+                        i <= e
+                    } else {
+                        i < e
+                    };
+                    if !go {
+                        break;
+                    }
+                    self.tick(*line)?;
+                    if let Some(f) = self.frames.last_mut() {
+                        f.scopes.push(vec![(
+                            name.clone(),
+                            Slot {
+                                value: Value::Int(i),
+                                moved: false,
+                                ty: ty.clone(),
+                            },
+                        )]);
+                    }
+                    let r = self.exec_block(body);
+                    self.pop_scope();
+                    match r? {
+                        Flow::Break => break,
+                        Flow::Return(v) => return Ok(Flow::Return(v)),
+                        _ => {}
+                    }
+                    i += step;
                 }
                 Ok(Flow::Normal)
             }
@@ -1383,6 +1439,17 @@ impl<'a> Interp<'a> {
         }
     }
 
+    fn int_of(&self, v: Value, line: usize) -> Result<i64, RuntimeError> {
+        match v {
+            Value::Int(n) => Ok(n),
+            other => Err(RuntimeError::new(
+                line,
+                format!("for 的边界需要整数，实际是 {}", other.type_name()),
+            )
+            .with_hint("C 风格 for 只支持 int / long 计数。")),
+        }
+    }
+
     fn as_usize(&self, v: &Value) -> Result<usize, RuntimeError> {
         match v {
             Value::Int(n) if *n >= 0 => Ok(*n as usize),
@@ -1473,6 +1540,7 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::If { line, .. }
         | Stmt::While { line, .. }
         | Stmt::ForEach { line, .. }
+        | Stmt::ForRange { line, .. }
         | Stmt::Break { line }
         | Stmt::Continue { line }
         | Stmt::Switch { line, .. }

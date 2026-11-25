@@ -868,6 +868,39 @@ impl<'a> Codegen<'a> {
                 self.indent -= 1;
                 self.emit("}");
             }
+            Stmt::ForRange {
+                ty,
+                name,
+                start,
+                end,
+                inclusive,
+                descending,
+                body,
+                line,
+            } => {
+                self.cur_line = *line;
+                self.marker(*line);
+                let s = self.gen_expr(start, env, Some(ty));
+                let e = self.gen_expr(end, env, Some(ty));
+                // 升序：start..end / start..=end；降序要交换上下界再 rev()。
+                let range = if *descending {
+                    if *inclusive {
+                        format!("({}..={}).rev()", e, s)
+                    } else {
+                        format!("((({}) + 1)..={}).rev()", e, s)
+                    }
+                } else if *inclusive {
+                    format!("{}..={}", s, e)
+                } else {
+                    format!("{}..{}", s, e)
+                };
+                self.emit(&format!("for {} in {} {{", name, range));
+                self.indent += 1;
+                env.vars.insert(name.clone(), ty.clone());
+                self.gen_stmts(body, env);
+                self.indent -= 1;
+                self.emit("}");
+            }
             Stmt::Break { line } => {
                 self.cur_line = *line;
                 self.marker(*line);
@@ -1927,6 +1960,7 @@ fn walk_mut(stmts: &[Stmt], set: &mut HashSet<String>) {
             }
             Stmt::While { body, .. } => walk_mut(body, set),
             Stmt::ForEach { body, .. } => walk_mut(body, set),
+            Stmt::ForRange { body, .. } => walk_mut(body, set),
             Stmt::Switch {
                 subject,
                 cases,
@@ -2016,6 +2050,18 @@ fn stmt_uses_ident(s: &Stmt, want: &str) -> bool {
             iter, body, name, ..
         } => {
             name == want || expr_uses_ident(iter, want) || stmts_use_ident(body, want)
+        }
+        Stmt::ForRange {
+            start,
+            end,
+            body,
+            name,
+            ..
+        } => {
+            name == want
+                || expr_uses_ident(start, want)
+                || expr_uses_ident(end, want)
+                || stmts_use_ident(body, want)
         }
         Stmt::Break { .. } | Stmt::Continue { .. } => false,
         Stmt::Switch {

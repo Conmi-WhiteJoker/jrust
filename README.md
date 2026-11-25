@@ -99,6 +99,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `new ArrayList<>()` | `Vec::new()` | | [VecImport](examples/VecImport.jrust) |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport.jrust) |
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 | [VecImport](examples/VecImport.jrust) |
+| `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor.jrust) |
 | `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo.jrust) |
 | `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo.jrust) |
 | `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo.jrust) |
@@ -129,7 +130,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `synchronized` | `Mutex<T>` / `RwLock<T>` |
 | `protected` | 只有 `pub` / 私有 |
 | 反射、泛型擦除、raw type、内部类、装箱 | 没有对应物，直接不提供 |
-| `++` / `--`、C 风格 `for` | `x += 1`、增强 `for` / `while` |
+| `++` / `--`（C 风格 `for` 头部除外） | `x += 1` |
 
 ## MVP 的边界
 
@@ -140,6 +141,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
+- C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包，这些特性走 `jrust build` + cargo 验证。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 不支持字符串 `+` 拼接（只允许出现在 `println` 参数里，由 jrust 展开）。

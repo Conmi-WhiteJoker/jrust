@@ -18,7 +18,7 @@ done
 echo "== 3/4 cargo build 验证生成的 Rust =="
 cargo build --quiet --manifest-path verify/Cargo.toml
 
-echo "== 4/4 L1 一致性用例（throws / switch / enum / 闭包）=="
+echo "== 4/4 L1 一致性用例（throws / switch / enum / 闭包 / T? / C 风格 for）=="
 ./tests/l1_cases.sh
 
 echo "全部通过：jrust 产物可被 rustc 编译。"

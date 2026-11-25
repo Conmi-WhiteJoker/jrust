@@ -171,6 +171,22 @@ pub enum Stmt {
         body: Vec<Stmt>,
         line: usize,
     },
+    /// C 风格计数循环：`for (int i = 0; i < n; i++)` → `for i in 0..n`。
+    ///
+    /// 只接受「同一个计数变量 + 单比较 + 自增/自减」的形状：
+    /// `i++` 配 `<` / `<=`，`i--` 配 `>` / `>=`；其它组合在 parser 报 JR2003。
+    ForRange {
+        ty: Type,
+        name: String,
+        start: Expr,
+        end: Expr,
+        /// 条件为 `<=` / `>=`，生成 `..=`。
+        inclusive: bool,
+        /// 递减循环，生成 `(a..b).rev()`。
+        descending: bool,
+        body: Vec<Stmt>,
+        line: usize,
+    },
     Break {
         line: usize,
     },
