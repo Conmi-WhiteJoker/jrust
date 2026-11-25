@@ -40,7 +40,7 @@ impl Circle {
 fn main() {
     // jrust:L25
     let s: Box<dyn Shape> = Box::new(Circle::new(2.0));
-    // jrust:L26
+    // jrust:L27
     println!("{} area={}", s.name(), s.area());
 }
 
