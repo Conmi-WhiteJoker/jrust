@@ -84,6 +84,8 @@ pub struct Method {
     pub is_static: bool,
     /// `async` 修饰符：`pub async fn`（JR-C9）。
     pub is_async: bool,
+    /// `synchronized` 修饰符（JR-C12）：方法体开头锁定类内 `@shared` 可变字段。
+    pub is_synchronized: bool,
     /// 方法上的注解（→ `#[...]`）。
     pub attrs: Vec<Attr>,
     /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
@@ -276,6 +278,12 @@ pub enum Stmt {
     /// `throw new E("msg");` → `return Err(JrustError::E(...));`
     Throw {
         expr: Expr,
+        line: usize,
+    },
+    /// `synchronized (this.f) { ... }`（JR-C12）：先取 `f` 的锁再执行块。
+    Sync {
+        lock: Expr,
+        body: Vec<Stmt>,
         line: usize,
     },
 }

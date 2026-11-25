@@ -627,6 +627,11 @@ impl<'a> Interp<'a> {
                 let _ = self.exec_block(body)?;
                 Ok(Flow::Normal)
             }
+            // 解释器无并发：synchronized 块直接顺序执行（JR-C12）。
+            Stmt::Sync { body, .. } => {
+                let f = self.exec_block(body)?;
+                Ok(f)
+            }
             Stmt::Throw { line, .. } => Err(RuntimeError::new(
                 *line,
                 "解释器暂不支持 throw / throws",
@@ -1614,6 +1619,7 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::Switch { line, .. }
         | Stmt::Spawn { line, .. }
         | Stmt::Raw { line, .. }
+        | Stmt::Sync { line, .. }
         | Stmt::Throw { line, .. } => *line,
     }
 }

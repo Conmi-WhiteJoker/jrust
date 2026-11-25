@@ -1,0 +1,32 @@
+// synchronized 方法与 synchronized 块（JR-C12）：锁落在 @shared 可变字段上。
+public class Counter {
+    @shared int value;
+
+    public Counter() {
+        this.value = 0;
+    }
+
+    public synchronized void add(int d) {
+        this.value += d;
+    }
+
+    public void addTwice(int d) {
+        synchronized (this.value) {
+            this.value += d;
+            this.value += d;
+        }
+    }
+
+    public int get() {
+        return this.value;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Counter c = new Counter();
+        c.add(3);
+        c.addTwice(2);
+        println(c.get());
+    }
+}

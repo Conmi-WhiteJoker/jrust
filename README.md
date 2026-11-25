@@ -137,6 +137,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
 | `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
 | `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [L1 用例](tests/conformance/L1/ok_shared.jrust) |
+| `synchronized` 方法 / `synchronized (this.f) { ... }` | 方法体开头按字段名排序依次 `lock()` 类内 `@shared` 可变字段；块语句 `let _g = self.f.lock().unwrap();` | 已持锁时复用不重复加锁；锁不是 `@shared` 可变字段报 `JR3026` | [L1 用例](tests/conformance/L1/ok_sync.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -145,7 +146,6 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `extends` 类继承 | trait 组合 + 字段组合，组合优于继承 |
 | `try` / `catch` / `finally` | Rust 没有异常：可能失败的操作返回 `Result<T, E>`，用 `throws` + `?` 传播；清理交给 `Drop` |
 | `instanceof` | `enum` + `match`，或多态方法 |
-| `synchronized` | `Mutex<T>` / `RwLock<T>` |
 | `protected` | 只有 `pub` / 私有 |
 | 反射、泛型擦除、raw type、内部类、装箱 | 没有对应物，直接不提供 |
 | `? extends` / `? super`（声明处变型） | Rust 没有变型：改用 trait object（`Box<dyn Trait>`）或写出具体类型，报 `JR3010` |
@@ -166,6 +166,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。
+- `synchronized` 只能锁定 `@shared` 可变字段（`synchronized (this.f)`），不支持锁定任意对象；`synchronized` 方法按字段名排序加锁，多个 `@shared` 可变字段时顺序固定以防交叉死锁。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构

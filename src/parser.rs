@@ -512,6 +512,7 @@ impl Parser {
         let mut is_static = false;
         let mut is_final = false;
         let mut is_async = false;
+        let mut is_synchronized = false;
         loop {
             if self.eat_kw(Kw::Public) {
                 vis = Vis::Public;
@@ -527,6 +528,8 @@ impl Parser {
                 is_static = true;
             } else if self.eat_kw(Kw::Async) {
                 is_async = true;
+            } else if self.eat_kw(Kw::Synchronized) {
+                is_synchronized = true;
             } else if self.eat_kw(Kw::Final) {
                 // final 对字段是「不可变」（static final → const），对方法是「不可覆写」
                 is_final = true;
@@ -606,6 +609,7 @@ impl Parser {
                 is_static,
                 attrs,
                 is_async,
+                is_synchronized,
                 type_params,
                 name,
                 ret: ty,
@@ -1168,17 +1172,19 @@ impl Parser {
                 Some(Stmt::Throw { expr, line })
             }
             Tok::Kw(Kw::Synchronized) => {
-                self.diags.push(
-                    Diag::error(line, "jrust 不支持 synchronized").with_hint(
-                        "Rust 把锁和数据绑在一起：`let m = Mutex::new(x); let g = m.lock().unwrap();`，锁在作用域结束时自动释放。",
-                    ),
-                );
                 self.bump();
-                if self.check_punct("(") {
-                    self.skip_parens();
+                if !self.eat_punct("(") {
+                    self.err_hint(
+                        "`synchronized` 后面必须跟 `(锁对象)`",
+                        "写成 `synchronized (this.f) { ... }`，`f` 应是 `@shared` 可变字段。",
+                    );
+                    self.skip_to_stmt_end();
+                    return None;
                 }
-                self.skip_body();
-                None
+                let lock = self.parse_expr();
+                self.expect_punct(")");
+                let body = self.parse_block();
+                Some(Stmt::Sync { lock, body, line })
             }
             _ => {
                 if self.looks_like_decl() {

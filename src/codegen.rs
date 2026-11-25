@@ -499,6 +499,24 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `synchronized` 方法开头依次锁定类内 `@shared` 可变字段（JR-C12），返回已锁字段名。
+    ///
+    /// 按字段名排序，保证不同方法加锁顺序一致，避免交叉死锁。
+    fn lock_shared_fields(&mut self, class: &str) -> Vec<String> {
+        let mut fields: Vec<String> = self
+            .shared_mut
+            .get(class)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        fields.sort();
+        for f in &fields {
+            let g = format!("_g_{}", f);
+            self.emit(&format!("let mut {} = self.{}.lock().unwrap();", g, f));
+            self.guarded.insert(f.clone(), g);
+        }
+        fields
+    }
+
     fn rust_type(&self, t: &Type) -> String {
         match t {
             Type::Int => "i32".to_string(),
@@ -1164,7 +1182,20 @@ impl<'a> Codegen<'a> {
         let prev_async = self.in_async;
         self.in_method = !m.is_static;
         self.in_async = m.is_async;
+        // `synchronized` 方法（JR-C12）：方法体开头按字段名排序依次锁定类内
+        // 所有 `Arc<Mutex<T>>` 的 `@shared` 字段，避免多个方法加锁顺序不一致导致死锁。
+        let locked = if m.is_synchronized {
+            self.lock_shared_fields(class_name)
+        } else {
+            Vec::new()
+        };
+        if m.is_synchronized && locked.is_empty() {
+            self.emit("// jrust 提示: synchronized 方法内没有可锁的 @shared 可变字段，按普通方法生成。");
+        }
         self.gen_stmts(&m.body, &mut env);
+        for f in &locked {
+            self.guarded.remove(f);
+        }
         self.in_async = prev_async;
         self.in_method = prev;
         self.generic_params = prev_generic;
@@ -1411,6 +1442,41 @@ impl<'a> Codegen<'a> {
                         "`spawn` 块捕获了 `this`，它不满足 Send + 'static",
                         "`this` 是 `&self`，不能跨线程持有；先把需要的字段复制到局部变量（标量 / String / Vec 可 clone）再 spawn。",
                     );
+                }
+            }
+            Stmt::Sync { lock, body, line } => {
+                self.cur_line = *line;
+                self.marker(*line);
+                let field = match strip_parens_expr(lock) {
+                    Expr::Field(recv, f) if matches!(**recv, Expr::This) => Some(f.clone()),
+                    _ => None,
+                };
+                let valid = field.as_ref().map_or(false, |f| {
+                    env.self_class
+                        .as_deref()
+                        .map_or(false, |cn| self.is_shared_field(cn, f) && self.shared_is_mut(cn, f))
+                });
+                if let (Some(f), true) = (field, valid) {
+                    // 已持锁（synchronized 方法 / 外层 synchronized 块）时不再重复加锁。
+                    if self.guarded.contains_key(&f) {
+                        self.gen_stmts(body, env);
+                    } else {
+                        self.emit("{");
+                        self.indent += 1;
+                        self.emit(&format!("let mut _g = self.{}.lock().unwrap();", f));
+                        self.guarded.insert(f.clone(), "_g".to_string());
+                        self.gen_stmts(body, env);
+                        self.guarded.remove(&f);
+                        self.indent -= 1;
+                        self.emit("}");
+                    }
+                } else {
+                    self.err_code(
+                        "JR3026",
+                        "`synchronized` 需要一个 `@shared` 可变字段作为锁",
+                        "写成 `synchronized (this.f) { ... }`；`f` 要声明为 `@shared`，且类内方法写过它（才会是 `Arc<Mutex<T>>`）。",
+                    );
+                    self.gen_stmts(body, env);
                 }
             }
             Stmt::Raw { code, line } => {
@@ -2925,6 +2991,7 @@ fn each_stmt<'a>(stmts: &'a [Stmt], f: &mut dyn FnMut(&'a Stmt)) {
             Stmt::While { body, .. }
             | Stmt::ForEach { body, .. }
             | Stmt::ForRange { body, .. }
+            | Stmt::Sync { body, .. }
             | Stmt::Spawn { body, .. } => each_stmt(body, f),
             Stmt::Switch { cases, default, .. } => {
                 for c in cases {
@@ -3001,6 +3068,7 @@ fn each_stmt_expr<'a>(stmts: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
             }
         }
         Stmt::Throw { expr, .. } => each_expr(expr, f),
+        Stmt::Sync { lock, .. } => each_expr(lock, f),
         _ => {}
     });
 }
@@ -3120,6 +3188,7 @@ fn walk_mut(stmts: &[Stmt], set: &mut HashSet<String>) {
             Stmt::While { body, .. } => walk_mut(body, set),
             Stmt::ForEach { body, .. } => walk_mut(body, set),
             Stmt::ForRange { body, .. } => walk_mut(body, set),
+            Stmt::Sync { body, .. } => walk_mut(body, set),
             Stmt::Switch {
                 subject,
                 cases,
@@ -3239,6 +3308,9 @@ fn stmt_uses_ident(s: &Stmt, want: &str) -> bool {
                     .map_or(false, |d| stmts_use_ident(d, want))
         }
         Stmt::Spawn { body, .. } => stmts_use_ident(body, want),
+        Stmt::Sync { lock, body, .. } => {
+            expr_uses_ident(lock, want) || stmts_use_ident(body, want)
+        }
         Stmt::Raw { .. } => false,
         Stmt::Throw { expr, .. } => expr_uses_ident(expr, want),
     }
