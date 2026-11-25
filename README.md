@@ -135,6 +135,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`） | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
+| `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [L1 用例](tests/conformance/L1/ok_docs.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
 | `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |

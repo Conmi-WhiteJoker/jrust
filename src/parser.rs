@@ -136,6 +136,7 @@ impl Parser {
             Tok::Kw(k) => format!("关键字 `{}`", kw_text(*k)),
             Tok::Punct(p) => format!("`{}`", p),
             Tok::Raw(_) => "raw 块".to_string(),
+            Tok::Doc(_) => "文档注释".to_string(),
             Tok::Eof => "文件末尾".to_string(),
         }
     }
@@ -226,6 +227,16 @@ impl Parser {
         }
     }
 
+    /// 收集紧邻的 `///` 文档注释（JR-L2），返回去掉 `///` 后的各行文本。
+    fn parse_docs(&mut self) -> Vec<String> {
+        let mut docs = Vec::new();
+        while let Tok::Doc(s) = self.peek().clone() {
+            docs.push(s);
+            self.bump();
+        }
+        docs
+    }
+
     /// 解析 `@Xxx(args)` 注解序列（JR-D9）。实参按 token 原文拼接，交给 codegen 输出属性。
     fn parse_annotations(&mut self) -> Vec<Attr> {
         let mut attrs = Vec::new();
@@ -288,6 +299,7 @@ impl Parser {
         let mut prog = Program::default();
         while !self.at_eof() {
             let start = self.pos;
+            let docs = self.parse_docs();
             match self.peek().clone() {
                 Tok::Kw(Kw::Import) | Tok::Kw(Kw::Package) => {
                     let is_package = self.check_kw(Kw::Package);
@@ -329,7 +341,7 @@ impl Parser {
                 | Tok::Kw(Kw::Interface)
                 | Tok::Kw(Kw::Enum)
                 | Tok::Punct("@") => {
-                    if let Some(item) = self.parse_type_decl() {
+                    if let Some(item) = self.parse_type_decl(docs) {
                         match item {
                             TopItem::Class(c) => prog.classes.push(c),
                             TopItem::Interface(i) => prog.interfaces.push(i),
@@ -349,17 +361,17 @@ impl Parser {
         prog
     }
 
-    fn parse_type_decl(&mut self) -> Option<TopItem> {
+    fn parse_type_decl(&mut self, docs: Vec<String>) -> Option<TopItem> {
         let attrs = self.parse_annotations();
         self.eat_kw(Kw::Public);
         if self.check_kw(Kw::Class) {
-            return Some(TopItem::Class(self.parse_class(attrs)));
+            return Some(TopItem::Class(self.parse_class(attrs, docs)));
         }
         if self.check_kw(Kw::Interface) {
-            return Some(TopItem::Interface(self.parse_interface(attrs)));
+            return Some(TopItem::Interface(self.parse_interface(attrs, docs)));
         }
         if self.check_kw(Kw::Enum) {
-            return Some(TopItem::Enum(self.parse_enum(attrs)));
+            return Some(TopItem::Enum(self.parse_enum(attrs, docs)));
         }
         self.err("这里期望 `class`、`interface` 或 `enum`");
         self.bump();
@@ -370,7 +382,7 @@ impl Parser {
     /// ```
     /// enum Shape { Circle(double r), Rect(double w, double h), Empty }
     /// ```
-    fn parse_enum(&mut self, attrs: Vec<Attr>) -> EnumDecl {
+    fn parse_enum(&mut self, attrs: Vec<Attr>, docs: Vec<String>) -> EnumDecl {
         let line = self.line();
         self.bump(); // enum
         let name = self.expect_ident();
@@ -383,6 +395,7 @@ impl Parser {
         if self.expect_punct("{") {
             while !self.at_eof() && !self.check_punct("}") {
                 let start = self.pos;
+                let vdocs = self.parse_docs();
                 let vline = self.line();
                 let vname = self.expect_ident();
                 let params = if self.check_punct("(") {
@@ -393,6 +406,7 @@ impl Parser {
                 variants.push(EnumVariant {
                     name: vname,
                     params,
+                    docs: vdocs,
                     line: vline,
                 });
                 if !self.eat_punct(",") {
@@ -407,13 +421,14 @@ impl Parser {
         EnumDecl {
             name,
             attrs,
+            docs,
             type_params,
             variants,
             line,
         }
     }
 
-    fn parse_class(&mut self, attrs: Vec<Attr>) -> ClassDecl {
+    fn parse_class(&mut self, attrs: Vec<Attr>, docs: Vec<String>) -> ClassDecl {
         let line = self.line();
         self.bump(); // class
         let name = self.expect_ident();
@@ -463,6 +478,7 @@ impl Parser {
         let mut class = ClassDecl {
             name: name.clone(),
             attrs,
+            docs,
             type_params,
             implements,
             fields: Vec::new(),
@@ -475,7 +491,8 @@ impl Parser {
         if self.expect_punct("{") {
             while !self.at_eof() && !self.check_punct("}") {
                 let start = self.pos;
-                self.parse_member(&mut class);
+                let mdocs = self.parse_docs();
+                self.parse_member(&mut class, mdocs);
                 if self.pos == start && !self.at_eof() {
                     self.bump();
                 }
@@ -497,7 +514,7 @@ impl Parser {
         }
     }
 
-    fn parse_member(&mut self, class: &mut ClassDecl) {
+    fn parse_member(&mut self, class: &mut ClassDecl, docs: Vec<String>) {
         // 类内 `raw { ... }`（JR-X1）：作为成员原样收集。
         if let Tok::Raw(code) = self.peek().clone() {
             let line = self.line();
@@ -578,6 +595,7 @@ impl Parser {
                 class.ctor = Some(Constructor {
                     vis,
                     attrs,
+                    docs,
                     params,
                     body,
                     line: ctor_line,
@@ -621,6 +639,7 @@ impl Parser {
                 attrs,
                 is_async,
                 is_synchronized,
+                docs,
                 type_params,
                 name,
                 ret: ty,
@@ -661,6 +680,7 @@ impl Parser {
                         is_final: true,
                         init: Some(init),
                         attrs,
+                        docs,
                         ty,
                         name,
                         line: member_line,
@@ -688,6 +708,7 @@ impl Parser {
                     is_final,
                     init: None,
                     attrs,
+                    docs,
                     ty,
                     name,
                     line: member_line,
@@ -696,7 +717,7 @@ impl Parser {
         }
     }
 
-    fn parse_interface(&mut self, attrs: Vec<Attr>) -> InterfaceDecl {
+    fn parse_interface(&mut self, attrs: Vec<Attr>, docs: Vec<String>) -> InterfaceDecl {
         let line = self.line();
         self.bump(); // interface
         let name = self.expect_ident();
@@ -718,6 +739,7 @@ impl Parser {
         if self.expect_punct("{") {
             while !self.at_eof() && !self.check_punct("}") {
                 let start = self.pos;
+                let mdocs = self.parse_docs();
                 let mline = self.line();
                 let mut saw_static = false;
                 loop {
@@ -750,6 +772,7 @@ impl Parser {
                         };
                         methods.push(MethodSig {
                             attrs: mattrs,
+                            docs: mdocs,
                             type_params: mtype_params,
                             name: mname,
                             ret,
@@ -770,6 +793,7 @@ impl Parser {
         InterfaceDecl {
             name,
             attrs,
+            docs,
             type_params,
             methods,
             line,
@@ -1012,6 +1036,8 @@ impl Parser {
         }
         while !self.at_eof() && !self.check_punct("}") {
             let start = self.pos;
+            // 方法体内的 `///` 没有对应 Rust item，按普通注释丢弃。
+            let _ = self.parse_docs();
             if let Some(s) = self.parse_stmt() {
                 v.push(s);
             }
@@ -2254,6 +2280,7 @@ fn tok_text(t: &Tok) -> String {
         Tok::Kw(k) => kw_text(*k).to_string(),
         Tok::Punct(p) => p.to_string(),
         Tok::Raw(s) => s.clone(),
+        Tok::Doc(s) => format!("///{}", s),
         Tok::Eof => String::new(),
     }
 }

@@ -15,6 +15,8 @@ pub enum Tok {
     Punct(&'static str),
     /// `raw { ... }` 的块内容（JR-X1）：原样保留，不参与词法分析。
     Raw(String),
+    /// `///` 文档注释（JR-L2）：内容为 `///` 之后的原文。
+    Doc(String),
     Eof,
 }
 
@@ -299,6 +301,27 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
         }
         if c.is_whitespace() {
             i += 1;
+            continue;
+        }
+
+        // 文档注释 `///`（JR-L2）：保留内容，交给 parser 挂到下一个声明上。
+        // `////` 起头的是普通注释（Rust 的约定），不当作文档。
+        if c == '/'
+            && chars.get(i + 1) == Some(&'/')
+            && chars.get(i + 2) == Some(&'/')
+            && chars.get(i + 3) != Some(&'/')
+        {
+            let start_line = line;
+            i += 3;
+            let mut text = String::new();
+            while i < chars.len() && chars[i] != '\n' {
+                text.push(chars[i]);
+                i += 1;
+            }
+            toks.push(Token {
+                tok: Tok::Doc(text),
+                line: start_line,
+            });
             continue;
         }
 

@@ -1,0 +1,50 @@
+/// 计数器。
+public class Counter {
+    /// 当前值。
+    @shared int value;
+
+    /// 构造器：初始化计数。
+    public Counter(int v) {
+        this.value = v;
+    }
+
+    /// 加一。
+    public void inc() {
+        this.value += 1;
+    }
+
+    /// 取当前值。
+    public int get() {
+        return this.value;
+    }
+}
+
+/// 颜色。
+public enum Color {
+    /// 红。
+    Red,
+    /// 绿。
+    Green
+}
+
+/// 问候者。
+public interface Greeter {
+    /// 向某人打招呼。
+    public String greet(String who);
+}
+
+public class GreeterImpl implements Greeter {
+    public String greet(String who) {
+        return "hi " + who;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Counter c = new Counter(1);
+        c.inc();
+        println(c.get());
+        GreeterImpl g = new GreeterImpl();
+        println(g.greet("jrust"));
+    }
+}

@@ -86,6 +86,8 @@ pub struct Method {
     pub is_async: bool,
     /// `synchronized` 修饰符（JR-C12）：方法体开头锁定类内 `@shared` 可变字段。
     pub is_synchronized: bool,
+    /// `///` 文档注释（JR-L2）：原样输出到生成代码。
+    pub docs: Vec<String>,
     /// 方法上的注解（→ `#[...]`）。
     pub attrs: Vec<Attr>,
     /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
@@ -103,6 +105,7 @@ pub struct Method {
 pub struct Constructor {
     pub vis: Vis,
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     pub params: Vec<Param>,
     pub body: Vec<Stmt>,
     pub line: usize,
@@ -117,6 +120,7 @@ pub struct Field {
     /// 仅 `static final` 字段有初始值（Java 静态常量必须带初值）。
     pub init: Option<Expr>,
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     pub ty: Type,
     pub name: String,
     pub line: usize,
@@ -126,6 +130,7 @@ pub struct Field {
 pub struct ClassDecl {
     pub name: String,
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     /// 类级类型参数：`class Box<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     /// `implements A, B<Integer>`：`Named` 或 `Generic`。
@@ -148,6 +153,7 @@ pub struct RawCode {
 #[derive(Debug, Clone)]
 pub struct MethodSig {
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     /// 方法级类型参数：`interface Mapper<T> { <U> U f(U x); }` 里的 `U`。
     pub type_params: Vec<TypeParam>,
     pub name: String,
@@ -164,6 +170,7 @@ pub struct MethodSig {
 pub struct InterfaceDecl {
     pub name: String,
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     /// 接口级类型参数：`interface Mapper<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub methods: Vec<MethodSig>,
@@ -175,6 +182,7 @@ pub struct InterfaceDecl {
 pub struct EnumVariant {
     pub name: String,
     pub params: Vec<Param>,
+    pub docs: Vec<String>,
     pub line: usize,
 }
 
@@ -183,6 +191,7 @@ pub struct EnumVariant {
 pub struct EnumDecl {
     pub name: String,
     pub attrs: Vec<Attr>,
+    pub docs: Vec<String>,
     /// 枚举级类型参数：`enum Maybe<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariant>,

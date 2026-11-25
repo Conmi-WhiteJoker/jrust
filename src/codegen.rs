@@ -611,6 +611,7 @@ impl<'a> Codegen<'a> {
 
     fn gen_trait(&mut self, iface: &InterfaceDecl) {
         self.marker(iface.line);
+        self.emit_docs(&iface.docs);
         for l in self.attr_lines(&iface.attrs) {
             self.emit(&l);
         }
@@ -626,6 +627,7 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             self.marker(m.line);
+            self.emit_docs(&m.docs);
             for l in self.attr_lines(&m.attrs) {
                 self.emit(&l);
             }
@@ -678,6 +680,7 @@ impl<'a> Codegen<'a> {
         // Rust 不允许 `Trait::assoc_fn()`（E0790，Self 不明确），因此不进 trait。
         for m in iface.methods.iter().filter(|m| m.is_static) {
             self.marker(m.line);
+            self.emit_docs(&m.docs);
             for l in self.attr_lines(&m.attrs) {
                 self.emit(&l);
             }
@@ -734,6 +737,7 @@ impl<'a> Codegen<'a> {
 
     fn gen_enum(&mut self, e: &EnumDecl) {
         self.marker(e.line);
+        self.emit_docs(&e.docs);
         for l in self.attr_lines(&e.attrs) {
             self.emit(&l);
         }
@@ -753,6 +757,7 @@ impl<'a> Codegen<'a> {
         self.indent += 1;
         for v in &e.variants {
             self.marker(v.line);
+            self.emit_docs(&v.docs);
             if v.params.is_empty() {
                 self.emit(&format!("{},", v.name));
             } else {
@@ -820,6 +825,7 @@ impl<'a> Codegen<'a> {
         let consts: Vec<&Field> = class.fields.iter().filter(|f| is_const_field(f)).collect();
         for f in &consts {
             self.marker(f.line);
+            self.emit_docs(&f.docs);
             self.cur_line = f.line;
             let vis = if f.vis == Vis::Public { "pub " } else { "" };
             let ty = if f.ty == Type::String {
@@ -843,6 +849,13 @@ impl<'a> Codegen<'a> {
     }
 
     /// 注解 → `#[...]` 行（JR-D9）。`derive` 单独合并，`raw` 原样输出。
+    /// `///` 文档注释（JR-L2）：原样输出。
+    fn emit_docs(&mut self, docs: &[String]) {
+        for d in docs {
+            self.emit(&format!("///{}", d));
+        }
+    }
+
     fn attr_lines(&self, attrs: &[Attr]) -> Vec<String> {
         let mut out = Vec::new();
         for a in attrs {
@@ -900,6 +913,7 @@ impl<'a> Codegen<'a> {
         );
         self.gen_consts(class);
         self.marker(class.line);
+        self.emit_docs(&class.docs);
         for l in self.attr_lines(&class.attrs) {
             self.emit(&l);
         }
@@ -918,6 +932,7 @@ impl<'a> Codegen<'a> {
             self.indent += 1;
             for f in instance_fields(class) {
                 self.marker(f.line);
+                self.emit_docs(&f.docs);
                 for l in self.attr_lines(&f.attrs) {
                     self.emit(&l);
                 }
@@ -1059,6 +1074,7 @@ impl<'a> Codegen<'a> {
         }
         let vis = if ctor.vis == Vis::Public { "pub " } else { "" };
         self.marker(ctor.line);
+        self.emit_docs(&ctor.docs);
         for l in self.attr_lines(&ctor.attrs) {
             self.emit(&l);
         }
@@ -1163,6 +1179,7 @@ impl<'a> Codegen<'a> {
             }
         };
         self.marker(m.line);
+        self.emit_docs(&m.docs);
         for l in self.attr_lines(&m.attrs) {
             self.emit(&l);
         }
