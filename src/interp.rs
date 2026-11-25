@@ -69,6 +69,8 @@ enum Value {
     List(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<HashMap<String, Value>>>),
     Obj(Rc<RefCell<Instance>>),
+    /// `T?`：`Some(v)` / `None`，与 Rust 的 `Option<T>` 对齐。
+    Option(Option<Box<Value>>),
     Unit,
 }
 
@@ -97,6 +99,7 @@ fn deep_clone(v: &Value) -> Value {
                 .map(|(k, v)| (k.clone(), deep_clone(v)))
                 .collect(),
         ))),
+        Value::Option(inner) => Value::Option(inner.as_ref().map(|v| Box::new(deep_clone(v)))),
         Value::Obj(rc) => {
             let inst = rc.borrow();
             let fields = inst
@@ -139,7 +142,7 @@ impl Value {
             Value::Bool(b) => b.to_string(),
             Value::Char(c) => c.to_string(),
             Value::Str(s) => s.clone(),
-            Value::List(_) | Value::Obj(_) | Value::Map(_) => self.debug_repr(),
+            Value::List(_) | Value::Obj(_) | Value::Map(_) | Value::Option(_) => self.debug_repr(),
             Value::Unit => "()".to_string(),
         }
     }
@@ -189,6 +192,8 @@ impl Value {
                     format!("{} {{ {} }}", inst.class, inner.join(", "))
                 }
             }
+            Value::Option(Some(v)) => format!("Some({})", v.debug_repr()),
+            Value::Option(None) => "None".to_string(),
         }
     }
 
@@ -202,6 +207,7 @@ impl Value {
             Value::List(_) => "List",
             Value::Map(_) => "Map",
             Value::Obj(obj) => return obj.borrow().class.clone(),
+            Value::Option(_) => "Option",
             Value::Unit => "void",
         }
         .to_string()
@@ -223,6 +229,7 @@ fn type_str(t: &Type) -> String {
         Type::Map(k, v) => format!("Map<{}, {}>", type_str(k), type_str(v)),
         Type::Array(inner) => format!("{}[]", type_str(inner)),
         Type::Named(name) => name.clone(),
+        Type::Nullable(inner) => format!("{}?", type_str(inner)),
     }
 }
 
@@ -239,6 +246,7 @@ fn default_value(t: &Type) -> Value {
         Type::List(_) | Type::Array(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
         Type::Map(_, _) => Value::Map(Rc::new(RefCell::new(HashMap::new()))),
         Type::Named(_) | Type::Void => Value::Unit,
+        Type::Nullable(_) => Value::Option(None),
     }
 }
 
@@ -255,6 +263,8 @@ struct Frame {
     line: usize,
     scopes: Vec<Vec<(String, Slot)>>,
     this: Option<Value>,
+    /// 返回类型：`return e;` 据此做可空包装 / 解包。
+    ret_ty: Type,
 }
 
 /// 调试器看到的栈帧快照（变量已拍平，`d.label` 这类路径可直接查看）。
@@ -333,6 +343,7 @@ impl<'a> Interp<'a> {
             line: main.line,
             scopes: vec![scope],
             this: None,
+            ret_ty: main.ret.clone(),
         });
         let result = self.exec_block(&main.body);
         self.frames.pop();
@@ -432,13 +443,27 @@ impl<'a> Interp<'a> {
 
     fn exec_stmt(&mut self, st: &Stmt) -> Result<Flow, RuntimeError> {
         match st {
-            Stmt::Let { ty, name, init, .. } => {
+            Stmt::Let {
+                ty,
+                name,
+                init,
+                line,
+            } => {
                 let v = self.eval_assign_source(init)?;
+                let v = self.coerce_value(v, ty, *line)?;
                 self.declare(name, ty.clone(), v);
                 Ok(Flow::Normal)
             }
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                line,
+            } => {
                 let v = self.eval_assign_source(value)?;
+                let v = match self.target_type(target)? {
+                    Some(tt) => self.coerce_value(v, &tt, *line)?,
+                    None => v,
+                };
                 self.assign(target, v)?;
                 Ok(Flow::Normal)
             }
@@ -446,9 +471,17 @@ impl<'a> Interp<'a> {
                 self.eval(expr)?;
                 Ok(Flow::Normal)
             }
-            Stmt::Return { value, .. } => {
+            Stmt::Return { value, line } => {
+                let rty = self
+                    .frames
+                    .last()
+                    .map(|f| f.ret_ty.clone())
+                    .unwrap_or(Type::Void);
                 let v = match value {
-                    Some(e) => self.eval(e)?,
+                    Some(e) => {
+                        let v = self.eval(e)?;
+                        self.coerce_value(v, &rty, *line)?
+                    }
                     None => Value::Unit,
                 };
                 Ok(Flow::Return(v))
@@ -540,6 +573,45 @@ impl<'a> Interp<'a> {
     }
 
     // ---------- 变量 ----------
+
+    /// 把值调整成目标类型：`T?` 补 `Some(...)`，非可空类型从 `Some` 解包（`None` 报错）。
+    fn coerce_value(&self, v: Value, ty: &Type, line: usize) -> Result<Value, RuntimeError> {
+        match ty {
+            Type::Nullable(_) => match v {
+                Value::Option(_) => Ok(v),
+                other => Ok(Value::Option(Some(Box::new(other)))),
+            },
+            Type::Void => Ok(v),
+            _ => match v {
+                Value::Option(Some(inner)) => Ok(*inner),
+                Value::Option(None) => Err(RuntimeError::new(line, "不能把 `null` 赋给非可空类型")
+                    .with_hint(
+                        "把目标类型写成 `T?`，或先判空再取出来：`if (x != null) { T v = x; ... }`。",
+                    )),
+                other => Ok(other),
+            },
+        }
+    }
+
+    /// 赋值目标的声明类型（用于可空包装 / 解包）。
+    fn target_type(&mut self, target: &Expr) -> Result<Option<Type>, RuntimeError> {
+        match strip_paren(target) {
+            Expr::Ident(name) => Ok(self.find_slot(name).ok().map(|s| s.ty.clone())),
+            Expr::Field(recv, name) => {
+                let rv = self.eval(recv)?;
+                match rv {
+                    Value::Obj(obj) => Ok(obj
+                        .borrow()
+                        .fields
+                        .iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, s)| s.ty.clone())),
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
 
     fn declare(&mut self, name: &str, ty: Type, value: Value) {
         if let Some(f) = self.frames.last_mut() {
@@ -726,6 +798,7 @@ impl<'a> Interp<'a> {
             Expr::Str(s) => Ok(Value::Str(s.clone())),
             Expr::Char(c) => Ok(Value::Char(*c)),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
+            Expr::Null => Ok(Value::Option(None)),
             Expr::Ident(name) => self.read_var(name),
             Expr::This => self.read_this(),
             Expr::Field(recv, name) => {
@@ -869,17 +942,7 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(r))
             }
             BinOp::Eq | BinOp::Ne => {
-                let eq = match (a, b) {
-                    (Value::Int(x), Value::Int(y)) => x == y,
-                    (Value::Double(x), Value::Double(y)) => x == y,
-                    (Value::Int(x), Value::Double(y)) => (*x as f64) == *y,
-                    (Value::Double(x), Value::Int(y)) => *x == (*y as f64),
-                    (Value::Str(x), Value::Str(y)) => x == y,
-                    (Value::Bool(x), Value::Bool(y)) => x == y,
-                    (Value::Char(x), Value::Char(y)) => x == y,
-                    (Value::Unit, Value::Unit) => true,
-                    _ => false,
-                };
+                let eq = values_equal(a, b);
                 Ok(Value::Bool(if op == BinOp::Eq { eq } else { !eq }))
             }
             BinOp::And | BinOp::Or => unreachable!(),
@@ -1040,6 +1103,7 @@ impl<'a> Interp<'a> {
     ) -> Result<(), RuntimeError> {
         let mut scope = Vec::new();
         for (p, v) in ctor.params.iter().zip(args.into_iter()) {
+            let v = self.coerce_value(v, &p.ty, ctor.line)?;
             scope.push((
                 p.name.clone(),
                 Slot {
@@ -1055,6 +1119,7 @@ impl<'a> Interp<'a> {
             line: ctor.line,
             scopes: vec![scope],
             this: Some(Value::Obj(obj)),
+            ret_ty: Type::Void,
         });
         let r = self.exec_block(&ctor.body);
         self.frames.pop();
@@ -1072,7 +1137,14 @@ impl<'a> Interp<'a> {
             let text = if args.is_empty() {
                 String::new()
             } else if args.len() == 1 {
-                self.eval(&args[0])?.display()
+                let v = self.eval(&args[0])?;
+                if matches!(v, Value::Option(_)) {
+                    return Err(RuntimeError::new(line, "不能直接打印可空类型 `T?`")
+                        .with_hint(
+                            "先判空并取出非空值：`if (x != null) { T v = x; println(v); }`。",
+                        ));
+                }
+                v.display()
             } else {
                 let fmt = match &args[0] {
                     Expr::Str(s) => s.clone(),
@@ -1085,7 +1157,14 @@ impl<'a> Interp<'a> {
                 };
                 let mut vals = Vec::new();
                 for a in &args[1..] {
-                    vals.push(self.eval(a)?.display());
+                    let v = self.eval(a)?;
+                    if matches!(v, Value::Option(_)) {
+                        return Err(RuntimeError::new(line, "不能直接打印可空类型 `T?`")
+                            .with_hint(
+                                "先判空并取出非空值：`if (x != null) { T v = x; println(v); }`。",
+                            ));
+                    }
+                    vals.push(v.display());
                 }
                 match format_with(&fmt, &vals) {
                     Some(t) => t,
@@ -1168,11 +1247,26 @@ impl<'a> Interp<'a> {
                             .with_hint("先用 containsKey 判断；Rust 的 get 返回 Option，不会给 null。")),
                         }
                     }
+                    "getOrNull" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "getOrNull 需要一个键"));
+                        }
+                        let k = self.eval(&args[0])?;
+                        let found = rc.borrow().get(&map_key(&k)).cloned();
+                        Ok(Value::Option(found.map(Box::new)))
+                    }
                     other => Err(RuntimeError::new(
                         line,
                         format!("Map 没有方法 `{}`", other),
                     )),
                 },
+                Value::Option(_) => Err(RuntimeError::new(
+                    line,
+                    format!("可空值不能直接调用 `{}`", name),
+                )
+                .with_hint(
+                    "先判空再取出来：`if (x != null) { T v = x; v.method() }`（→ `if let Some(v) = x`）。",
+                )),
                 Value::Obj(_) => {
                     let class = match &rv {
                         Value::Obj(obj) => obj.borrow().class.clone(),
@@ -1251,6 +1345,7 @@ impl<'a> Interp<'a> {
     ) -> Result<Value, RuntimeError> {
         let mut scope = Vec::new();
         for (p, v) in method.params.iter().zip(args.into_iter()) {
+            let v = self.coerce_value(v, &p.ty, method.line)?;
             scope.push((
                 p.name.clone(),
                 Slot {
@@ -1266,6 +1361,7 @@ impl<'a> Interp<'a> {
             line: method.line,
             scopes: vec![scope],
             this,
+            ret_ty: method.ret.clone(),
         });
         let r = self.exec_block(&method.body);
         self.frames.pop();
@@ -1381,6 +1477,26 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::Continue { line }
         | Stmt::Switch { line, .. }
         | Stmt::Throw { line, .. } => *line,
+    }
+}
+
+/// `==` / `!=` 的比较语义；`null` 用 `Option(None)` 表示，因此 `x == null` 天然成立。
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Double(x), Value::Double(y)) => x == y,
+        (Value::Int(x), Value::Double(y)) => (*x as f64) == *y,
+        (Value::Double(x), Value::Int(y)) => *x == (*y as f64),
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Char(x), Value::Char(y)) => x == y,
+        (Value::Unit, Value::Unit) => true,
+        (Value::Option(x), Value::Option(y)) => match (x, y) {
+            (None, None) => true,
+            (Some(p), Some(q)) => values_equal(p, q),
+            _ => false,
+        },
+        _ => false,
     }
 }
 

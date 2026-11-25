@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# L1 一致性用例：throws/Result/?、switch→match、带数据 enum、闭包，以及对应诊断码。
+# L1 一致性用例：throws/Result/?、switch→match、带数据 enum、闭包、T?/null，以及对应诊断码。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -86,6 +86,7 @@ run_closure() {
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
+run_ok ok_nullable
 run_closure
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
@@ -94,6 +95,8 @@ run_neg neg_switch_incomplete JR3019 "补上缺少的 case"
 run_neg neg_fallthrough JR3020 "给该分支补"
 run_neg neg_throw_without_throws JR3021 "在方法签名后加"
 run_neg neg_throw_undeclared JR3021 "在方法签名里声明"
+run_neg neg_null_assign JR3005 "改用一个非空值"
+run_neg neg_nullable_method JR3006 "先判空再取出来"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

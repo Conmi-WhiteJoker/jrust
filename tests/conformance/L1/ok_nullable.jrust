@@ -1,0 +1,42 @@
+public class Holder {
+    private String? tag;
+
+    public Holder(String? tag) {
+        this.tag = tag;
+    }
+
+    public String? getTag() {
+        return this.tag;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Holder a = new Holder("x");
+        Holder b = new Holder(null);
+        if (a.getTag() != null) {
+            String t = a.getTag();
+            println(t);
+        }
+        if (b.getTag() == null) {
+            println("none");
+        }
+
+        Map<String, String> m = new HashMap<>();
+        m.put("k", "v");
+        String? hit = m.getOrNull("k");
+        String? miss = m.getOrNull("nope");
+        if (hit != null) {
+            String s = hit;
+            println(s);
+        }
+        if (miss == null) {
+            println("missing");
+        }
+
+        String? empty = null;
+        if (empty == null) {
+            println("null");
+        }
+    }
+}

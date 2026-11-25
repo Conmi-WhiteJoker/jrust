@@ -193,6 +193,156 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// 生成「赋值源」：可空类型补 `Some(...)`，非可空类型从 `T?` 解包，
+    /// 并在需要时按值复制（`copy == true`）。
+    fn gen_assigned_value(
+        &mut self,
+        init: &Expr,
+        ty: &Type,
+        env: &mut Env,
+        copy: bool,
+        hint_target: Option<&str>,
+    ) -> String {
+        let core = strip_parens_expr(init);
+        match ty {
+            Type::Nullable(inner) => {
+                if matches!(core, Expr::Null) {
+                    return self.gen_expr(init, env, Some(ty));
+                }
+                if self.expr_is_nullable(core, env) {
+                    let s = self.gen_expr(init, env, Some(ty));
+                    return if copy {
+                        self.clone_if_needed(s, ty, core, hint_target)
+                    } else {
+                        s
+                    };
+                }
+                let s = self.gen_expr(init, env, Some(inner));
+                let s = if copy {
+                    self.clone_if_needed(s, inner, core, hint_target)
+                } else {
+                    s
+                };
+                format!("Some({})", s)
+            }
+            Type::Void => self.gen_expr(init, env, Some(ty)),
+            other => {
+                if self.expr_is_nullable(core, env) {
+                    // 只允许把 T? 解包给非可空 T：None 时会 panic，等价于 Java 的 NPE。
+                    let base = self.gen_expr(init, env, None);
+                    self.emit(
+                        "// jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。",
+                    );
+                    return if copy && is_holder_expr(core) && self.is_cloneable_type(other) {
+                        format!("{}.clone().unwrap()", base)
+                    } else {
+                        format!("{}.unwrap()", base)
+                    };
+                }
+                let s = self.gen_expr(init, env, Some(other));
+                if copy {
+                    self.clone_if_needed(s, other, core, hint_target)
+                } else {
+                    s
+                }
+            }
+        }
+    }
+
+    /// 变量 / 字段是「持有者」：按值语义需要补 `.clone()`。
+    fn clone_if_needed(
+        &mut self,
+        s: String,
+        ty: &Type,
+        core: &Expr,
+        hint_target: Option<&str>,
+    ) -> String {
+        if !is_holder_expr(core) || ty.is_copy_scalar() || matches!(ty, Type::Void) {
+            return s;
+        }
+        if self.is_cloneable_type(ty) {
+            if let (Some(target), Expr::Ident(n)) = (hint_target, core) {
+                self.emit(&format!(
+                    "// jrust 提示: 普通赋值按值复制——`{}` 与 `{}` 各持一份；只想转移所有权请写 `move {}`。",
+                    n, target, n
+                ));
+            }
+            format!("{}.clone()", s)
+        } else {
+            self.err_code(
+                "JR4002",
+                format!("`{}` 类型不可 Clone，无法按值复制", self.rust_type(ty)),
+                "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或显式写 `move` 转移所有权。",
+            );
+            s
+        }
+    }
+
+    fn expr_is_nullable(&self, e: &Expr, env: &Env) -> bool {
+        matches!(self.infer_type(e, env), Some(Type::Nullable(_)))
+    }
+
+    /// 表达式是不是 `this` 的字段：从 `&self` 方法返回字段时必须 `.clone()`。
+    fn is_self_field(&self, e: &Expr, _env: &Env) -> bool {
+        matches!(strip_parens_expr(e), Expr::Field(..))
+    }
+
+    /// 方法 / 构造器的形参类型，用于在调用点处理 `T?` 的 `Some` 包装。
+    fn call_param_types(
+        &self,
+        recv: &Option<Box<Expr>>,
+        name: &str,
+        env: &Env,
+    ) -> Option<Vec<Type>> {
+        if let Some(Expr::Ident(en)) = recv.as_deref() {
+            if let Some(ed) = self.enums.get(en) {
+                if let Some(v) = ed.variants.iter().find(|v| &v.name == name) {
+                    return Some(v.params.iter().map(|p| p.ty.clone()).collect());
+                }
+            }
+            if let Some(cd) = self.classes.get(en) {
+                if let Some(m) = cd.methods.iter().find(|m| &m.name == name && m.is_static) {
+                    return Some(m.params.iter().map(|p| p.ty.clone()).collect());
+                }
+            }
+        }
+        if let Some(r) = recv.as_deref() {
+            if let Some(Type::Named(c)) = self.infer_type(r, env) {
+                if let Some(cd) = self.classes.get(&c) {
+                    if let Some(m) = cd.methods.iter().find(|m| m.name == name && !m.is_static) {
+                        return Some(m.params.iter().map(|p| p.ty.clone()).collect());
+                    }
+                }
+                if let Some(iface) = self.prog.interfaces.iter().find(|i| i.name == c) {
+                    if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
+                        return Some(m.params.iter().map(|p| p.ty.clone()).collect());
+                    }
+                }
+            }
+        } else if let Some(c) = &env.self_class {
+            if let Some(cd) = self.classes.get(c) {
+                if let Some(m) = cd.methods.iter().find(|m| m.name == name && m.is_static) {
+                    return Some(m.params.iter().map(|p| p.ty.clone()).collect());
+                }
+            }
+        }
+        None
+    }
+
+    /// 生成一个实参；形参是 `T?` 时把非空值包成 `Some(...)`。
+    fn gen_arg(&mut self, a: &Expr, pt: &Type, env: &mut Env) -> String {
+        match pt {
+            Type::Nullable(inner) => {
+                if matches!(strip_parens_expr(a), Expr::Null) || self.expr_is_nullable(a, env) {
+                    self.gen_expr(a, env, Some(pt))
+                } else {
+                    format!("Some({})", self.gen_expr(a, env, Some(inner)))
+                }
+            }
+            _ => self.gen_expr(a, env, Some(pt)),
+        }
+    }
+
     fn rust_type(&self, t: &Type) -> String {
         match t {
             Type::Int => "i32".to_string(),
@@ -218,6 +368,7 @@ impl<'a> Codegen<'a> {
                     n.clone()
                 }
             }
+            Type::Nullable(inner) => format!("Option<{}>", self.rust_type(inner)),
         }
     }
 
@@ -424,7 +575,7 @@ impl<'a> Codegen<'a> {
             self.emit(&format!("impl {} {{", class.name));
             self.indent += 1;
             if let Some(ctor) = &class.ctor {
-                self.gen_ctor(ctor);
+                self.gen_ctor(class, ctor);
             }
             for m in inherent {
                 self.gen_method(m, false, &class.name);
@@ -473,7 +624,7 @@ impl<'a> Codegen<'a> {
         self.blank();
     }
 
-    fn gen_ctor(&mut self, ctor: &Constructor) {
+    fn gen_ctor(&mut self, class: &ClassDecl, ctor: &Constructor) {
         let mut ps = Vec::new();
         for p in &ctor.params {
             ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
@@ -494,11 +645,19 @@ impl<'a> Codegen<'a> {
                     value,
                     ..
                 } if matches!(**recv, Expr::This) => {
-                    if matches!(value, Expr::Ident(n) if n == field) {
+                    let field_ty = class
+                        .fields
+                        .iter()
+                        .find(|f| &f.name == field)
+                        .map(|f| f.ty.clone());
+                    self.cur_line = ctor.line;
+                    let v = match &field_ty {
+                        Some(ft) => self.gen_assigned_value(value, ft, &mut env, false, None),
+                        None => self.gen_expr(value, &mut env, None),
+                    };
+                    if v == *field {
                         fields.push(field.clone());
                     } else {
-                        self.cur_line = ctor.line;
-                        let v = self.gen_expr(value, &mut env, None);
                         fields.push(format!("{}: {}", field, v));
                     }
                 }
@@ -593,43 +752,20 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
-                let from_holder = matches!(init, Expr::Ident(_) | Expr::Field(_, _))
-                    && !matches!(init, Expr::Unary { op: UnOp::Move, .. });
-                let wants_copy =
-                    from_holder && !ty.is_copy_scalar() && !matches!(ty, Type::Void);
-                let clone = wants_copy && self.is_cloneable_type(ty);
-                if wants_copy && !clone {
-                    self.err_code(
-                        "JR4002",
-                        format!("`{}` 类型不可 Clone，无法按值复制", self.rust_type(ty)),
-                        "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或显式写 `move` 转移所有权。",
-                    );
-                }
-                match init {
-                    Expr::Ident(src) if clone => {
+                if let Expr::Unary {
+                    op: UnOp::Move,
+                    expr,
+                } = init
+                {
+                    if let Expr::Ident(src) = &**expr {
                         self.emit(&format!(
-                            "// jrust 提示: 普通赋值按值复制——`{}` 与 `{}` 各持一份；只想转移所有权请写 `move {}`。",
-                            src, name, src
+                            "// jrust 提示: 显式 `move` —— 所有权从 `{}` 搬到 `{}`，不复制。",
+                            src, name
                         ));
                     }
-                    Expr::Unary {
-                        op: UnOp::Move,
-                        expr,
-                    } => {
-                        if let Expr::Ident(src) = &**expr {
-                            self.emit(&format!(
-                                "// jrust 提示: 显式 `move` —— 所有权从 `{}` 搬到 `{}`，不复制。",
-                                src, name
-                            ));
-                        }
-                    }
-                    _ => {}
                 }
                 let ty_str = self.rust_type(ty);
-                let mut init_str = self.gen_expr(init, env, Some(ty));
-                if clone {
-                    init_str.push_str(".clone()");
-                }
+                let init_str = self.gen_assigned_value(init, ty, env, true, Some(name));
                 let mut_kw = if env.mutated.contains(name) { "mut " } else { "" };
                 self.emit(&format!(
                     "let {}{}: {} = {};",
@@ -645,26 +781,11 @@ impl<'a> Codegen<'a> {
                 self.cur_line = *line;
                 self.marker(*line);
                 let target_ty = self.target_type(target, env);
-                let mut clone = false;
-                if let Some(tt) = &target_ty {
-                    let from_holder = matches!(value, Expr::Ident(_) | Expr::Field(_, _))
-                        && !matches!(value, Expr::Unary { op: UnOp::Move, .. });
-                    let wants_copy =
-                        from_holder && !tt.is_copy_scalar() && !matches!(tt, Type::Void);
-                    clone = wants_copy && self.is_cloneable_type(tt);
-                    if wants_copy && !clone {
-                        self.err_code(
-                            "JR4002",
-                            format!("`{}` 类型不可 Clone，无法按值复制", self.rust_type(tt)),
-                            "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或显式写 `move` 转移所有权。",
-                        );
-                    }
-                }
                 let t = self.gen_expr(target, env, None);
-                let mut v = self.gen_expr(value, env, None);
-                if clone {
-                    v.push_str(".clone()");
-                }
+                let v = match &target_ty {
+                    Some(tt) => self.gen_assigned_value(value, tt, env, true, Some(&t)),
+                    None => self.gen_expr(value, env, None),
+                };
                 self.emit(&format!("{} = {};", t, v));
             }
             Stmt::Expr { expr, line } => {
@@ -679,7 +800,9 @@ impl<'a> Codegen<'a> {
                 match value {
                     Some(e) => {
                         let ret = env.ret.clone();
-                        let v = self.gen_expr(e, env, Some(&ret));
+                        // 返回 `this` 的字段时从 `&self` 搬不走，必须复制。
+                        let copy = self.is_self_field(e, env);
+                        let v = self.gen_assigned_value(e, &ret, env, copy, None);
                         if env.in_throws {
                             self.emit(&format!("return Ok({});", v));
                         } else {
@@ -1009,6 +1132,29 @@ impl<'a> Codegen<'a> {
             }
             Expr::Char(c) => format!("{:?}", c),
             Expr::Bool(b) => b.to_string(),
+            Expr::Null => match expect {
+                Some(Type::Nullable(_)) => "None".to_string(),
+                Some(t) => {
+                    let tn = self.rust_type(t);
+                    self.err_code(
+                        "JR3005",
+                        format!("`null` 只能赋给可空类型，这里的目标类型是 `{}`", tn),
+                        format!(
+                            "把声明 / 参数 / 返回类型写成 `{}?`（→ Option<{}>），或改用一个非空值。",
+                            tn, tn
+                        ),
+                    );
+                    "None".to_string()
+                }
+                None => {
+                    self.err_code(
+                        "JR3005",
+                        "`null` 只能出现在可空类型上下文",
+                        "声明写 `T? x = null;`，比较写 `x == null` / `x != null`；其余位置请给出非空值。",
+                    );
+                    "None".to_string()
+                }
+            },
             Expr::Ident(n) => n.clone(),
             Expr::This => "self".to_string(),
             Expr::Field(recv, name) => {
@@ -1042,6 +1188,29 @@ impl<'a> Codegen<'a> {
                         "jrust 不支持用 + 拼接字符串",
                         "Rust 里拼字符串用 format!(\"{} {}\", a, b) 或 println! 的格式串；`+` 只做数值加法。",
                     );
+                }
+                if matches!(op, BinOp::Eq | BinOp::Ne) {
+                    let l_null = matches!(strip_parens_expr(lhs), Expr::Null);
+                    let r_null = matches!(strip_parens_expr(rhs), Expr::Null);
+                    if l_null && r_null {
+                        return (*op == BinOp::Eq).to_string();
+                    }
+                    if l_null || r_null {
+                        let other = if l_null { rhs } else { lhs };
+                        if let Some(t) = self.infer_type(other, env) {
+                            if !matches!(t, Type::Nullable(_)) {
+                                let tn = self.rust_type(&t);
+                                self.err_code(
+                                    "JR3005",
+                                    format!("`{}` 不是可空类型，不能与 `null` 比较", tn),
+                                    "只有 `T?`（→ Option<T>）才能判空；普通值请直接使用或比较其内容。",
+                                );
+                            }
+                        }
+                        let x = self.gen_expr(other, env, None);
+                        let m = if *op == BinOp::Eq { "is_none" } else { "is_some" };
+                        return format!("{}.{}()", x, m);
+                    }
                 }
                 let l = self.gen_expr(lhs, env, None);
                 let r = self.gen_expr(rhs, env, None);
@@ -1164,7 +1333,18 @@ impl<'a> Codegen<'a> {
             }
             return "Vec::new()".to_string();
         }
-        let arg_strs: Vec<String> = args.iter().map(|a| self.gen_expr(a, env, None)).collect();
+        let ctor_params: Option<Vec<Type>> = self.classes.get(class).and_then(|c| {
+            c.ctor
+                .as_ref()
+                .map(|ct| ct.params.iter().map(|p| p.ty.clone()).collect())
+        });
+        let mut arg_strs = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            match ctor_params.as_ref().and_then(|p| p.get(i)) {
+                Some(pt) => arg_strs.push(self.gen_arg(a, pt, env)),
+                None => arg_strs.push(self.gen_expr(a, env, None)),
+            }
+        }
         let known = self.classes.contains_key(class);
         let has_ctor = self
             .classes
@@ -1201,13 +1381,14 @@ impl<'a> Codegen<'a> {
 
         // `Shape.Circle(2.0)` → `Shape::Circle(2.0)`：枚举分支构造。
         if let Some(Expr::Ident(en)) = recv.as_deref() {
-            let nparams = self.enums.get(en).and_then(|ed| {
+            let vparams: Option<Vec<Type>> = self.enums.get(en).and_then(|ed| {
                 ed.variants
                     .iter()
                     .find(|v| &v.name == name)
-                    .map(|v| v.params.len())
+                    .map(|v| v.params.iter().map(|p| p.ty.clone()).collect())
             });
-            if let Some(nparams) = nparams {
+            if let Some(vparams) = vparams {
+                let nparams = vparams.len();
                 if nparams != args.len() {
                     self.err_code(
                         "JR3019",
@@ -1222,8 +1403,11 @@ impl<'a> Codegen<'a> {
                     );
                 }
                 let mut vals = Vec::new();
-                for a in args {
-                    vals.push(self.gen_expr(a, env, None));
+                for (i, a) in args.iter().enumerate() {
+                    match vparams.get(i) {
+                        Some(pt) => vals.push(self.gen_arg(a, pt, env)),
+                        None => vals.push(self.gen_expr(a, env, None)),
+                    }
                 }
                 return if vals.is_empty() {
                     format!("{}::{}", en, name)
@@ -1234,6 +1418,17 @@ impl<'a> Codegen<'a> {
         }
 
         let recv_ty = recv.as_ref().and_then(|r| self.infer_type(r, env));
+        if let Some(Type::Nullable(inner)) = &recv_ty {
+            let tn = self.rust_type(inner);
+            self.err_code(
+                "JR3006",
+                format!("`{}?` 是可能为空的值，不能直接调用 `{}`", tn, name),
+                format!(
+                    "先判空再取出来：`if (x != null) {{ {} v = x; v.{}(...) }}`（→ `if let Some(v) = x`）。",
+                    tn, name
+                ),
+            );
+        }
         if let Some(Type::Map(k_ty, v_ty)) = &recv_ty {
             let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
             match name {
@@ -1248,13 +1443,20 @@ impl<'a> Codegen<'a> {
                     }
                     let k = args
                         .first()
-                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
+                        .map(|a| self.gen_arg(a, k_ty, env))
                         .unwrap_or_default();
                     let v = args
                         .get(1)
-                        .map(|a| self.gen_expr(a, env, Some(v_ty)))
+                        .map(|a| self.gen_arg(a, v_ty, env))
                         .unwrap_or_default();
                     return format!("{}.insert({}, {})", r, k, v);
+                }
+                "getOrNull" => {
+                    if args.len() != 1 {
+                        self.err("getOrNull 需要一个键", "例如 `m.getOrNull(\"a\")`。");
+                    }
+                    let k = self.gen_map_key(args.first(), k_ty, env);
+                    return format!("{}.get({}).cloned()", r, k);
                 }
                 "get" => {
                     if args.len() != 1 {
@@ -1275,7 +1477,7 @@ impl<'a> Codegen<'a> {
                 other => {
                     self.err(
                         format!("Map 没有方法 `{}`", other),
-                        "MVP 支持 put / get / size / containsKey / isEmpty。",
+                        "MVP 支持 put / get / getOrNull / size / containsKey / isEmpty。",
                     );
                     return format!("{}.{}()", r, other);
                 }
@@ -1290,10 +1492,21 @@ impl<'a> Codegen<'a> {
             Some(Type::List(inner)) => matches!(&**inner, Type::String),
             _ => false,
         };
+        let elem_ty = match &recv_ty {
+            Some(Type::List(inner)) => Some((**inner).clone()),
+            _ => None,
+        };
+        let param_types = self.call_param_types(recv, name, env);
 
         let mut arg_strs = Vec::new();
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
             if is_list && name == "add" {
+                if let Some(et) = &elem_ty {
+                    if matches!(et, Type::Nullable(_)) {
+                        arg_strs.push(self.gen_arg(a, et, env));
+                        continue;
+                    }
+                }
                 let inner = self.gen_expr(a, env, None);
                 if elem_is_trait {
                     arg_strs.push(format!("Box::new({})", inner));
@@ -1304,7 +1517,10 @@ impl<'a> Codegen<'a> {
                     arg_strs.push(inner);
                 }
             } else {
-                arg_strs.push(self.gen_expr(a, env, None));
+                match param_types.as_ref().and_then(|p| p.get(i)) {
+                    Some(pt) => arg_strs.push(self.gen_arg(a, pt, env)),
+                    None => arg_strs.push(self.gen_expr(a, env, None)),
+                }
             }
         }
 
@@ -1377,6 +1593,14 @@ impl<'a> Codegen<'a> {
                     "占位符与参数按顺序一一对应。",
                 );
             }
+            for a in &args[1..] {
+                if self.expr_is_nullable(a, env) {
+                    self.err(
+                        "不能直接打印可空类型 `T?`",
+                        "先判空并取出非空值：`if (x != null) { T v = x; println(v); }`。",
+                    );
+                }
+            }
             let rest: Vec<String> = args[1..]
                 .iter()
                 .map(|a| self.gen_expr(a, env, None))
@@ -1392,6 +1616,12 @@ impl<'a> Codegen<'a> {
             return format!("{}!(\"{{:?}}\", {})", mac, parts.join(", "));
         }
         let arg = &args[0];
+        if self.expr_is_nullable(arg, env) {
+            self.err(
+                "不能直接打印可空类型 `T?`",
+                "先判空并取出非空值：`if (x != null) { T v = x; println(v); }`。",
+            );
+        }
         let mut parts: Vec<&Expr> = Vec::new();
         flatten_add_chain(arg, &mut parts);
         let has_str = parts.iter().any(|p| matches!(p, Expr::Str(_)));
@@ -1424,6 +1654,7 @@ impl<'a> Codegen<'a> {
     fn infer_type(&self, e: &Expr, env: &Env) -> Option<Type> {
         match e {
             Expr::Ident(n) => env.vars.get(n).cloned(),
+            Expr::This => env.self_class.clone().map(Type::Named),
             Expr::New { class, .. } => Some(Type::Named(class.clone())),
             Expr::Field(recv, f) => {
                 if let Expr::Ident(en) = &**recv {
@@ -1442,11 +1673,57 @@ impl<'a> Codegen<'a> {
                 }
                 None
             }
-            Expr::Call { recv: Some(r), .. } => match &**r {
-                Expr::Ident(en) if self.enums.contains_key(en) => Some(Type::Named(en.clone())),
-                _ => None,
-            },
-            Expr::Try(inner) => self.infer_type(inner, env),
+            Expr::Call { recv, name, .. } => {
+                // 枚举分支构造：`Shape.Circle(..)` → Shape
+                if let Some(Expr::Ident(en)) = recv.as_deref() {
+                    if let Some(ed) = self.enums.get(en) {
+                        if ed.variants.iter().any(|v| &v.name == name) {
+                            return Some(Type::Named(en.clone()));
+                        }
+                    }
+                    // 静态调用 `Cls.method(..)`
+                    if let Some(cd) = self.classes.get(en) {
+                        if let Some(m) = cd.methods.iter().find(|m| &m.name == name && m.is_static)
+                        {
+                            return Some(m.ret.clone());
+                        }
+                    }
+                }
+                let recv_ty = recv.as_deref().and_then(|r| self.infer_type(r, env));
+                if let Some(Type::Map(_, v)) = &recv_ty {
+                    if name.as_str() == "getOrNull" {
+                        return Some(Type::Nullable(v.clone()));
+                    }
+                }
+                if let Some(Type::Named(c)) = &recv_ty {
+                    if let Some(cd) = self.classes.get(c) {
+                        if let Some(m) = cd.methods.iter().find(|m| m.name == *name && !m.is_static)
+                        {
+                            return Some(m.ret.clone());
+                        }
+                    }
+                    if let Some(iface) = self.prog.interfaces.iter().find(|i| &i.name == c) {
+                        if let Some(m) = iface.methods.iter().find(|m| m.name == *name) {
+                            return Some(m.ret.clone());
+                        }
+                    }
+                }
+                if recv.is_none() {
+                    if let Some(c) = &env.self_class {
+                        if let Some(m) = self.classes.get(c).and_then(|cd| {
+                            cd.methods.iter().find(|m| m.name == *name && m.is_static)
+                        }) {
+                            return Some(m.ret.clone());
+                        }
+                    }
+                }
+                None
+            }
+            Expr::Paren(inner) | Expr::Try(inner) => self.infer_type(inner, env),
+            Expr::Unary {
+                op: UnOp::Move,
+                expr,
+            } => self.infer_type(expr, env),
             _ => None,
         }
     }
@@ -1463,6 +1740,7 @@ fn type_cloneable(ty: &Type, named: &HashSet<String>) -> bool {
         Type::List(inner) | Type::Array(inner) => type_cloneable(inner, named),
         Type::Map(k, v) => type_cloneable(k, named) && type_cloneable(v, named),
         Type::Named(n) => named.contains(n),
+        Type::Nullable(inner) => type_cloneable(inner, named),
         _ => false,
     }
 }
@@ -1523,6 +1801,19 @@ fn is_system_out(e: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// 去掉多余的括号（`(x)` 与 `x` 等价）。
+fn strip_parens_expr(e: &Expr) -> &Expr {
+    match e {
+        Expr::Paren(inner) => strip_parens_expr(inner),
+        _ => e,
+    }
+}
+
+/// 变量 / 字段是值的「持有者」，按值语义需要复制。
+fn is_holder_expr(e: &Expr) -> bool {
+    matches!(strip_parens_expr(e), Expr::Ident(_) | Expr::Field(_, _))
 }
 
 fn flatten_add_chain<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {

@@ -1,8 +1,8 @@
 //! 手写递归下降语法分析器。
 //!
 //! 设计原则：只接受 jrust 支持的 Java 子集；遇到被砍掉的特性（继承、try/catch、
-//! null、instanceof、synchronized、注解……）时给出「为什么 Rust 不这么干」的解释，
-//! 而不是含糊地报「语法错误」。
+//! instanceof、synchronized、注解……）时给出「为什么 Rust 不这么干」的解释，
+//! 而不是含糊地报「语法错误」。`null` 只允许出现在可空类型 `T?` 的上下文。
 
 use crate::ast::*;
 use crate::diag::Diag;
@@ -706,6 +706,11 @@ impl Parser {
             self.bump();
             base = Type::Array(Box::new(base));
         }
+        // `T?` → `Option<T>`。类型位置上的 `?` 与表达式里的错误传播 `?` 不冲突：
+        // parse_type 只在期望类型的地方调用。
+        while self.eat_punct("?") {
+            base = Type::Nullable(Box::new(base));
+        }
         Some(base)
     }
 
@@ -1033,7 +1038,12 @@ impl Parser {
             | Tok::Kw(Kw::Float)
             | Tok::Kw(Kw::Boolean)
             | Tok::Kw(Kw::Char) => true,
-            Tok::Ident(_) => matches!(self.peek_at(1), Tok::Ident(_)),
+            Tok::Ident(_) => {
+                matches!(self.peek_at(1), Tok::Ident(_))
+                    // `Foo? x`
+                    || (matches!(self.peek_at(1), Tok::Punct("?"))
+                        && matches!(self.peek_at(2), Tok::Ident(_)))
+            }
             _ => false,
         }
     }
@@ -1096,7 +1106,8 @@ impl Parser {
                     matches!(
                         self.peek_at(1),
                         Tok::Ident(_) | Tok::Punct("<") | Tok::Punct("[")
-                    )
+                    ) || (matches!(self.peek_at(1), Tok::Punct("?"))
+                        && matches!(self.peek_at(2), Tok::Ident(_)))
                 }
             }
             _ => false,
@@ -1482,13 +1493,8 @@ impl Parser {
                 Expr::This
             }
             Tok::Kw(Kw::Null) => {
-                self.diags.push(
-                    Diag::error(self.line(), "jrust 没有 null").with_hint(
-                        "用 Option<T> 表达缺失：Some(x) 表示有值，None 表示没有；编译器因此能强制你处理空值。",
-                    ),
-                );
                 self.bump();
-                Expr::Ident("None".to_string())
+                Expr::Null
             }
             Tok::Kw(Kw::New) => {
                 self.bump();

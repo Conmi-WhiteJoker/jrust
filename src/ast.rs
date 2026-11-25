@@ -21,6 +21,8 @@ pub enum Type {
     Array(Box<Type>),
     /// 用户自定义类型（class 或 interface 的名字）
     Named(String),
+    /// `T?` 表示可空类型 → `Option<T>`。
+    Nullable(Box<Type>),
 }
 
 impl Type {
@@ -250,6 +252,8 @@ pub enum Expr {
     Str(String),
     Char(char),
     Bool(bool),
+    /// `null`：只允许出现在可空类型上下文（`T?`），产物为 `None`。
+    Null,
     Ident(String),
     This,
     Field(Box<Expr>, String),
