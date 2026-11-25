@@ -16,5 +16,7 @@ fn main() {
     let d: String = c;
     // jrust:L11
     println!("{} {}", b, d);
+    // jrust:L13
+    println!("{} {}", b, d);
 }
 

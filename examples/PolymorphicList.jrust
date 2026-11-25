@@ -26,6 +26,8 @@ public class Main {
         animals.add(new Cat());
         for (Animal a : animals) {
             System.out.println(a.speak());
+            // 裸写法，输出同上
+            println(a.speak());
         }
     }
 }

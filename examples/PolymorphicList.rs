@@ -42,6 +42,8 @@ fn main() {
     for a in &animals {
         // jrust:L28
         println!("{}", a.speak());
+        // jrust:L30
+        println!("{}", a.speak());
     }
 }
 

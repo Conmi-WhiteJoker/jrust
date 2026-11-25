@@ -15,8 +15,9 @@ public class RustTypes {
         f32 tiny = 0.5;
         bool ok = true;
 
-        System.out.println(sum);
-        System.out.println(thousand);
+        // 前两行用裸 println，其余保留 System.out 老写法
+        println(sum);
+        println(thousand);
         System.out.println(big);
         System.out.println(huge);
         System.out.println(small);

@@ -26,23 +26,23 @@ fn main() {
     let tiny: f32 = 0.5;
     // jrust:L16
     let ok: bool = true;
-    // jrust:L18
-    println!("{}", sum);
     // jrust:L19
-    println!("{}", thousand);
+    println!("{}", sum);
     // jrust:L20
-    println!("{}", big);
+    println!("{}", thousand);
     // jrust:L21
-    println!("{}", huge);
+    println!("{}", big);
     // jrust:L22
-    println!("{}", small);
+    println!("{}", huge);
     // jrust:L23
-    println!("{}", count);
+    println!("{}", small);
     // jrust:L24
-    println!("{}", ratio * 2.0);
+    println!("{}", count);
     // jrust:L25
-    println!("{}", tiny + 0.25);
+    println!("{}", ratio * 2.0);
     // jrust:L26
+    println!("{}", tiny + 0.25);
+    // jrust:L27
     println!("{}", ok);
 }
 

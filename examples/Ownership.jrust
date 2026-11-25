@@ -9,5 +9,7 @@ public class Ownership {
         String c = "world";
         String d = c;
         System.out.println(b + " " + d);
+        // 裸写法，输出同上
+        println(b + " " + d);
     }
 }

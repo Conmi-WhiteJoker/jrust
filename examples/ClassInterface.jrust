@@ -46,6 +46,8 @@ public class Main {
         Shape s = new Circle(2.0);
         // 格式串写法：{} 按顺序填入后面的参数
         println("{} area={}", s.name(), s.area());
+        // sout 老写法，输出同上
+        System.out.println(s.name() + " area=" + s.area());
         // 老写法等价：println(s.name() + " area=" + s.area());
 
         // List<Shape> → Vec<Box<dyn Shape>>，多态集合里元素自动装箱

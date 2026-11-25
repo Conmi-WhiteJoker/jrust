@@ -2,5 +2,7 @@
 public class HelloWorld {
     public static void main(String[] args) {
         System.out.println("Hello, jrust!");
+        // 裸 println 是 `System.out.` 的简写，输出同上
+        println("Hello, jrust!");
     }
 }

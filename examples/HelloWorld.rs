@@ -6,5 +6,7 @@
 fn main() {
     // jrust:L4
     println!("Hello, jrust!");
+    // jrust:L6
+    println!("Hello, jrust!");
 }
 

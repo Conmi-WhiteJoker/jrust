@@ -70,24 +70,26 @@ fn main() {
     let s: Box<dyn Shape> = Box::new(Circle::new(2.0));
     // jrust:L48
     println!("{} area={}", s.name(), s.area());
-    // jrust:L52
-    let mut shapes: Vec<Box<dyn Shape>> = Vec::new();
-    // jrust:L53
-    shapes.push(Box::new(Circle::new(1.0)));
+    // jrust:L50
+    println!("{} area={}", s.name(), s.area());
     // jrust:L54
-    shapes.push(Box::new(Rectangle::new(3.0, 4.0)));
+    let mut shapes: Vec<Box<dyn Shape>> = Vec::new();
+    // jrust:L55
+    shapes.push(Box::new(Circle::new(1.0)));
     // jrust:L56
+    shapes.push(Box::new(Rectangle::new(3.0, 4.0)));
+    // jrust:L58
     let mut total: f64 = 0.0;
-    // jrust:L57
+    // jrust:L59
     for sh in &shapes {
-        // jrust:L59
-        print!("{}", sh.name());
-        // jrust:L60
-        println!(" area={}", sh.area());
         // jrust:L61
+        print!("{}", sh.name());
+        // jrust:L62
+        println!(" area={}", sh.area());
+        // jrust:L63
         total = total + sh.area();
     }
-    // jrust:L63
+    // jrust:L65
     println!("total={}", total);
 }
 

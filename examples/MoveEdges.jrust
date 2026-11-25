@@ -37,6 +37,6 @@ public class MoveEdges {
         s = move label;
 
         System.out.println(s + " " + got);
-        System.out.println(w.size());
+        println(w.size());
     }
 }
