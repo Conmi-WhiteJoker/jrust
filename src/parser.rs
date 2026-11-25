@@ -2027,8 +2027,8 @@ impl Parser {
                         body: Box::new(body),
                     };
                 }
-                // 裸 `print` / `println` 视作 System.out 的简写；其它裸调用仍不解析。
-                if (n == "print" || n == "println") && self.check_punct("(") {
+                // 裸调用：`println(x)` / `panic("…")` / `assert(cond, "…")` / 同文件函数。
+                if self.check_punct("(") {
                     let args = self.parse_args();
                     Expr::Call {
                         recv: None,
@@ -2048,8 +2048,8 @@ impl Parser {
             }
             Tok::Punct("@") => {
                 self.err_hint(
-                    "jrust 不支持注解",
-                    "Rust 用 derive 宏或显式代码代替注解。",
+                    "表达式位置不支持注解",
+                    "注解写在类、字段、方法或构造器的声明前。",
                 );
                 self.parse_annotations();
                 Expr::Ident("<注解>".to_string())

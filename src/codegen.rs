@@ -1750,6 +1750,48 @@ impl<'a> Codegen<'a> {
             return self.gen_print_macro(args, env, mac);
         }
 
+        // 内置 `panic("msg")` / `assert(cond, "msg")` → `panic!` / `assert!`（JR-C7）。
+        if recv.is_none() && (name == "panic" || name == "assert") {
+            if name == "panic" {
+                if args.len() != 1 {
+                    self.err(
+                        "`panic` 需要一个字符串消息",
+                        "写成 `panic(\"原因\")`，产物是 `panic!(\"{}\", 原因)`。",
+                    );
+                }
+                let msg = args
+                    .first()
+                    .map(|a| self.gen_expr(a, env, None))
+                    .unwrap_or_else(|| "\"\"".to_string());
+                return format!("panic!(\"{{}}\", {})", msg);
+            }
+            if args.is_empty() || args.len() > 2 {
+                self.err(
+                    "`assert` 需要 1~2 个参数",
+                    "写成 `assert(条件, \"失败原因\")`；产物是 `assert!(条件, \"{}\", 原因)`。",
+                );
+            }
+            let cond = match args.first() {
+                Some(a) => self.gen_expr(a, env, Some(&Type::Boolean)),
+                None => "false".to_string(),
+            };
+            return match args.get(1) {
+                Some(m) => {
+                    let msg = self.gen_expr(m, env, None);
+                    format!("assert!({}, \"{{}}\", {})", cond, msg)
+                }
+                None => format!("assert!({})", cond),
+            };
+        }
+
+        if recv.is_none() {
+            self.err(
+                format!("未知的函数 `{}`", name),
+                "jrust 没有自由函数：裸调用只支持 `println` / `print` / `panic` / `assert`；其它逻辑写成对象或类的方法。",
+            );
+            return format!("{}()", name);
+        }
+
         // `Shape.Circle(2.0)` → `Shape::Circle(2.0)`：枚举分支构造。
         if let Some(Expr::Ident(en)) = recv.as_deref() {
             let vparams: Option<Vec<Type>> = self.enums.get(en).and_then(|ed| {

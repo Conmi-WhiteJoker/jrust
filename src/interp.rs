@@ -1266,6 +1266,29 @@ impl<'a> Interp<'a> {
             }
             return Ok(Value::Unit);
         }
+        // 内置 `panic` / `assert`（JR-C7）。
+        if recv.is_none() && (name == "panic" || name == "assert") {
+            if name == "panic" {
+                let msg = if args.len() == 1 {
+                    self.eval(&args[0])?.display()
+                } else {
+                    String::new()
+                };
+                return Err(RuntimeError::new(line, format!("panic: {}", msg)));
+            }
+            let Some(cond) = args.first() else {
+                return Err(RuntimeError::new(line, "assert 需要条件参数"));
+            };
+            if !matches!(self.eval(cond)?, Value::Bool(true)) {
+                let msg = if args.len() > 1 {
+                    self.eval(&args[1])?.display()
+                } else {
+                    "断言失败".to_string()
+                };
+                return Err(RuntimeError::new(line, format!("assert 失败: {}", msg)));
+            }
+            return Ok(Value::Unit);
+        }
         if let Some(r) = recv {
             let rv = self.eval(r)?;
             match &rv {
