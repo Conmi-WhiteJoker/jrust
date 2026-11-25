@@ -91,6 +91,7 @@ run_ok ok_cfor
 run_ok ok_newarray
 run_ok ok_concat
 run_ok ok_generic
+run_ok ok_generic_iface_enum
 run_closure
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"

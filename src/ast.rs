@@ -93,7 +93,8 @@ pub struct ClassDecl {
     pub name: String,
     /// 类级类型参数：`class Box<T>` 里的 `T`。
     pub type_params: Vec<String>,
-    pub implements: Vec<String>,
+    /// `implements A, B<Integer>`：`Named` 或 `Generic`。
+    pub implements: Vec<Type>,
     pub fields: Vec<Field>,
     pub ctor: Option<Constructor>,
     pub methods: Vec<Method>,
@@ -102,6 +103,8 @@ pub struct ClassDecl {
 
 #[derive(Debug, Clone)]
 pub struct MethodSig {
+    /// 方法级类型参数：`interface Mapper<T> { <U> U f(U x); }` 里的 `U`。
+    pub type_params: Vec<String>,
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
@@ -111,6 +114,8 @@ pub struct MethodSig {
 #[derive(Debug, Clone)]
 pub struct InterfaceDecl {
     pub name: String,
+    /// 接口级类型参数：`interface Mapper<T>` 里的 `T`。
+    pub type_params: Vec<String>,
     pub methods: Vec<MethodSig>,
     pub line: usize,
 }
@@ -127,6 +132,8 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    /// 枚举级类型参数：`enum Maybe<T>` 里的 `T`。
+    pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
     pub line: usize,
 }

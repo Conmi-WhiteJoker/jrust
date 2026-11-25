@@ -1,0 +1,57 @@
+// 泛型接口（interface Mapper<T> → trait Mapper<T>）与泛型枚举（enum Maybe<T>）。
+public interface Mapper<T> {
+    T map(T x);
+}
+
+public class Doubler implements Mapper<Integer> {
+    public Integer map(Integer x) {
+        return x * 2;
+    }
+}
+
+// 泛型类实现泛型接口：impl<T: Clone> Mapper<T> for Formatter<T>
+public class Formatter<T> implements Mapper<T> {
+    private T last;
+
+    public Formatter(T last) {
+        this.last = last;
+    }
+
+    public T map(T x) {
+        return x;
+    }
+}
+
+public enum Maybe<T> {
+    Some(T value),
+    None
+}
+
+public class Printer {
+    public void show(Maybe<String> m) {
+        switch (m) {
+            case Maybe.Some(String v):
+                println("some {}", v);
+                break;
+            case Maybe.None:
+                println("none");
+                break;
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Mapper<Integer> d = new Doubler();
+        println(d.map(21));
+
+        Mapper<String> f = new Formatter<String>("seed");
+        println(f.map("ok"));
+
+        Maybe<String> a = Maybe.Some("hi");
+        Maybe<String> b = Maybe.None;
+        Printer p = new Printer();
+        p.show(a);
+        p.show(b);
+    }
+}

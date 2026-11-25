@@ -322,13 +322,11 @@ impl Parser {
         let line = self.line();
         self.bump(); // enum
         let name = self.expect_ident();
-        if self.check_punct("<") {
-            self.err_hint(
-                "jrust MVP 不支持泛型 enum",
-                "把类型参数换成具体类型，Rust 泛型 enum 后续版本再支持。",
-            );
-            self.skip_generic_args();
-        }
+        let type_params = if self.check_punct("<") {
+            self.parse_type_params()
+        } else {
+            Vec::new()
+        };
         let mut variants = Vec::new();
         if self.expect_punct("{") {
             while !self.at_eof() && !self.check_punct("}") {
@@ -356,6 +354,7 @@ impl Parser {
         }
         EnumDecl {
             name,
+            type_params,
             variants,
             line,
         }
@@ -387,14 +386,21 @@ impl Parser {
         if self.eat_kw(Kw::Implements) {
             loop {
                 let iface = self.expect_ident();
-                if self.check_punct("<") {
-                    self.err_hint(
-                        "jrust MVP 不支持泛型接口",
-                        "先用非泛型的 interface，把类型参数改成具体类型。",
-                    );
-                    self.skip_generic_args();
-                }
-                implements.push(iface);
+                let ity = if self.check_punct("<") {
+                    let aline = self.line();
+                    let args = self.parse_generic_args();
+                    if args.is_empty() {
+                        self.diags.push(
+                            Diag::error(aline, "接口的泛型实参不能为空").with_hint(
+                                "写全类型实参，如 `implements Mapper<Integer>`。",
+                            ),
+                        );
+                    }
+                    Type::Generic(iface, args)
+                } else {
+                    Type::Named(iface)
+                };
+                implements.push(ity);
                 if !self.eat_punct(",") {
                     break;
                 }
@@ -566,13 +572,11 @@ impl Parser {
         let line = self.line();
         self.bump(); // interface
         let name = self.expect_ident();
-        if self.check_punct("<") {
-            self.err_hint(
-                "jrust MVP 不支持泛型接口",
-                "先用具体类型的 interface。",
-            );
-            self.skip_generic_args();
-        }
+        let type_params = if self.check_punct("<") {
+            self.parse_type_params()
+        } else {
+            Vec::new()
+        };
         if self.eat_kw(Kw::Extends) {
             self.diags.push(
                 Diag::error(line, "jrust 不支持接口继承（extends）").with_hint(
@@ -606,12 +610,18 @@ impl Parser {
                         ),
                     );
                 }
+                let mtype_params = if self.check_punct("<") {
+                    self.parse_type_params()
+                } else {
+                    Vec::new()
+                };
                 match self.parse_type() {
                     Some(ret) => {
                         let mname = self.expect_ident();
                         let params = self.parse_params();
                         self.expect_punct(";");
                         methods.push(MethodSig {
+                            type_params: mtype_params,
                             name: mname,
                             ret,
                             params,
@@ -626,7 +636,12 @@ impl Parser {
             }
             self.expect_punct("}");
         }
-        InterfaceDecl { name, methods, line }
+        InterfaceDecl {
+            name,
+            type_params,
+            methods,
+            line,
+        }
     }
 
     // ---------- 类型 ----------

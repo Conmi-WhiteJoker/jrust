@@ -110,10 +110,11 @@ impl<'a> Codegen<'a> {
                 }
             }
             for e in &prog.enums {
+                let params: HashSet<String> = e.type_params.iter().cloned().collect();
                 let ok = e
                     .variants
                     .iter()
-                    .all(|v| v.params.iter().all(|p| type_cloneable(&p.ty, &snapshot, &HashSet::new())));
+                    .all(|v| v.params.iter().all(|p| type_cloneable(&p.ty, &snapshot, &params)));
                 if !ok && cloneable.remove(&e.name) {
                     changed = true;
                 }
@@ -167,6 +168,18 @@ impl<'a> Codegen<'a> {
         let line = self.cur_line;
         self.diags
             .push(Diag::error_code(line, code, msg).with_hint(hint));
+    }
+
+    /// `impl` 头部里的 trait 引用：接口**不要**包 `Box<dyn ...>`。
+    fn trait_ref_type(&self, ty: &Type) -> String {
+        match ty {
+            Type::Named(n) => n.clone(),
+            Type::Generic(n, args) => {
+                let inner: Vec<String> = args.iter().map(|a| self.rust_type(a)).collect();
+                format!("{}<{}>", n, inner.join(", "))
+            }
+            other => self.rust_type(other),
+        }
     }
 
     /// 这个类型能否按值复制（`.clone()`）。
@@ -388,7 +401,7 @@ impl<'a> Codegen<'a> {
             }
         }
         if let Some(r) = recv.as_deref() {
-            if let Some((c, map)) = self.infer_type(r, env).and_then(|t| self.class_binding(&t)) {
+            if let Some((c, map)) = self.infer_type(r, env).and_then(|t| self.type_binding(&t)) {
                 if let Some(cd) = self.classes.get(&c) {
                     if let Some(m) = cd.methods.iter().find(|m| m.name == name && !m.is_static) {
                         return Some(
@@ -401,7 +414,7 @@ impl<'a> Codegen<'a> {
                 }
                 if let Some(iface) = self.prog.interfaces.iter().find(|i| i.name == c) {
                     if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
-                        return Some(m.params.iter().map(|p| p.ty.clone()).collect());
+                        return Some(m.params.iter().map(|p| subst_type(&p.ty, &map)).collect());
                     }
                 }
             }
@@ -456,7 +469,11 @@ impl<'a> Codegen<'a> {
             }
             Type::Generic(n, args) => {
                 let inner: Vec<String> = args.iter().map(|a| self.rust_type(a)).collect();
-                format!("{}<{}>", n, inner.join(", "))
+                if self.ifaces.contains(n) {
+                    format!("Box<dyn {}<{}>>", n, inner.join(", "))
+                } else {
+                    format!("{}<{}>", n, inner.join(", "))
+                }
             }
             Type::Nullable(inner) => format!("Option<{}>", self.rust_type(inner)),
         }
@@ -512,7 +529,11 @@ impl<'a> Codegen<'a> {
 
     fn gen_trait(&mut self, iface: &InterfaceDecl) {
         self.marker(iface.line);
-        self.emit(&format!("pub trait {} {{", iface.name));
+        self.emit(&format!(
+            "pub trait {}{} {{",
+            iface.name,
+            type_param_decl(&iface.type_params)
+        ));
         self.indent += 1;
         for m in &iface.methods {
             self.marker(m.line);
@@ -525,7 +546,13 @@ impl<'a> Codegen<'a> {
             } else {
                 format!(" -> {}", self.rust_type(&m.ret))
             };
-            self.emit(&format!("fn {}({}){};", m.name, ps.join(", "), ret));
+            self.emit(&format!(
+                "fn {}{}({}){};",
+                m.name,
+                impl_param_decl(&m.type_params),
+                ps.join(", "),
+                ret
+            ));
         }
         self.indent -= 1;
         self.emit("}");
@@ -539,7 +566,11 @@ impl<'a> Codegen<'a> {
         } else {
             self.emit("#[derive(Debug)]");
         }
-        self.emit(&format!("pub enum {} {{", e.name));
+        self.emit(&format!(
+            "pub enum {}{} {{",
+            e.name,
+            type_param_decl(&e.type_params)
+        ));
         self.indent += 1;
         for v in &e.variants {
             self.marker(v.line);
@@ -640,8 +671,8 @@ impl<'a> Codegen<'a> {
         let impl_params = impl_param_decl(&class.type_params);
         let prog = self.prog;
         let mut iface_methods: HashSet<String> = HashSet::new();
-        for iname in &class.implements {
-            if let Some(iface) = prog.interfaces.iter().find(|x| &x.name == iname) {
+        for ity in &class.implements {
+            if let Some(iface) = prog.interfaces.iter().find(|x| x.name == type_name(ity)) {
                 for m in &iface.methods {
                     iface_methods.insert(m.name.clone());
                 }
@@ -649,7 +680,7 @@ impl<'a> Codegen<'a> {
         }
 
         // 实现接口的方法 → impl Trait for Type
-        for iname in &class.implements {
+        for ity in &class.implements {
             let methods: Vec<&Method> = class
                 .methods
                 .iter()
@@ -660,7 +691,10 @@ impl<'a> Codegen<'a> {
             }
             self.emit(&format!(
                 "impl{} {} for {}{} {{",
-                impl_params, iname, class.name, tparams
+                impl_params,
+                self.trait_ref_type(ity),
+                class.name,
+                tparams
             ));
             self.indent += 1;
             for m in methods {
@@ -1104,7 +1138,9 @@ impl<'a> Codegen<'a> {
     ) {
         let sty = self.infer_type(subject, env);
         let enum_name = match &sty {
-            Some(Type::Named(n)) if self.enums.contains_key(n) => Some(n.clone()),
+            Some(Type::Named(n)) | Some(Type::Generic(n, _)) if self.enums.contains_key(n) => {
+                Some(n.clone())
+            }
             _ => None,
         };
         let subject_is_bool = matches!(sty, Some(Type::Boolean));
@@ -1328,17 +1364,21 @@ impl<'a> Codegen<'a> {
                 let r = self.gen_expr(recv, env, None);
                 format!("{}.{}", r, name)
             }
-            Expr::Call { recv, name, args } => self.gen_call(recv, name, args, env),
+            Expr::Call { recv, name, args } => self.gen_call(recv, name, args, env, expect),
             Expr::New {
                 class,
                 type_args,
                 args,
             } => {
                 let inner = self.gen_new(class, type_args, args, env, expect);
-                if let Some(Type::Named(t)) = expect {
-                    if self.ifaces.contains(t) {
+                match expect {
+                    Some(Type::Named(t)) if self.ifaces.contains(t) => {
                         return format!("Box::new({})", inner);
                     }
+                    Some(Type::Generic(t, _)) if self.ifaces.contains(t) => {
+                        return format!("Box::new({})", inner);
+                    }
+                    _ => {}
                 }
                 inner
             }
@@ -1582,6 +1622,7 @@ impl<'a> Codegen<'a> {
         name: &str,
         args: &[Expr],
         env: &mut Env,
+        expect: Option<&Type>,
     ) -> String {
         if (name == "println" || name == "print") && recv.as_ref().map_or(true, |r| is_system_out(r)) {
             let mac = if name == "println" { "println" } else { "print" };
@@ -1597,6 +1638,19 @@ impl<'a> Codegen<'a> {
                     .map(|v| v.params.iter().map(|p| p.ty.clone()).collect())
             });
             if let Some(vparams) = vparams {
+                // 泛型枚举：`Maybe<String> m = Maybe.Some("x")` 时按声明类型替换分支形参。
+                let vmap: HashMap<String, Type> = self
+                    .enums
+                    .get(en)
+                    .map(|ed| {
+                        let args = match expect {
+                            Some(Type::Generic(c, a)) if c == en => a.clone(),
+                            _ => Vec::new(),
+                        };
+                        ed.type_params.iter().cloned().zip(args).collect()
+                    })
+                    .unwrap_or_default();
+                let vparams: Vec<Type> = vparams.iter().map(|t| subst_type(t, &vmap)).collect();
                 let nparams = vparams.len();
                 if nparams != args.len() {
                     self.err_code(
@@ -1695,9 +1749,10 @@ impl<'a> Codegen<'a> {
         // `T[]`（`new T[n]`）与 `List<T>` 在产物里都是 `Vec`，方法映射共享。
         let is_list = matches!(recv_ty, Some(Type::List(_)) | Some(Type::Array(_)));
         let elem_is_trait = match &recv_ty {
-            Some(Type::List(inner) | Type::Array(inner)) => {
-                matches!(&**inner, Type::Named(n) if self.ifaces.contains(n))
-            }
+            Some(Type::List(inner) | Type::Array(inner)) => match &**inner {
+                Type::Named(n) | Type::Generic(n, _) => self.ifaces.contains(n),
+                _ => false,
+            },
             _ => false,
         };
         let elem_is_string = match &recv_ty {
@@ -1863,18 +1918,18 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// 把 `Named(C)` / `Generic(C, args)` 统一成「类 C + 类型参数绑定」。
-    fn class_binding(&self, ty: &Type) -> Option<(String, HashMap<String, Type>)> {
+    /// 把 `Named(C)` / `Generic(C, args)` 统一成「类型 C + 类型参数绑定」。
+    /// C 可以是 class，也可以是 interface（泛型 trait）。
+    fn type_binding(&self, ty: &Type) -> Option<(String, HashMap<String, Type>)> {
         match ty {
             Type::Named(c) => Some((c.clone(), HashMap::new())),
             Type::Generic(c, args) => {
-                let cd = self.classes.get(c)?;
-                let map = cd
-                    .type_params
-                    .iter()
-                    .cloned()
-                    .zip(args.iter().cloned())
-                    .collect();
+                let params: &[String] = if let Some(cd) = self.classes.get(c) {
+                    &cd.type_params
+                } else {
+                    &self.prog.interfaces.iter().find(|i| &i.name == c)?.type_params
+                };
+                let map = params.iter().cloned().zip(args.iter().cloned()).collect();
                 Some((c.clone(), map))
             }
             _ => None,
@@ -1905,7 +1960,7 @@ impl<'a> Codegen<'a> {
                         return Some(Type::Named(en.clone()));
                     }
                 }
-                if let Some((cname, map)) = self.infer_type(recv, env).and_then(|t| self.class_binding(&t)) {
+                if let Some((cname, map)) = self.infer_type(recv, env).and_then(|t| self.type_binding(&t)) {
                     if let Some(cd) = self.classes.get(&cname) {
                         return cd
                             .fields
@@ -1939,7 +1994,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 if let Some(rt) = &recv_ty {
-                    if let Some((c, map)) = self.class_binding(rt) {
+                    if let Some((c, map)) = self.type_binding(rt) {
                         if let Some(cd) = self.classes.get(&c) {
                             if let Some(m) =
                                 cd.methods.iter().find(|m| m.name == *name && !m.is_static)
@@ -1949,7 +2004,7 @@ impl<'a> Codegen<'a> {
                         }
                         if let Some(iface) = self.prog.interfaces.iter().find(|i| i.name == c) {
                             if let Some(m) = iface.methods.iter().find(|m| m.name == *name) {
-                                return Some(m.ret.clone());
+                                return Some(subst_type(&m.ret, &map));
                             }
                         }
                     }
@@ -1976,6 +2031,14 @@ impl<'a> Codegen<'a> {
 }
 
 // ---------- 自由函数 ----------
+
+/// `Named` / `Generic` 的类型名（不含实参）。
+fn type_name(ty: &Type) -> &str {
+    match ty {
+        Type::Named(n) | Type::Generic(n, _) => n,
+        _ => "",
+    }
+}
 
 /// 把类型里的类型参数（`T`）替换成实参类型（`Integer` → `Int`）。
 fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
