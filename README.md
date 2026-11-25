@@ -61,8 +61,8 @@ cargo build
   configurationDone / threads / stackTrace / scopes / variables / continue / next /
   stepIn / stepOut / evaluate / disconnect）。
 
-解释器同样保留移动语义：`String b = a;` 之后再看 `a` 会得到
-「使用已移动的值」运行时错误，并提示所有权只能转移一次。
+解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
+只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
 `tests/interp_parity.sh` 对每个示例比较 `jrust run` 与「转译 + cargo 跑二进制」的
 stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
@@ -72,8 +72,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 1. **转译，不编译**。jrust 不自己生成机器码，产物是普通 Rust 源码，`rust-analyzer`、
    `cargo`、标准库全部照常可用。
 2. **产物必须可读**。每段代码前带 `// jrust:L<行号>` 源映射，方便左右对照。
-3. **不隐藏 Rust 的规则**。`String b = a;` 就生成移动（不自动 `clone`）；
-   第二个例子会直接撞上借用检查器——这正是教学内容。
+3. **不隐藏 Rust 的规则**。普通赋值按值复制（生成 `.clone()`，两个变量各自独立），
+   想搬走所有权就显式写 `move`；不会静默地把两个变量绑到同一块可变数据上。
 4. **砍掉 Java 的包袱**。继承、`try/catch`、反射、注解、`null` 一律不支持，
    异常只保留 `throws` / `throw` 这条映射到 `Result` 的窄路，并在报错时解释 Rust 的替代方案。
 5. **零外部依赖**。`Cargo.toml` 无 `[dependencies]`，手写 lexer + 递归下降 parser，
@@ -108,7 +108,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort.jrust) |
 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` | [PrintShort](examples/PrintShort.jrust) |
-| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
+| `String b = a;` | `let b: String = a.clone();` | 普通赋值 = 按值复制，两个变量各持一份；类与枚举自动 `#[derive(Clone)]`，含 trait 对象等不可克隆字段时报 `JR4002`，改用 `move` | [Ownership](examples/Ownership.jrust) |
+| `String b = move a;` | `let b: String = a;` | jrust 扩展：真正的移动，不 `clone`，之后 `a` 不可再用。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
@@ -146,7 +147,7 @@ src/lexer.rs    手写词法分析（不引解析框架，便于阅读）
 src/parser.rs   递归下降语法分析 + 解释性诊断
 src/ast.rs      Java 风格的 AST（不含任何 Rust 概念）
 src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推断）
-src/interp.rs   树遍历解释器（run / debug 共用，保留移动语义）
+src/interp.rs   树遍历解释器（run / debug 共用，赋值复制 + 显式 move）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
 examples/       9 个示例（各含 .jrust 源码 + 生成的 .rs）：

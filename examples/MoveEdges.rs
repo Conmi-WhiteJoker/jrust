@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 // jrust:L3
+#[derive(Clone)]
 pub struct Coupon {
     // jrust:L4
     pub label: String,
@@ -30,14 +31,14 @@ fn main() {
     // jrust:L20
     v.push((a).to_string());
     // jrust:L21
-    // jrust 提示: 显式 `move` —— 所有权从 `v` 搬到 `w`。Rust 的赋值本身就是 move，所以产物与不加 `move` 相同；这个关键字只是把意图写出来。
+    // jrust 提示: 显式 `move` —— 所有权从 `v` 搬到 `w`，不复制。
     let w: Vec<String> = v;
     // jrust:L24
     let k: String = "k".to_string();
     // jrust:L25
     let c: Coupon = Coupon::new(k);
     // jrust:L26
-    // jrust 提示: 显式 `move` —— 所有权从 `c` 搬到 `d`。Rust 的赋值本身就是 move，所以产物与不加 `move` 相同；这个关键字只是把意图写出来。
+    // jrust 提示: 显式 `move` —— 所有权从 `c` 搬到 `d`，不复制。
     let d: Coupon = c;
     // jrust:L29
     let out: String = "out".to_string();

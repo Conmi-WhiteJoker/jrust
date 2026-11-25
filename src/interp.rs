@@ -85,8 +85,45 @@ struct Slot {
     ty: Type,
 }
 
+/// 按值语义复制一份：对象、列表、Map 递归复制，与 Rust 侧 `Clone` 对齐。
+fn deep_clone(v: &Value) -> Value {
+    match v {
+        Value::List(rc) => Value::List(Rc::new(RefCell::new(
+            rc.borrow().iter().map(deep_clone).collect(),
+        ))),
+        Value::Map(rc) => Value::Map(Rc::new(RefCell::new(
+            rc.borrow()
+                .iter()
+                .map(|(k, v)| (k.clone(), deep_clone(v)))
+                .collect(),
+        ))),
+        Value::Obj(rc) => {
+            let inst = rc.borrow();
+            let fields = inst
+                .fields
+                .iter()
+                .map(|(n, s)| {
+                    (
+                        n.clone(),
+                        Slot {
+                            value: deep_clone(&s.value),
+                            moved: false,
+                            ty: s.ty.clone(),
+                        },
+                    )
+                })
+                .collect();
+            Value::Obj(Rc::new(RefCell::new(Instance {
+                class: inst.class.clone(),
+                fields,
+            })))
+        }
+        other => other.clone(),
+    }
+}
+
 impl Value {
-    /// Copy 类型赋值不移动；其余类型赋值即 move。
+    /// Copy 类型直接复制；其余类型在普通赋值时走 `deep_clone`，显式 `move` 才转移所有权。
     fn is_copy(&self) -> bool {
         matches!(
             self,
@@ -396,12 +433,12 @@ impl<'a> Interp<'a> {
     fn exec_stmt(&mut self, st: &Stmt) -> Result<Flow, RuntimeError> {
         match st {
             Stmt::Let { ty, name, init, .. } => {
-                let v = self.eval_place_take(init)?;
+                let v = self.eval_assign_source(init)?;
                 self.declare(name, ty.clone(), v);
                 Ok(Flow::Normal)
             }
             Stmt::Assign { target, value, .. } => {
-                let v = self.eval_place_take(value)?;
+                let v = self.eval_assign_source(value)?;
                 self.assign(target, v)?;
                 Ok(Flow::Normal)
             }
@@ -560,6 +597,22 @@ impl<'a> Interp<'a> {
     fn eval_place_take(&mut self, e: &Expr) -> Result<Value, RuntimeError> {
         match strip_paren(e) {
             Expr::Ident(_) | Expr::Field(..) | Expr::Index(..) => self.take(e),
+            _ => self.eval(e),
+        }
+    }
+
+    /// 普通赋值 / 声明：与 codegen 的 `.clone()` 对齐——复制一份，源变量仍然可用；
+    /// 只有显式 `move` 才搬走所有权。
+    fn eval_assign_source(&mut self, e: &Expr) -> Result<Value, RuntimeError> {
+        match strip_paren(e) {
+            Expr::Unary {
+                op: UnOp::Move,
+                expr,
+            } => self.take(expr),
+            Expr::Ident(_) | Expr::Field(..) | Expr::Index(..) => {
+                let v = self.eval(e)?;
+                Ok(deep_clone(&v))
+            }
             _ => self.eval(e),
         }
     }

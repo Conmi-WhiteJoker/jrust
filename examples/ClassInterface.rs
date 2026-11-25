@@ -12,6 +12,7 @@ pub trait Shape {
 }
 
 // jrust:L10
+#[derive(Clone)]
 pub struct Circle {
     // jrust:L11
     radius: f64,
@@ -38,6 +39,7 @@ impl Circle {
 }
 
 // jrust:L26
+#[derive(Clone)]
 pub struct Rectangle {
     // jrust:L27
     w: f64,

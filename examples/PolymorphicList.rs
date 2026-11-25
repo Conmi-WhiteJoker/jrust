@@ -10,6 +10,7 @@ pub trait Animal {
 }
 
 // jrust:L10
+#[derive(Clone)]
 pub struct Dog;
 
 impl Animal for Dog {
@@ -21,6 +22,7 @@ impl Animal for Dog {
 }
 
 // jrust:L16
+#[derive(Clone)]
 pub struct Cat;
 
 impl Animal for Cat {

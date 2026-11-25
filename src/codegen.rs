@@ -24,6 +24,8 @@ struct Env {
     ret: Type,
     /// 当前函数是否声明了 `throws`（决定 `?` 是否合法、`return` 是否包 `Ok(...)`）。
     in_throws: bool,
+    /// 当前所在类型名（用于推断 `this.字段` 的类型）。
+    self_class: Option<String>,
 }
 
 impl Env {
@@ -33,6 +35,7 @@ impl Env {
             mutated: HashSet::new(),
             ret,
             in_throws: false,
+            self_class: None,
         }
     }
 }
@@ -53,6 +56,8 @@ struct Codegen<'a> {
     diags: Vec<Diag>,
     cur_line: usize,
     in_method: bool,
+    /// 可以安全 `#[derive(Clone)]` 的类型名（class / enum）。
+    cloneable: HashSet<String>,
 }
 
 impl<'a> Codegen<'a> {
@@ -80,6 +85,40 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        // 先假定所有 class / enum 都可 Clone，再按字段类型反复剔除，直到稳定。
+        // 起点为「全 true」可以自然处理自引用（List<Node>）而不会递归爆栈。
+        let mut cloneable: HashSet<String> = HashSet::new();
+        for c in &prog.classes {
+            cloneable.insert(c.name.clone());
+        }
+        for e in &prog.enums {
+            cloneable.insert(e.name.clone());
+        }
+        loop {
+            let snapshot = cloneable.clone();
+            let mut changed = false;
+            for c in &prog.classes {
+                let ok = c
+                    .fields
+                    .iter()
+                    .all(|f| type_cloneable(&f.ty, &snapshot));
+                if !ok && cloneable.remove(&c.name) {
+                    changed = true;
+                }
+            }
+            for e in &prog.enums {
+                let ok = e
+                    .variants
+                    .iter()
+                    .all(|v| v.params.iter().all(|p| type_cloneable(&p.ty, &snapshot)));
+                if !ok && cloneable.remove(&e.name) {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         Codegen {
             prog,
             out: String::new(),
@@ -91,6 +130,7 @@ impl<'a> Codegen<'a> {
             diags: Vec::new(),
             cur_line: 0,
             in_method: false,
+            cloneable,
         }
     }
 
@@ -123,6 +163,34 @@ impl<'a> Codegen<'a> {
         let line = self.cur_line;
         self.diags
             .push(Diag::error_code(line, code, msg).with_hint(hint));
+    }
+
+    /// 这个类型能否按值复制（`.clone()`）。
+    fn is_cloneable_type(&self, ty: &Type) -> bool {
+        type_cloneable(ty, &self.cloneable)
+    }
+
+    /// 赋值目标 / 声明处的静态类型（用于判断是否要 clone）。
+    fn target_type(&self, expr: &Expr, env: &Env) -> Option<Type> {
+        match expr {
+            Expr::Ident(n) => env.vars.get(n).cloned(),
+            Expr::Field(recv, f) => {
+                let base = match &**recv {
+                    Expr::This => env.self_class.clone().map(Type::Named),
+                    other => self.infer_type(other, env),
+                };
+                match base {
+                    Some(Type::Named(c)) => self.classes.get(&c).and_then(|cd| {
+                        cd.fields
+                            .iter()
+                            .find(|x| &x.name == f)
+                            .map(|x| x.ty.clone())
+                    }),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn rust_type(&self, t: &Type) -> String {
@@ -225,7 +293,11 @@ impl<'a> Codegen<'a> {
 
     fn gen_enum(&mut self, e: &EnumDecl) {
         self.marker(e.line);
-        self.emit("#[derive(Debug)]");
+        if self.cloneable.contains(&e.name) {
+            self.emit("#[derive(Debug, Clone)]");
+        } else {
+            self.emit("#[derive(Debug)]");
+        }
         self.emit(&format!("pub enum {} {{", e.name));
         self.indent += 1;
         for v in &e.variants {
@@ -294,6 +366,9 @@ impl<'a> Codegen<'a> {
 
     fn gen_class(&mut self, class: &ClassDecl) {
         self.marker(class.line);
+        if self.cloneable.contains(&class.name) {
+            self.emit("#[derive(Clone)]");
+        }
         if class.fields.is_empty() {
             self.emit(&format!("pub struct {};", class.name));
         } else {
@@ -332,7 +407,7 @@ impl<'a> Codegen<'a> {
             self.emit(&format!("impl {} for {} {{", iname, class.name));
             self.indent += 1;
             for m in methods {
-                self.gen_method(m, true);
+                self.gen_method(m, true, &class.name);
             }
             self.indent -= 1;
             self.emit("}");
@@ -352,7 +427,7 @@ impl<'a> Codegen<'a> {
                 self.gen_ctor(ctor);
             }
             for m in inherent {
-                self.gen_method(m, false);
+                self.gen_method(m, false, &class.name);
             }
             self.indent -= 1;
             self.emit("}");
@@ -385,6 +460,7 @@ impl<'a> Codegen<'a> {
         }
         env.mutated = collect_mutated(&main.body);
         env.in_throws = throws;
+        env.self_class = Some(class.name.clone());
         let prev = self.in_method;
         self.in_method = false;
         self.gen_stmts(&main.body, &mut env);
@@ -440,7 +516,7 @@ impl<'a> Codegen<'a> {
         self.emit("}");
     }
 
-    fn gen_method(&mut self, m: &Method, in_trait_impl: bool) {
+    fn gen_method(&mut self, m: &Method, in_trait_impl: bool, class_name: &str) {
         let vis = if in_trait_impl {
             ""
         } else if m.vis == Vis::Public {
@@ -487,6 +563,7 @@ impl<'a> Codegen<'a> {
         }
         env.mutated = collect_mutated(&m.body);
         env.in_throws = throws;
+        env.self_class = Some(class_name.to_string());
         let prev = self.in_method;
         self.in_method = !m.is_static;
         self.gen_stmts(&m.body, &mut env);
@@ -516,14 +593,24 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
+                let from_holder = matches!(init, Expr::Ident(_) | Expr::Field(_, _))
+                    && !matches!(init, Expr::Unary { op: UnOp::Move, .. });
+                let wants_copy =
+                    from_holder && !ty.is_copy_scalar() && !matches!(ty, Type::Void);
+                let clone = wants_copy && self.is_cloneable_type(ty);
+                if wants_copy && !clone {
+                    self.err_code(
+                        "JR4002",
+                        format!("`{}` 类型不可 Clone，无法按值复制", self.rust_type(ty)),
+                        "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或显式写 `move` 转移所有权。",
+                    );
+                }
                 match init {
-                    Expr::Ident(src) => {
-                        if !ty.is_copy_scalar() && env.vars.contains_key(src) {
-                            self.emit(&format!(
-                                "// jrust 提示: `{}` 是移动语义——所有权从 `{}` 转给 `{}`，之后再用 `{}` 会被借用检查器拒绝；需要两份就写 `{}.clone()`。",
-                                src, src, name, src, src
-                            ));
-                        }
+                    Expr::Ident(src) if clone => {
+                        self.emit(&format!(
+                            "// jrust 提示: 普通赋值按值复制——`{}` 与 `{}` 各持一份；只想转移所有权请写 `move {}`。",
+                            src, name, src
+                        ));
                     }
                     Expr::Unary {
                         op: UnOp::Move,
@@ -531,7 +618,7 @@ impl<'a> Codegen<'a> {
                     } => {
                         if let Expr::Ident(src) = &**expr {
                             self.emit(&format!(
-                                "// jrust 提示: 显式 `move` —— 所有权从 `{}` 搬到 `{}`。Rust 的赋值本身就是 move，所以产物与不加 `move` 相同；这个关键字只是把意图写出来。",
+                                "// jrust 提示: 显式 `move` —— 所有权从 `{}` 搬到 `{}`，不复制。",
                                 src, name
                             ));
                         }
@@ -539,7 +626,10 @@ impl<'a> Codegen<'a> {
                     _ => {}
                 }
                 let ty_str = self.rust_type(ty);
-                let init_str = self.gen_expr(init, env, Some(ty));
+                let mut init_str = self.gen_expr(init, env, Some(ty));
+                if clone {
+                    init_str.push_str(".clone()");
+                }
                 let mut_kw = if env.mutated.contains(name) { "mut " } else { "" };
                 self.emit(&format!(
                     "let {}{}: {} = {};",
@@ -554,8 +644,27 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
+                let target_ty = self.target_type(target, env);
+                let mut clone = false;
+                if let Some(tt) = &target_ty {
+                    let from_holder = matches!(value, Expr::Ident(_) | Expr::Field(_, _))
+                        && !matches!(value, Expr::Unary { op: UnOp::Move, .. });
+                    let wants_copy =
+                        from_holder && !tt.is_copy_scalar() && !matches!(tt, Type::Void);
+                    clone = wants_copy && self.is_cloneable_type(tt);
+                    if wants_copy && !clone {
+                        self.err_code(
+                            "JR4002",
+                            format!("`{}` 类型不可 Clone，无法按值复制", self.rust_type(tt)),
+                            "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或显式写 `move` 转移所有权。",
+                        );
+                    }
+                }
                 let t = self.gen_expr(target, env, None);
-                let v = self.gen_expr(value, env, None);
+                let mut v = self.gen_expr(value, env, None);
+                if clone {
+                    v.push_str(".clone()");
+                }
                 self.emit(&format!("{} = {};", t, v));
             }
             Stmt::Expr { expr, line } => {
@@ -808,10 +917,11 @@ impl<'a> Codegen<'a> {
                         format!("{}::{}({})", en, name, bindings.join(", "))
                     }
                 }
-                CasePattern::Other(_) => {
+                CasePattern::Other(e) => {
+                    let lit = self.gen_expr(e, env, None);
                     self.err_code(
                         "JR3019",
-                        "枚举 / boolean 的 switch 里出现了字面量 case",
+                        format!("枚举 / boolean 的 switch 里出现了字面量 case `{}`", lit),
                         "枚举分支写 `case 变体名(...)`；boolean 写 `case true:` / `case false:`。",
                     );
                     continue;
@@ -1344,6 +1454,19 @@ impl<'a> Codegen<'a> {
 
 // ---------- 自由函数 ----------
 
+/// 类型能否按值复制（用于 `#[derive(Clone)]` 与赋值处补 `.clone()`）。
+fn type_cloneable(ty: &Type, named: &HashSet<String>) -> bool {
+    match ty {
+        t if t.is_copy_scalar() => true,
+        Type::Void => true,
+        Type::String => true,
+        Type::List(inner) | Type::Array(inner) => type_cloneable(inner, named),
+        Type::Map(k, v) => type_cloneable(k, named) && type_cloneable(v, named),
+        Type::Named(n) => named.contains(n),
+        _ => false,
+    }
+}
+
 /// `java.io.IOException` → `IOException`
 fn simple_type_name(name: &str) -> String {
     name.rsplit('.').next().unwrap_or(name).to_string()
@@ -1481,6 +1604,15 @@ fn collect_mutated(stmts: &[Stmt]) -> HashSet<String> {
     set
 }
 
+/// 赋值目标的最左侧变量名（`y.v` → `y`，`v[i]` → `v`；`this.x` 不返回）。
+fn assign_root_ident(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(n) => Some(n.clone()),
+        Expr::Field(recv, _) | Expr::Index(recv, _) => assign_root_ident(recv),
+        _ => None,
+    }
+}
+
 fn walk_mut(stmts: &[Stmt], set: &mut HashSet<String>) {
     for s in stmts {
         match s {
@@ -1489,6 +1621,12 @@ fn walk_mut(stmts: &[Stmt], set: &mut HashSet<String>) {
                 ..
             } => {
                 set.insert(n.clone());
+            }
+            // `obj.field = x` / `v[i] = x` 也要让根变量可变，否则克隆出来的副本无法修改。
+            Stmt::Assign { target, .. } => {
+                if let Some(root) = assign_root_ident(target) {
+                    set.insert(root);
+                }
             }
             Stmt::If { then, els, .. } => {
                 walk_mut(then, set);

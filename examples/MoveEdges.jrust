@@ -1,5 +1,5 @@
 // 示例 5：move 的合法边界——参数、实参、字段、赋值右侧
-// 说明 move 不只能用在 `String b = move a;`：凡是「把已有值交出去」的位置都能写。
+// 说明 move 不只是赋值右值：凡是想「转移所有权而不是复制」的位置都能写。
 public class Coupon {
     public String label;
 
