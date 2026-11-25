@@ -13,6 +13,8 @@ pub enum Tok {
     CharLit(char),
     Kw(Kw),
     Punct(&'static str),
+    /// `raw { ... }` 的块内容（JR-X1）：原样保留，不参与词法分析。
+    Raw(String),
     Eof,
 }
 
@@ -68,6 +70,8 @@ pub enum Kw {
     Await,
     /// 并发任务（JR-C11）
     Spawn,
+    /// Rust 源码内联（JR-X1）
+    Raw,
 }
 
 pub fn keyword(s: &str) -> Option<Kw> {
@@ -117,6 +121,7 @@ pub fn keyword(s: &str) -> Option<Kw> {
         "async" => Kw::Async,
         "await" => Kw::Await,
         "spawn" => Kw::Spawn,
+        "raw" => Kw::Raw,
         _ => return None,
     })
 }
@@ -157,6 +162,124 @@ fn scan_digits(
         i += 1;
     }
     i
+}
+
+/// 跳过空白与注释，返回下一个有效字符的下标；`raw` 与 `{` 之间允许换行或注释。
+fn skip_trivia(chars: &[char], mut i: usize, line: &mut usize) -> usize {
+    loop {
+        match chars.get(i) {
+            Some(c) if c.is_whitespace() => {
+                if *c == '\n' {
+                    *line += 1;
+                }
+                i += 1;
+            }
+            Some('/') if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            Some('/') if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i < chars.len() {
+                    if chars[i] == '\n' {
+                        *line += 1;
+                    }
+                    if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            _ => return i,
+        }
+    }
+}
+
+/// 扫描 `raw { ... }` 的主体：按花括号配平，但跳过字符串 / 字符字面量 / 注释里的花括号。
+///
+/// 返回（右花括号下标，主体文本）；未闭合返回 `None`。
+fn scan_raw_body(chars: &[char], start: usize, line: &mut usize) -> Option<(usize, String)> {
+    let mut i = start;
+    let mut depth = 1usize;
+    while i < chars.len() {
+        match chars[i] {
+            '\n' => {
+                *line += 1;
+                i += 1;
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i < chars.len() {
+                    if chars[i] == '\n' {
+                        *line += 1;
+                    }
+                    if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            '"' => {
+                i += 1;
+                while i < chars.len() {
+                    match chars[i] {
+                        '\\' => i += 2,
+                        '\n' => {
+                            *line += 1;
+                            i += 1;
+                        }
+                        '"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            '\'' => {
+                // `'x'` / `'\n'` 是字符字面量；`'a` 这种生命周期按普通字符处理。
+                let is_char = chars.get(i + 1) == Some(&'\\')
+                    || (chars.get(i + 2) == Some(&'\'') && chars.get(i + 1) != Some(&'\''));
+                if is_char {
+                    i += 1;
+                    while i < chars.len() {
+                        match chars[i] {
+                            '\\' => i += 2,
+                            '\'' => {
+                                i += 1;
+                                break;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            '{' => {
+                depth += 1;
+                i += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let code: String = chars[start..i].iter().collect();
+                    return Some((i, code));
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
@@ -344,6 +467,36 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Vec<Diag>> {
                 i += 1;
             }
             let text: String = chars[start..i].iter().collect();
+
+            // `raw { ... }`（JR-X1）：块内是 Rust 原文，整块作为一个 token。
+            if text == "raw" {
+                let mut probe_line = line;
+                let brace = skip_trivia(&chars, i, &mut probe_line);
+                if chars.get(brace) == Some(&'{') {
+                    let mut body_line = probe_line;
+                    match scan_raw_body(&chars, brace + 1, &mut body_line) {
+                        Some((end, code)) => {
+                            line = body_line;
+                            i = end + 1;
+                            toks.push(Token {
+                                tok: Tok::Raw(code),
+                                line: start_line,
+                            });
+                            continue;
+                        }
+                        None => {
+                            diags.push(Diag::error(start_line, "raw 块未闭合（缺少 `}`）"));
+                            break;
+                        }
+                    }
+                }
+                toks.push(Token {
+                    tok: Tok::Kw(Kw::Raw),
+                    line: start_line,
+                });
+                continue;
+            }
+
             let tok = match keyword(&text) {
                 Some(k) => Tok::Kw(k),
                 None => Tok::Ident(text),

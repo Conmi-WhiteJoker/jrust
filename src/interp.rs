@@ -634,6 +634,13 @@ impl<'a> Interp<'a> {
             .with_hint(
                 "错误传播目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
             )),
+            Stmt::Raw { line, .. } => Err(RuntimeError::new(
+                *line,
+                "解释器无法执行 raw 块",
+            )
+            .with_hint(
+                "raw 是原样内联的 Rust 源码；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+            )),
         }
     }
 
@@ -954,6 +961,10 @@ impl<'a> Interp<'a> {
                     "throws / `?` 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
                 ))
             }
+            Expr::Raw { line, .. } => Err(RuntimeError::new(*line, "解释器无法执行 raw 块")
+                .with_hint(
+                    "raw 是原样内联的 Rust 源码；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+                )),
         }
     }
 
@@ -1602,6 +1613,7 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::Continue { line }
         | Stmt::Switch { line, .. }
         | Stmt::Spawn { line, .. }
+        | Stmt::Raw { line, .. }
         | Stmt::Throw { line, .. } => *line,
     }
 }

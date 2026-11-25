@@ -131,6 +131,15 @@ pub struct ClassDecl {
     pub fields: Vec<Field>,
     pub ctor: Option<Constructor>,
     pub methods: Vec<Method>,
+    /// 类内的 `raw { ... }`（JR-X1）：作为顶层条目原样输出。
+    pub raw_members: Vec<RawCode>,
+    pub line: usize,
+}
+
+/// `raw { ... }`：原样内联的 Rust 源码（JR-X1）。
+#[derive(Debug, Clone)]
+pub struct RawCode {
+    pub code: String,
     pub line: usize,
 }
 
@@ -255,6 +264,11 @@ pub enum Stmt {
         body: Vec<Stmt>,
         line: usize,
     },
+    /// `raw { ... }`（JR-X1）：语句位置原样输出。
+    Raw {
+        code: String,
+        line: usize,
+    },
     /// `throw new E("msg");` → `return Err(JrustError::E(...));`
     Throw {
         expr: Expr,
@@ -362,6 +376,11 @@ pub enum Expr {
     },
     /// `await expr` → `expr.await`（JR-C10）；只能在 `async` 方法里出现。
     Await(Box<Expr>),
+    /// `raw { ... }`（JR-X1）：表达式位置原样输出。
+    Raw {
+        code: String,
+        line: usize,
+    },
     /// `f()?`：错误传播，只能出现在声明了 `throws` 的函数里。
     Try(Box<Expr>),
 }

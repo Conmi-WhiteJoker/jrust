@@ -127,6 +127,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `panic("msg")` / `assert(cond, "msg")` | `panic!("{}", msg)` / `assert!(cond, "{}", msg)` | 内置函数；`assert` 也接受单参数；其它裸调用报「未知的函数」 | [L1 用例](tests/conformance/L1/ok_assert.jrust) |
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
 | `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
+| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
@@ -156,7 +157,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
-- 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包，这些特性走 `jrust build` + cargo 验证。
+- 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包 / raw，这些特性走 `jrust build` + cargo 验证。
+- `raw` 目前只保证原样内联：块内 rustc 错误不会映射回 `.jrust` 行列（`JR-X2`），嵌套 `raw` 也不会被识别（`JR-X3`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 

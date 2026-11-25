@@ -135,6 +135,7 @@ impl Parser {
             Tok::CharLit(_) => "字符字面量".to_string(),
             Tok::Kw(k) => format!("关键字 `{}`", kw_text(*k)),
             Tok::Punct(p) => format!("`{}`", p),
+            Tok::Raw(_) => "raw 块".to_string(),
             Tok::Eof => "文件末尾".to_string(),
         }
     }
@@ -230,12 +231,17 @@ impl Parser {
         let mut attrs = Vec::new();
         while self.check_punct("@") {
             self.bump(); // @
-            if !matches!(self.peek(), Tok::Ident(_)) {
+            // `raw` 现在是关键字（JR-X1），但 `@raw("…")` 注解（JR-D9）仍然合法。
+            if !matches!(self.peek(), Tok::Ident(_) | Tok::Kw(Kw::Raw)) {
                 let d = self.describe();
                 self.err(format!("`@` 后面期望注解名，实际是 {}", d));
                 break;
             }
-            let mut name = self.expect_ident();
+            let mut name = if self.eat_kw(Kw::Raw) {
+                "raw".to_string()
+            } else {
+                self.expect_ident()
+            };
             while self.eat_punct(".") {
                 let seg = self.expect_ident();
                 name.push('.');
@@ -467,6 +473,7 @@ impl Parser {
             fields: Vec::new(),
             ctor: None,
             methods: Vec::new(),
+            raw_members: Vec::new(),
             line,
         };
 
@@ -486,6 +493,21 @@ impl Parser {
     }
 
     fn parse_member(&mut self, class: &mut ClassDecl) {
+        // 类内 `raw { ... }`（JR-X1）：作为成员原样收集。
+        if let Tok::Raw(code) = self.peek().clone() {
+            let line = self.line();
+            self.bump();
+            class.raw_members.push(RawCode { code, line });
+            return;
+        }
+        if self.check_kw(Kw::Raw) {
+            self.err_hint(
+                "raw 必须写成 `raw { ... }`",
+                "在 `raw` 后紧跟花括号，里面直接写 Rust 代码。",
+            );
+            self.bump();
+            return;
+        }
         let attrs = self.parse_annotations();
         if self.at_eof() || self.check_punct("}") {
             return;
@@ -1008,6 +1030,18 @@ impl Parser {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         let line = self.line();
         match self.peek().clone() {
+            Tok::Raw(code) => {
+                self.bump();
+                Some(Stmt::Raw { code, line })
+            }
+            Tok::Kw(Kw::Raw) => {
+                self.err_hint(
+                    "raw 必须写成 `raw { ... }`",
+                    "在 `raw` 后紧跟花括号，里面直接写 Rust 代码。",
+                );
+                self.bump();
+                None
+            }
             Tok::Punct("{") => {
                 self.err_hint(
                     "jrust 不支持裸代码块",
@@ -1957,6 +1991,19 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Expr {
         match self.peek().clone() {
+            Tok::Raw(code) => {
+                let line = self.line();
+                self.bump();
+                Expr::Raw { code, line }
+            }
+            Tok::Kw(Kw::Raw) => {
+                self.err_hint(
+                    "raw 必须写成 `raw { ... }`",
+                    "在 `raw` 后紧跟花括号，里面直接写 Rust 代码。",
+                );
+                self.bump();
+                Expr::Int(0)
+            }
             Tok::Int(n) => {
                 self.bump();
                 Expr::Int(n)
@@ -2092,6 +2139,7 @@ fn tok_text(t: &Tok) -> String {
         Tok::CharLit(c) => format!("{:?}", c),
         Tok::Kw(k) => kw_text(*k).to_string(),
         Tok::Punct(p) => p.to_string(),
+        Tok::Raw(s) => s.clone(),
         Tok::Eof => String::new(),
     }
 }
@@ -2143,5 +2191,6 @@ fn kw_text(k: Kw) -> &'static str {
         Kw::Async => "async",
         Kw::Await => "await",
         Kw::Spawn => "spawn",
+        Kw::Raw => "raw",
     }
 }

@@ -166,6 +166,18 @@ impl<'a> Codegen<'a> {
         self.emit(&format!("// jrust:L{}", line));
     }
 
+    /// `raw { ... }`（JR-X1）：内容逐字输出（不加缩进，避免改动多行字符串），
+    /// 前后各留一条 `// jrust:L` 源映射标记。
+    fn emit_raw(&mut self, code: &str, line: usize) {
+        let end = line + code.matches('\n').count();
+        self.marker(line);
+        for l in code.trim_matches('\n').lines() {
+            self.out.push_str(l);
+            self.out.push('\n');
+        }
+        self.marker(end);
+    }
+
     fn err(&mut self, msg: impl Into<String>, hint: impl Into<String>) {
         let line = self.cur_line;
         self.diags.push(Diag::error(line, msg).with_hint(hint));
@@ -529,6 +541,13 @@ impl<'a> Codegen<'a> {
         for class in &prog.classes {
             if let Some(main) = class.methods.iter().find(|m| m.is_static && m.name == "main") {
                 self.gen_main_class(class, main);
+            }
+        }
+        // 类内 `raw { ... }` 成员按顶层条目输出（JR-X1）。
+        for class in &prog.classes {
+            for r in &class.raw_members {
+                self.emit_raw(&r.code, r.line);
+                self.blank();
             }
         }
     }
@@ -1217,6 +1236,10 @@ impl<'a> Codegen<'a> {
                     );
                 }
             }
+            Stmt::Raw { code, line } => {
+                self.cur_line = *line;
+                self.emit_raw(code, *line);
+            }
             Stmt::Throw { expr, line } => {
                 self.cur_line = *line;
                 self.marker(*line);
@@ -1622,6 +1645,10 @@ impl<'a> Codegen<'a> {
                 }
                 let x = self.gen_expr(inner, env, None);
                 format!("{}.await", x)
+            }
+            Expr::Raw { code, line } => {
+                // 表达式位置：包成块表达式，并保留源映射标记（JR-X1）。
+                format!("({{ /* jrust:L{} */ {} }})", line, code.trim())
             }
             Expr::Try(inner) => {
                 if !env.in_throws {
@@ -2695,6 +2722,7 @@ fn stmt_uses_ident(s: &Stmt, want: &str) -> bool {
                     .map_or(false, |d| stmts_use_ident(d, want))
         }
         Stmt::Spawn { body, .. } => stmts_use_ident(body, want),
+        Stmt::Raw { .. } => false,
         Stmt::Throw { expr, .. } => expr_uses_ident(expr, want),
     }
 }

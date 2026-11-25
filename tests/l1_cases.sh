@@ -116,6 +116,7 @@ run_ok ok_const
 run_ok ok_attrs
 run_ok ok_assert
 run_ok ok_async
+run_ok ok_raw
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 
