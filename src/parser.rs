@@ -711,7 +711,8 @@ impl Parser {
                 let mline = self.line();
                 let mut saw_static = false;
                 loop {
-                    if self.eat_kw(Kw::Public) || self.eat_kw(Kw::Final) {
+                    if self.eat_kw(Kw::Public) || self.eat_kw(Kw::Final) || self.eat_kw(Kw::Default)
+                    {
                         continue;
                     }
                     if self.check_kw(Kw::Static) {
@@ -720,13 +721,6 @@ impl Parser {
                         continue;
                     }
                     break;
-                }
-                if saw_static {
-                    self.diags.push(
-                        Diag::error(mline, "jrust MVP 不支持接口里的 static 方法").with_hint(
-                            "Rust 的 trait 可以有关联函数，但初版先不映射；把工具方法放进普通类。",
-                        ),
-                    );
                 }
                 let mattrs = self.parse_annotations();
                 let mtype_params = if self.check_punct("<") {
@@ -738,13 +732,20 @@ impl Parser {
                     Some(ret) => {
                         let mname = self.expect_ident();
                         let params = self.parse_params();
-                        self.expect_punct(";");
+                        // `;` = 只有签名；`{ ... }` = 默认方法 / static 方法体（JR-D10）。
+                        let body = if self.eat_punct(";") {
+                            None
+                        } else {
+                            Some(self.parse_block())
+                        };
                         methods.push(MethodSig {
                             attrs: mattrs,
                             type_params: mtype_params,
                             name: mname,
                             ret,
                             params,
+                            is_static: saw_static,
+                            body,
                             line: mline,
                         });
                     }

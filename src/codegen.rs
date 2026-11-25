@@ -564,6 +564,10 @@ impl<'a> Codegen<'a> {
         ));
         self.indent += 1;
         for m in &iface.methods {
+            // static 方法单独转成自由函数（见下面的循环）。
+            if m.is_static {
+                continue;
+            }
             self.marker(m.line);
             for l in self.attr_lines(&m.attrs) {
                 self.emit(&l);
@@ -577,17 +581,98 @@ impl<'a> Codegen<'a> {
             } else {
                 format!(" -> {}", self.rust_type(&m.ret))
             };
-            self.emit(&format!(
-                "fn {}{}({}){};",
+            let sig = format!(
+                "fn {}{}({}){}",
                 m.name,
                 impl_param_decl(&m.type_params),
                 ps.join(", "),
                 ret
-            ));
+            );
+            match &m.body {
+                // 默认方法：trait 内直接给实现（JR-D10）。
+                Some(body) => {
+                    self.emit(&format!("{} {{", sig));
+                    self.indent += 1;
+                    let prev_generic = self.generic_params.clone();
+                    self.generic_params
+                        .extend(m.type_params.iter().map(|p| p.name.clone()));
+                    let mut env = Env::new(m.ret.clone());
+                    for p in &m.params {
+                        env.vars.insert(p.name.clone(), p.ty.clone());
+                    }
+                    env.mutated = collect_mutated(body);
+                    env.self_class = Some(iface.name.clone());
+                    let prev = self.in_method;
+                    self.in_method = !m.is_static;
+                    self.gen_stmts(body, &mut env);
+                    self.in_method = prev;
+                    self.generic_params = prev_generic;
+                    self.indent -= 1;
+                    self.emit("}");
+                }
+                None => self.emit(&format!("{};", sig)),
+            }
         }
         self.indent -= 1;
         self.emit("}");
         self.blank();
+
+        // 接口 static 方法 → 顶层自由函数 `Iface_method(...)`（JR-D10）。
+        // Rust 不允许 `Trait::assoc_fn()`（E0790，Self 不明确），因此不进 trait。
+        for m in iface.methods.iter().filter(|m| m.is_static) {
+            self.marker(m.line);
+            for l in self.attr_lines(&m.attrs) {
+                self.emit(&l);
+            }
+            let mut ps = Vec::new();
+            for p in &m.params {
+                ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
+            }
+            let ret = if m.ret == Type::Void {
+                String::new()
+            } else {
+                format!(" -> {}", self.rust_type(&m.ret))
+            };
+            let sig = format!(
+                "pub fn {}_{}{}({}){}",
+                iface.name,
+                m.name,
+                impl_param_decl(&m.type_params),
+                ps.join(", "),
+                ret
+            );
+            match &m.body {
+                Some(body) => {
+                    self.emit(&format!("{} {{", sig));
+                    self.indent += 1;
+                    let prev_generic = self.generic_params.clone();
+                    self.generic_params
+                        .extend(m.type_params.iter().map(|p| p.name.clone()));
+                    let mut env = Env::new(m.ret.clone());
+                    for p in &m.params {
+                        env.vars.insert(p.name.clone(), p.ty.clone());
+                    }
+                    env.mutated = collect_mutated(body);
+                    env.self_class = Some(iface.name.clone());
+                    let prev = self.in_method;
+                    self.in_method = false;
+                    self.gen_stmts(body, &mut env);
+                    self.in_method = prev;
+                    self.generic_params = prev_generic;
+                    self.indent -= 1;
+                    self.emit("}");
+                }
+                None => {
+                    self.cur_line = m.line;
+                    self.err_code(
+                        "JR3024",
+                        format!("接口 static 方法 `{}` 必须有方法体", m.name),
+                        "Java 的接口 static 方法不能是抽象声明；补上 `{ ... }`，或去掉 `static` 改成实例方法。",
+                    );
+                }
+            }
+            self.blank();
+        }
     }
 
     fn gen_enum(&mut self, e: &EnumDecl) {
@@ -1812,6 +1897,29 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// `Cls.method` / `Iface.method` 对应静态方法时返回（Rust 调用路径，形参类型）（JR-D10）。
+    fn static_method(&self, ty: &str, name: &str) -> Option<(String, Vec<Type>)> {
+        if let Some(cd) = self.classes.get(ty) {
+            if let Some(m) = cd.methods.iter().find(|m| m.is_static && m.name == name) {
+                return Some((
+                    format!("{}::{}", ty, name),
+                    m.params.iter().map(|p| p.ty.clone()).collect(),
+                ));
+            }
+        }
+        self.prog
+            .interfaces
+            .iter()
+            .find(|i| i.name == ty)
+            .and_then(|i| i.methods.iter().find(|m| m.is_static && m.name == name))
+            .map(|m| {
+                (
+                    format!("{}_{}", ty, name),
+                    m.params.iter().map(|p| p.ty.clone()).collect(),
+                )
+            })
+    }
+
     fn gen_call(
         &mut self,
         recv: &Option<Box<Expr>>,
@@ -1915,6 +2023,20 @@ impl<'a> Codegen<'a> {
                 } else {
                     format!("{}::{}({})", en, name, vals.join(", "))
                 };
+            }
+        }
+
+        // `Cls.method(...)` / `Iface.method(...)`：静态方法 → 关联函数（JR-D10）。
+        if let Some(Expr::Ident(cn)) = recv.as_deref() {
+            if let Some((path, params)) = self.static_method(cn, name) {
+                let mut vals = Vec::new();
+                for (i, a) in args.iter().enumerate() {
+                    match params.get(i) {
+                        Some(pt) => vals.push(self.gen_arg(a, pt, env)),
+                        None => vals.push(self.gen_expr(a, env, None)),
+                    }
+                }
+                return format!("{}({})", path, vals.join(", "));
             }
         }
 
@@ -2230,6 +2352,14 @@ impl<'a> Codegen<'a> {
                     // 静态调用 `Cls.method(..)`
                     if let Some(cd) = self.classes.get(en) {
                         if let Some(m) = cd.methods.iter().find(|m| &m.name == name && m.is_static)
+                        {
+                            return Some(m.ret.clone());
+                        }
+                    }
+                    // 接口静态方法 `Iface.method(..)`（JR-D10）
+                    if let Some(iface) = self.prog.interfaces.iter().find(|i| &i.name == en) {
+                        if let Some(m) =
+                            iface.methods.iter().find(|m| &m.name == name && m.is_static)
                         {
                             return Some(m.ret.clone());
                         }

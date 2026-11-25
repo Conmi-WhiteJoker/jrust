@@ -113,6 +113,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `new Box<Integer>(v)` / `new Box<>(v)` | `Box::<i32>::new(v)` / `Box::new(v)` | 钻石写法由左侧声明类型推断实参；构造器形参里的 `T` 按实参替换（字符串字面量自动 `.to_string()`） | [Generics](examples/Generics.jrust) |
 | `public <T> T id(T x)` | `pub fn id<T: Clone>(x: T) -> T` | 方法级类型参数写在方法名后；v1 统一要求 `T: Clone` | [Generics](examples/Generics.jrust) |
 | `interface Mapper<T> { T map(T x); }` | `pub trait Mapper<T> { ... }` | 泛型接口；`class X implements Mapper<Integer>` → `impl Mapper<i32> for X`；接口类型字段/变量包成 `Box<dyn Mapper<i32>>` | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
+| 接口默认方法 / `static` 方法 | trait 默认实现 / 自由函数 `Iface_method(...)` | 带方法体即默认方法（`default` 可省）；`Iface.method()` 调用生成 `Iface_method()`（Rust 不允许 `Trait::f()`，E0790）；`static` 接口方法必须有方法体，否则 `JR3024` | [L1 用例](tests/conformance/L1/ok_iface_default.jrust) |
 | `enum Maybe<T> { Some(T value), None }` | `pub enum Maybe<T> { Some(T), None }` | 泛型枚举；`Maybe.Some("hi")` 按左侧 `Maybe<String>` 替换实参 | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
 | `class Holder<T extends Named & Sizer> { ... }` | `pub struct Holder<T>` + `impl<T: Named + Sizer + Clone> Holder<T>` | 上界按 `&` 拆成 `+`；声明位置不带界，`impl` / 方法位置尾随 `Clone`（值语义需要）；`? extends` / `? super` 报 `JR3010` | [L1 用例](tests/conformance/L1/ok_generic_bounds.jrust) |
 | `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
@@ -125,6 +126,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `String b = a;` | `let b: String = a.clone();` | 普通赋值 = 按值复制，两个变量各持一份；类与枚举自动 `#[derive(Clone)]`，含 trait 对象等不可克隆字段时报 `JR4002`，改用 `move` | [Ownership](examples/Ownership.jrust) |
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：真正的移动，不 `clone`，之后 `a` 不可再用。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
 | `panic("msg")` / `assert(cond, "msg")` | `panic!("{}", msg)` / `assert!(cond, "{}", msg)` | 内置函数；`assert` 也接受单参数；其它裸调用报「未知的函数」 | [L1 用例](tests/conformance/L1/ok_assert.jrust) |
+| `Cls.staticMethod(x)` / `Iface.staticMethod(x)` | `Cls::staticMethod(x)` / `Iface_staticMethod(x)` | 类静态方法 → 关联函数；接口静态方法 → 顶层自由函数（Rust 不支持 `Trait::f()`） | [L1 用例](tests/conformance/L1/ok_iface_default.jrust) |
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
 | `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
 | `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
@@ -151,7 +153,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
-- 不支持实例字段初始化（`static final` 常量除外）、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
+- 不支持实例字段初始化（`static final` 常量除外）、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。

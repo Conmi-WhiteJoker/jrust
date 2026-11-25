@@ -1,0 +1,26 @@
+// 接口默认方法与 static 方法（JR-D10）。
+public interface Greeter {
+    String name();
+
+    default String greet() {
+        return "hi, " + this.name();
+    }
+
+    static String tag() {
+        return "G";
+    }
+}
+
+public class A implements Greeter {
+    public String name() {
+        return "A";
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        A a = new A();
+        println(a.greet());
+        println(Greeter.tag());
+    }
+}

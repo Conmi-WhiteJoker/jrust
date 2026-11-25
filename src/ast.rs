@@ -151,6 +151,10 @@ pub struct MethodSig {
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
+    /// `static` 接口方法 → trait 关联函数（没有 `&self`）。
+    pub is_static: bool,
+    /// `Some` 表示默认方法（trait 默认实现）；`None` 表示只有签名。
+    pub body: Option<Vec<Stmt>>,
     pub line: usize,
 }
 

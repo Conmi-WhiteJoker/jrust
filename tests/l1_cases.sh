@@ -117,6 +117,7 @@ run_ok ok_attrs
 run_ok ok_assert
 run_ok ok_async
 run_ok ok_raw
+run_ok ok_iface_default
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 
@@ -135,6 +136,7 @@ run_neg neg_wildcard JR3010 "trait object"
 run_neg neg_mutable_static JR3013 "可变全局"
 run_neg neg_await_sync JR3022 "async"
 run_neg neg_spawn_this JR3023 "this"
+run_neg neg_iface_static_no_body JR3024 "必须有方法体"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

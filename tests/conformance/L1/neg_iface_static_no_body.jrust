@@ -1,0 +1,10 @@
+// 接口 static 方法必须有方法体（JR3024）。
+public interface Util {
+    static int twice(int x);
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println(Util.twice(2));
+    }
+}
