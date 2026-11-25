@@ -313,12 +313,18 @@ impl DapState {
                     self.event("initialized", obj(vec![]));
                 }
                 "launch" | "attach" => {
-                    if let Some(p) = req
+                    let program = req
                         .get("arguments")
                         .and_then(|a| a.get("program"))
                         .and_then(|v| v.as_str())
-                    {
-                        self.path = p.to_string();
+                        .unwrap_or("");
+                    let args = req
+                        .get("arguments")
+                        .and_then(|a| a.get("args"))
+                        .and_then(|v| v.as_arr())
+                        .unwrap_or(&[]);
+                    if let Some(path) = resolve_program(program, args) {
+                        self.path = path;
                     }
                     self.respond(&req, None);
                 }
@@ -650,6 +656,30 @@ impl DapState {
     }
 }
 
+/// 从 launch 请求里解析出要调试的 `.jrust` 源文件。
+///
+/// 兼容两种客户端形态：
+/// - 直接把源文件放在 `program`：`program = "a.jrust"`
+/// - 把 jrust 当运行器：`program = "jrust"`、`args = ["run", "a.jrust"]`
+///   （OpenIDEA 这类 IDE 会按运行配置原样转发 program 与 args）
+fn resolve_program(program: &str, args: &[Json]) -> Option<String> {
+    if program.ends_with(".jrust") {
+        return Some(program.to_string());
+    }
+    if let Some(path) = args
+        .iter()
+        .filter_map(|a| a.as_str())
+        .find(|a| a.ends_with(".jrust"))
+    {
+        return Some(path.to_string());
+    }
+    if program.is_empty() {
+        None
+    } else {
+        Some(program.to_string())
+    }
+}
+
 fn source_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -679,4 +709,42 @@ fn read_raw() -> Option<String> {
     let mut buf = vec![0u8; n];
     lock.read_exact(&mut buf).ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_program;
+
+    fn args(items: &[&str]) -> Vec<crate::json::Json> {
+        items.iter().map(|s| crate::json::Json::Str(s.to_string())).collect()
+    }
+
+    #[test]
+    fn program_may_be_the_source_file() {
+        assert_eq!(
+            resolve_program("/p/main.jrust", &[]),
+            Some("/p/main.jrust".to_string())
+        );
+    }
+
+    #[test]
+    fn runner_form_finds_the_source_in_args() {
+        assert_eq!(
+            resolve_program("jrust", &args(&["run", "/p/main.jrust"])),
+            Some("/p/main.jrust".to_string())
+        );
+    }
+
+    #[test]
+    fn non_jrust_arguments_are_ignored() {
+        assert_eq!(
+            resolve_program("jrust", &args(&["run", "--flag"])),
+            Some("jrust".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_launch_has_no_source() {
+        assert_eq!(resolve_program("", &[]), None);
+    }
 }
