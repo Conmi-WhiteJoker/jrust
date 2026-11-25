@@ -616,8 +616,21 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn gen_new(&mut self, class: &str, args: &[Expr], env: &mut Env) -> String {
-        if matches!(class, "ArrayList" | "LinkedList" | "Vector") {
+    /// Map 的键参数：String 键生成 `.as_str()`（`HashMap<String, V>::get` 接受 `&str`，
+    /// 也兼容字符串字面量和 `&String`），其它键生成 `&expr`。
+    fn gen_map_key(&mut self, e: Option<&Expr>, k_ty: &Type, env: &mut Env) -> String {
+        match e {
+            // 字符串字面量本身就是 &str，直接传；`"x".as_str()` 在新版标准库会撞到不稳定的 str_as_str。
+            Some(Expr::Str(_)) => self.gen_expr(e.unwrap(), env, None),
+            Some(e) if *k_ty == Type::String => {
+                format!("{}.as_str()", self.gen_expr(e, env, None))
+            }
+            Some(e) => format!("&{}", self.gen_expr(e, env, Some(k_ty))),
+            None => String::new(),
+        }
+    }
+
+    fn gen_new(&mut self, class: &str, args: &[Expr], env: &mut Env) -> String {        if matches!(class, "ArrayList" | "LinkedList" | "Vector") {
             if !args.is_empty() {
                 self.err(
                     "jrust MVP 只支持无参的 new ArrayList<>()",
@@ -688,23 +701,17 @@ impl<'a> Codegen<'a> {
                     if args.len() != 1 {
                         self.err("get 需要一个键", "例如 `m.get(\"a\")`。");
                     }
-                    let k = args
-                        .first()
-                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
-                        .unwrap_or_default();
+                    let k = self.gen_map_key(args.first(), k_ty, env);
                     // Rust 的 get 返回 Option<&V>；键缺失时 Java 得到 null，jrust 没有 null，
                     // 这里取拥有所有权的值，缺失即 panic（可用 containsKey 先判断）。
-                    return format!("{}.get(&{}).cloned().unwrap()", r, k);
+                    return format!("{}.get({}).cloned().unwrap()", r, k);
                 }
                 "containsKey" => {
                     if args.len() != 1 {
                         self.err("containsKey 需要一个键", "例如 `m.containsKey(\"a\")`。");
                     }
-                    let k = args
-                        .first()
-                        .map(|a| self.gen_expr(a, env, Some(k_ty)))
-                        .unwrap_or_default();
-                    return format!("{}.contains_key(&{})", r, k);
+                    let k = self.gen_map_key(args.first(), k_ty, env);
+                    return format!("{}.contains_key({})", r, k);
                 }
                 other => {
                     self.err(

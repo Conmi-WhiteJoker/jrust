@@ -1,10 +1,12 @@
 // 示例 9：Map<K, V> → HashMap<K, V>
 import java.util.Map;
 import java.util.HashMap;
+import java.util.List;
+import java.util.ArrayList;
 
 public class MapDemo {
     public static void main(String[] args) {
-        // put/size/get/containsKey 一一对应 insert/len/get(Option)/contains_key
+        // 1) put/size/get/containsKey 对应 insert/len/get(Option)/contains_key
         Map<String, Integer> ages = new HashMap<>();
         ages.put("alice", 30);
         ages.put("bob", 25);
@@ -12,9 +14,32 @@ public class MapDemo {
         println("alice={}", ages.get("alice"));
         println("has carol={}", ages.containsKey("carol"));
 
-        // 键值类型也可以是标量
+        // 2) 重复 put 同一个键：值被覆盖，size 不变
+        ages.put("bob", 26);
+        println("bob={} size={}", ages.get("bob"), ages.size());
+
+        // 3) 空 Map 与 isEmpty；值类型可以是 double
+        HashMap<String, Double> prices = new HashMap<>();
+        println("empty={}", prices.isEmpty());
+        prices.put("tea", 3.5);
+        println("tea={}", prices.get("tea"));
+
+        // 4) 键值类型也可以是标量
         HashMap<Integer, String> names = new HashMap<>();
         names.put(1, "one");
         println("{} -> {}", 1, names.get(1));
+
+        // 5) 用 List 里的键查 Map：先 containsKey，避免 get 在缺键时 panic
+        List<String> keys = new ArrayList<>();
+        keys.add("alice");
+        keys.add("bob");
+        keys.add("carol");
+        int total = 0;
+        for (String k : keys) {
+            if (ages.containsKey(k)) {
+                total = total + ages.get(k);
+            }
+        }
+        println("total={}", total);
     }
 }
