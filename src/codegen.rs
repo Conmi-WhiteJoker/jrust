@@ -58,8 +58,6 @@ struct Codegen<'a> {
     in_method: bool,
     /// 可以安全 `#[derive(Clone)]` 的类型名（class / enum）。
     cloneable: HashSet<String>,
-    /// 正在生成一条字符串 `+` 链的子节点：只在最外层报一次 JR3015。
-    in_concat: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -133,7 +131,6 @@ impl<'a> Codegen<'a> {
             cur_line: 0,
             in_method: false,
             cloneable,
-            in_concat: false,
         }
     }
 
@@ -173,12 +170,63 @@ impl<'a> Codegen<'a> {
         type_cloneable(ty, &self.cloneable)
     }
 
-    /// 表达式的值是字符串：字面量，或静态类型为 `String` 的变量 / 字段 / 调用结果。
+    /// 表达式的值是字符串：字面量、静态类型 `String`，或含字符串操作数的 `+` 链。
     fn expr_is_stringy(&self, e: &Expr, env: &Env) -> bool {
         match strip_parens_expr(e) {
             Expr::Str(_) => true,
+            Expr::Binary {
+                op: BinOp::Add,
+                lhs,
+                rhs,
+            } => self.expr_is_stringy(lhs, env) || self.expr_is_stringy(rhs, env),
             other => matches!(self.infer_type(other, env), Some(Type::String)),
         }
+    }
+
+    /// 把字符串 `+` 链摊平：括号透明，子链递归展开，其余表达式各成一段。
+    fn flatten_concat<'e>(&self, e: &'e Expr, env: &Env, out: &mut Vec<&'e Expr>) {
+        match strip_parens_expr(e) {
+            Expr::Binary {
+                op: BinOp::Add,
+                lhs,
+                rhs,
+            } if self.expr_is_stringy(lhs, env) || self.expr_is_stringy(rhs, env) => {
+                self.flatten_concat(lhs, env, out);
+                self.flatten_concat(rhs, env, out);
+            }
+            other => out.push(other),
+        }
+    }
+
+    /// 字符串 `+` → `format!("…{}…", args)`：字面量折进格式串，其余走 `{}`。
+    fn gen_concat(&mut self, roots: &[&Expr], env: &mut Env) -> String {
+        let mut parts = Vec::new();
+        for r in roots {
+            self.flatten_concat(r, env, &mut parts);
+        }
+        let mut fmt = String::new();
+        let mut args = Vec::new();
+        for p in parts {
+            match p {
+                Expr::Str(s) => {
+                    for ch in s.chars() {
+                        match ch {
+                            '{' => fmt.push_str("{{"),
+                            '}' => fmt.push_str("}}"),
+                            _ => fmt.push(ch),
+                        }
+                    }
+                }
+                other => {
+                    fmt.push_str("{}");
+                    args.push(self.gen_expr(other, env, None));
+                }
+            }
+        }
+        if args.is_empty() {
+            return format!("{:?}.to_string()", fmt);
+        }
+        format!("format!(\"{}\", {})", fmt, args.join(", "))
     }
 
     /// `new T[n]` 的默认元素值。元素类型已在 parser 限定为标量 / String。
@@ -1257,20 +1305,7 @@ impl<'a> Codegen<'a> {
                 if *op == BinOp::Add
                     && (self.expr_is_stringy(lhs, env) || self.expr_is_stringy(rhs, env))
                 {
-                    if !self.in_concat {
-                        self.err_code(
-                            "JR3015",
-                            "字符串 `+` 拼接只支持 `println` / `print` 的单参数位置",
-                            "打印时直接把各部分写进同一个 println：`println(\"n=\" + n)`；要先存成 String 的话 v1 暂不支持，请拆成多次打印。",
-                        );
-                    }
-                    // 整条 `+` 链只报一次：子节点生成时置标志。
-                    let nested = self.in_concat;
-                    self.in_concat = true;
-                    let l = self.gen_expr(lhs, env, None);
-                    let r = self.gen_expr(rhs, env, None);
-                    self.in_concat = nested;
-                    return format!("{} {} {}", l, binop_str(*op), r);
+                    return self.gen_concat(&[lhs, rhs], env);
                 }
                 if matches!(op, BinOp::Eq | BinOp::Ne) {
                     let l_null = matches!(strip_parens_expr(lhs), Expr::Null);

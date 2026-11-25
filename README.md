@@ -113,6 +113,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
 | `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort.jrust) |
+| `String s = "n=" + n;` | `let s: String = format!("n={}", n);` | 任意位置的字符串 `+` 链 → `format!`；纯字面量折叠成 `"ab".to_string()` | [L1 用例](tests/conformance/L1/ok_concat.jrust) |
 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` | [PrintShort](examples/PrintShort.jrust) |
 | `String b = a;` | `let b: String = a.clone();` | 普通赋值 = 按值复制，两个变量各持一份；类与枚举自动 `#[derive(Clone)]`，含 trait 对象等不可克隆字段时报 `JR4002`，改用 `move` | [Ownership](examples/Ownership.jrust) |
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：真正的移动，不 `clone`，之后 `a` 不可再用。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
@@ -145,7 +146,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包，这些特性走 `jrust build` + cargo 验证。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
-- 字符串 `+` 只在 `println` / `print` 的单参数位置可用（由 jrust 展开成格式串）；赋值、方法实参、返回值、下标赋值等位置报 `JR3015`，整条 `+` 链只报一次。
+- 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构
 
