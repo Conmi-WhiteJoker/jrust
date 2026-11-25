@@ -102,6 +102,7 @@ impl<'a> Codegen<'a> {
             Type::Char => "char".to_string(),
             Type::Void => "()".to_string(),
             Type::String => "String".to_string(),
+            Type::RustPrim(name) => name.clone(),
             Type::List(inner) => format!("Vec<{}>", self.rust_type(inner)),
             Type::Array(inner) => format!("Vec<{}>", self.rust_type(inner)),
             Type::Named(n) => {

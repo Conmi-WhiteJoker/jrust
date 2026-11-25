@@ -1,0 +1,26 @@
+// 示例 6：直接使用 Rust 原生标量类型名（i32 / i64 / i128 / u8 / usize / f32 / f64 / bool）
+// 它们与 Java 风格类型等价：i32≈int、i64≈long、f64≈double、f32≈float、bool≈boolean，
+// 但会原样出现在生成的 Rust 里，方便对照 Rust 语法。
+public class RustTypes {
+    public static void main(String[] args) {
+        i32 a = 40;
+        i32 b = 2;
+        i32 sum = a + b;
+        i64 big = 9000000000;
+        i128 huge = 1234567890123;
+        u8 small = 200;
+        usize count = 3;
+        f64 ratio = 1.5;
+        f32 tiny = 0.5;
+        bool ok = true;
+
+        System.out.println(sum);
+        System.out.println(big);
+        System.out.println(huge);
+        System.out.println(small);
+        System.out.println(count);
+        System.out.println(ratio * 2.0);
+        System.out.println(tiny + 0.25);
+        System.out.println(ok);
+    }
+}

@@ -167,6 +167,7 @@ fn type_str(t: &Type) -> String {
         Type::Char => "char".into(),
         Type::Void => "void".into(),
         Type::String => "String".into(),
+        Type::RustPrim(name) => name.clone(),
         Type::List(inner) => format!("List<{}>", type_str(inner)),
         Type::Array(inner) => format!("{}[]", type_str(inner)),
         Type::Named(name) => name.clone(),
@@ -176,6 +177,9 @@ fn type_str(t: &Type) -> String {
 fn default_value(t: &Type) -> Value {
     match t {
         Type::Int | Type::Long => Value::Int(0),
+        Type::RustPrim(name) if name == "bool" => Value::Bool(false),
+        Type::RustPrim(name) if name.starts_with('f') => Value::Double(0.0),
+        Type::RustPrim(_) => Value::Int(0),
         Type::Double | Type::Float => Value::Double(0.0),
         Type::Boolean => Value::Bool(false),
         Type::Char => Value::Char('\0'),

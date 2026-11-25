@@ -13,6 +13,8 @@ pub enum Type {
     Char,
     Void,
     String,
+    /// Rust 原生标量类型名（`i32` / `u64` / `f64` / `usize` / `bool` ...），原样输出。
+    RustPrim(String),
     List(Box<Type>),
     Array(Box<Type>),
     /// 用户自定义类型（class 或 interface 的名字）
@@ -24,7 +26,13 @@ impl Type {
     pub fn is_copy_scalar(&self) -> bool {
         matches!(
             self,
-            Type::Int | Type::Long | Type::Double | Type::Float | Type::Boolean | Type::Char
+            Type::Int
+                | Type::Long
+                | Type::Double
+                | Type::Float
+                | Type::Boolean
+                | Type::Char
+                | Type::RustPrim(_)
         )
     }
 }

@@ -73,6 +73,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl |
 | `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 |
 | `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | |
+| `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 |
 | `String` | `String` | 字符串字面量自动补 `.to_string()` |
 | `List<T>` | `Vec<T>`；`T` 是 interface 时 `Vec<Box<dyn T>>` | |
 | `new ArrayList<>()` | `Vec::new()` | |

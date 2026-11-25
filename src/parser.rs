@@ -587,6 +587,11 @@ impl Parser {
                 self.bump();
                 match name.as_str() {
                     "String" => Type::String,
+                    // Rust 原生标量类型名，直接接受并原样输出。
+                    "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32"
+                    | "u64" | "u128" | "usize" | "f32" | "f64" | "bool" => {
+                        Type::RustPrim(name)
+                    }
                     "List" | "ArrayList" | "Collection" | "LinkedList" => {
                         if self.eat_punct("<") {
                             let inner = self.parse_type().unwrap_or(Type::String);
