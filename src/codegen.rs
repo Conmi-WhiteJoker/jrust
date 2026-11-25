@@ -64,6 +64,10 @@ struct Codegen<'a> {
     in_async: bool,
     /// 最近一次生成的表达式是否用到了 `self`（`spawn` 的 Send + 'static 检查用）。
     saw_this: bool,
+    /// `@shared` 字段里按可变处理的（仍需 `Arc<Mutex<T>>`）：类名 → 字段名（JR-C13）。
+    shared_mut: HashMap<String, HashSet<String>>,
+    /// 当前作用域里已经持有的共享字段锁：字段名 → guard 变量名（避免二次加锁死锁）。
+    guarded: HashMap<String, String>,
 }
 
 impl<'a> Codegen<'a> {
@@ -108,7 +112,7 @@ impl<'a> Codegen<'a> {
                 let ok = c
                     .fields
                     .iter()
-                    .filter(|f| !is_const_field(f))
+                    .filter(|f| !is_const_field(f) && !field_is_shared(f))
                     .all(|f| type_cloneable(&f.ty, &snapshot, &params));
                 if !ok && cloneable.remove(&c.name) {
                     changed = true;
@@ -128,6 +132,13 @@ impl<'a> Codegen<'a> {
                 break;
             }
         }
+        let mut shared_mut = HashMap::new();
+        for c in &prog.classes {
+            let s = shared_mut_fields(c, &classes);
+            if !s.is_empty() {
+                shared_mut.insert(c.name.clone(), s);
+            }
+        }
         Codegen {
             prog,
             out: String::new(),
@@ -143,6 +154,8 @@ impl<'a> Codegen<'a> {
             generic_params: HashSet::new(),
             in_async: false,
             saw_this: false,
+            shared_mut,
+            guarded: HashMap::new(),
         }
     }
 
@@ -457,6 +470,32 @@ impl<'a> Codegen<'a> {
                 }
             }
             _ => self.gen_expr(a, env, Some(pt)),
+        }
+    }
+
+    /// 该类字段是否是 `@shared`（JR-C13）。
+    fn is_shared_field(&self, class: &str, field: &str) -> bool {
+        self.classes.get(class).map_or(false, |c| {
+            c.fields
+                .iter()
+                .any(|f| f.name == field && field_is_shared(f))
+        })
+    }
+
+    /// 该 `@shared` 字段是否按可变处理（→ `Arc<Mutex<T>>`）。
+    fn shared_is_mut(&self, class: &str, field: &str) -> bool {
+        self.shared_mut
+            .get(class)
+            .map_or(false, |s| s.contains(field))
+    }
+
+    /// `@shared` 字段在产物里的类型：`Arc<T>` 或 `Arc<Mutex<T>>`。
+    fn shared_rust_type(&self, class: &str, f: &Field) -> String {
+        let base = self.rust_type(&f.ty);
+        if self.shared_is_mut(class, &f.name) {
+            format!("std::sync::Arc<std::sync::Mutex<{}>>", base)
+        } else {
+            format!("std::sync::Arc<{}>", base)
         }
     }
 
@@ -791,6 +830,8 @@ impl<'a> Codegen<'a> {
         for a in attrs {
             match a.name.as_str() {
                 "derive" => {}
+                // `@shared` 由字段类型消费（JR-C13），不是 Rust 属性，不能透传。
+                "shared" => {}
                 "raw" => {
                     if let Some(s) = &a.args {
                         if let Some(inner) = strip_str_literal(s) {
@@ -863,7 +904,12 @@ impl<'a> Codegen<'a> {
                     self.emit(&l);
                 }
                 let vis = if f.vis == Vis::Public { "pub " } else { "" };
-                self.emit(&format!("{}{}: {},", vis, f.name, self.rust_type(&f.ty)));
+                let ty = if field_is_shared(f) {
+                    self.shared_rust_type(&class.name, f)
+                } else {
+                    self.rust_type(&f.ty)
+                };
+                self.emit(&format!("{}{}: {},", vis, f.name, ty));
             }
             if !phantom.is_empty() {
                 self.emit(&format!(
@@ -1013,14 +1059,23 @@ impl<'a> Codegen<'a> {
                         );
                         continue;
                     }
-                    let field_ty = instance_fields(class)
-                        .find(|f| &f.name == field)
-                        .map(|f| f.ty.clone());
+                    let fdecl = instance_fields(class).find(|f| &f.name == field).cloned();
+                    let field_ty = fdecl.as_ref().map(|f| f.ty.clone());
                     self.cur_line = ctor.line;
-                    let v = match &field_ty {
+                    let mut v = match &field_ty {
                         Some(ft) => self.gen_assigned_value(value, ft, &mut env, false, None),
                         None => self.gen_expr(value, &mut env, None),
                     };
+                    // `@shared` 字段：构造时包成 `Arc::new(..)` / `Arc::new(Mutex::new(..))`（JR-C13）。
+                    if let Some(fd) = &fdecl {
+                        if field_is_shared(fd) {
+                            v = if self.shared_is_mut(&class.name, field) {
+                                format!("std::sync::Arc::new(std::sync::Mutex::new({}))", v)
+                            } else {
+                                format!("std::sync::Arc::new({})", v)
+                            };
+                        }
+                    }
                     if v == *field {
                         fields.push(field.clone());
                     } else {
@@ -1166,6 +1221,43 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
+                // 写 `@shared` 字段（JR-C13）：先拿一次锁，避免 `+=` 的读与写在同一个表达式里
+                // 二次加锁（std::sync::Mutex 不可重入，会死锁）。
+                let shared_root = env.self_class.clone().and_then(|cn| {
+                    target_writes_this_field(target).and_then(|f| {
+                        if self.is_shared_field(&cn, &f) && !self.guarded.contains_key(&f) {
+                            if self.shared_is_mut(&cn, &f) {
+                                Some(f)
+                            } else {
+                                self.err_code(
+                                    "JR3025",
+                                    format!("只读 `@shared` 字段 `{}` 不能赋值", f),
+                                    "这类字段在产物里是 `Arc<T>`；类里出现写操作后会自动升级为 `Arc<Mutex<T>>`，或去掉 `@shared`。",
+                                );
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                });
+                if let Some(fld) = shared_root {
+                    self.emit("{");
+                    self.indent += 1;
+                    self.emit(&format!("let mut __g = self.{}.lock().unwrap();", fld));
+                    self.guarded.insert(fld.clone(), "__g".to_string());
+                    let target_ty = self.target_type(target, env);
+                    let t = self.gen_expr(target, env, None);
+                    let v = match &target_ty {
+                        Some(tt) => self.gen_assigned_value(value, tt, env, true, Some(&t)),
+                        None => self.gen_expr(value, env, None),
+                    };
+                    self.guarded.remove(&fld);
+                    self.emit(&format!("{} = {};", t, v));
+                    self.indent -= 1;
+                    self.emit("}");
+                    return;
+                }
                 let target_ty = self.target_type(target, env);
                 let t = self.gen_expr(target, env, None);
                 let v = match &target_ty {
@@ -1624,6 +1716,21 @@ impl<'a> Codegen<'a> {
                             .any(|v| &v.name == name && v.params.is_empty())
                         {
                             return format!("{}::{}", en, name);
+                        }
+                    }
+                }
+                // `@shared` 字段（JR-C13）：读走 Arc / Mutex 解引用；块内已持锁时直接用 guard。
+                if matches!(**recv, Expr::This) {
+                    if let Some(cn) = env.self_class.clone() {
+                        if self.is_shared_field(&cn, name) {
+                            if let Some(g) = self.guarded.get(name).cloned() {
+                                return format!("(*{})", g);
+                            }
+                            return if self.shared_is_mut(&cn, name) {
+                                format!("(*self.{}.lock().unwrap())", name)
+                            } else {
+                                format!("(*self.{})", name)
+                            };
                         }
                     }
                 }
@@ -2784,6 +2891,201 @@ fn collect_mutated(stmts: &[Stmt]) -> HashSet<String> {
     walk_mut(stmts, &mut set);
     set
 }
+
+// ---------- @shared 分析（JR-C13） ----------
+
+/// `@shared` 字段。
+fn field_is_shared(f: &Field) -> bool {
+    f.attrs.iter().any(|a| a.name == "shared")
+}
+
+/// 赋值目标是否落在 `this.<field>` 上（含 `this.f.x = ..` / `this.f[i] = ..`）。
+fn target_writes_this_field(target: &Expr) -> Option<String> {
+    match target {
+        Expr::Field(recv, name) => match &**recv {
+            Expr::This => Some(name.clone()),
+            inner => target_writes_this_field(inner),
+        },
+        Expr::Index(recv, _) => target_writes_this_field(recv),
+        _ => None,
+    }
+}
+
+/// 遍历语句（递归进入子块）。
+fn each_stmt<'a>(stmts: &'a [Stmt], f: &mut dyn FnMut(&'a Stmt)) {
+    for s in stmts {
+        f(s);
+        match s {
+            Stmt::If { then, els, .. } => {
+                each_stmt(then, f);
+                if let Some(e) = els {
+                    each_stmt(e, f);
+                }
+            }
+            Stmt::While { body, .. }
+            | Stmt::ForEach { body, .. }
+            | Stmt::ForRange { body, .. }
+            | Stmt::Spawn { body, .. } => each_stmt(body, f),
+            Stmt::Switch { cases, default, .. } => {
+                for c in cases {
+                    each_stmt(&c.body, f);
+                }
+                if let Some(d) = default {
+                    each_stmt(d, f);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 遍历表达式（递归进入子表达式）。
+fn each_expr<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
+    f(e);
+    match e {
+        Expr::Field(r, _)
+        | Expr::Paren(r)
+        | Expr::Await(r)
+        | Expr::Try(r)
+        | Expr::Unary { expr: r, .. } => each_expr(r, f),
+        Expr::Index(a, b) | Expr::Binary { lhs: a, rhs: b, .. } => {
+            each_expr(a, f);
+            each_expr(b, f);
+        }
+        Expr::Call { recv, args, .. } => {
+            if let Some(r) = recv {
+                each_expr(r, f);
+            }
+            for a in args {
+                each_expr(a, f);
+            }
+        }
+        Expr::New { args, .. } => {
+            for a in args {
+                each_expr(a, f);
+            }
+        }
+        Expr::NewArray { len, .. } => each_expr(len, f),
+        Expr::Closure { body, .. } => each_expr(body, f),
+        _ => {}
+    }
+}
+
+/// 遍历语句里直接出现的表达式（子块由 `each_stmt` 负责递归）。
+fn each_stmt_expr<'a>(stmts: &'a [Stmt], f: &mut dyn FnMut(&'a Expr)) {
+    each_stmt(stmts, &mut |s| match s {
+        Stmt::Let { init, .. } => each_expr(init, f),
+        Stmt::Assign { target, value, .. } => {
+            each_expr(target, f);
+            each_expr(value, f);
+        }
+        Stmt::Expr { expr, .. } => each_expr(expr, f),
+        Stmt::Return { value: Some(e), .. } => each_expr(e, f),
+        Stmt::If { cond, .. } => each_expr(cond, f),
+        Stmt::While { cond, .. } => each_expr(cond, f),
+        Stmt::ForEach { iter, .. } => each_expr(iter, f),
+        Stmt::ForRange { start, end, .. } => {
+            each_expr(start, f);
+            each_expr(end, f);
+        }
+        Stmt::Switch {
+            subject,
+            cases,
+            ..
+        } => {
+            each_expr(subject, f);
+            for c in cases {
+                if let Some(g) = &c.guard {
+                    each_expr(g, f);
+                }
+            }
+        }
+        Stmt::Throw { expr, .. } => each_expr(expr, f),
+        _ => {}
+    });
+}
+
+/// 方法体里是否直接写了 `this.<field>`。
+fn writes_this_field(stmts: &[Stmt], field: &str) -> bool {
+    let mut hit = false;
+    each_stmt(stmts, &mut |s| {
+        if let Stmt::Assign { target, .. } = s {
+            if target_writes_this_field(target).as_deref() == Some(field) {
+                hit = true;
+            }
+        }
+    });
+    hit
+}
+
+/// 方法体里是否写了任意 `this.<x>`（用于判断「调用它会可变借用」）。
+fn writes_this(stmts: &[Stmt]) -> bool {
+    let mut hit = false;
+    each_stmt(stmts, &mut |s| {
+        if let Stmt::Assign { target, .. } = s {
+            if target_writes_this_field(target).is_some() {
+                hit = true;
+            }
+        }
+    });
+    hit
+}
+
+/// 方法体里是否对 `this.<field>` 调用了会改自身状态的方法。
+fn calls_mut_on_field(
+    stmts: &[Stmt],
+    field: &str,
+    classes: &HashMap<String, &ClassDecl>,
+    ty: &Type,
+) -> bool {
+    let class_name = match ty {
+        Type::Named(n) | Type::Generic(n, _) => n.clone(),
+        _ => return false,
+    };
+    let Some(cd) = classes.get(class_name.as_str()) else {
+        return false;
+    };
+    let mut hit = false;
+    each_stmt_expr(stmts, &mut |e| {
+        if let Expr::Call {
+            recv: Some(r),
+            name,
+            ..
+        } = e
+        {
+            if matches!(&**r, Expr::Field(base, f) if f == field && matches!(**base, Expr::This)) {
+                if let Some(m) = cd
+                    .methods
+                    .iter()
+                    .find(|m| &m.name == name && !m.is_static)
+                {
+                    if writes_this(&m.body) {
+                        hit = true;
+                    }
+                }
+            }
+        }
+    });
+    hit
+}
+
+/// 一个类里需要 `Arc<Mutex<T>>` 的 `@shared` 字段（构造器赋值不算写）。
+fn shared_mut_fields(
+    class: &ClassDecl,
+    classes: &HashMap<String, &ClassDecl>,
+) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for f in class.fields.iter().filter(|f| field_is_shared(f)) {
+        let mutated = class.methods.iter().any(|m| {
+            writes_this_field(&m.body, &f.name) || calls_mut_on_field(&m.body, &f.name, classes, &f.ty)
+        });
+        if mutated {
+            out.insert(f.name.clone());
+        }
+    }
+    out
+}
+
 
 /// 赋值目标的最左侧变量名（`y.v` → `y`，`v[i]` → `v`；`this.x` 不返回）。
 fn assign_root_ident(expr: &Expr) -> Option<String> {

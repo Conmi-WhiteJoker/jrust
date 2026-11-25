@@ -119,6 +119,7 @@ run_ok ok_async
 run_ok ok_raw
 run_ok ok_iface_default
 run_ok ok_iter_chain
+run_ok ok_shared
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 

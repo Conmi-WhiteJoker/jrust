@@ -1,0 +1,32 @@
+// @shared 共享字段（JR-C13）：只读字段 → Arc<T>，被写字段 → Arc<Mutex<T>>。
+public class Counter {
+    @shared int value;
+    @shared String label;
+
+    public Counter(String label) {
+        this.value = 0;
+        this.label = label;
+    }
+
+    public void add(int d) {
+        this.value += d;
+    }
+
+    public int get() {
+        return this.value;
+    }
+
+    public String name() {
+        return this.label;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Counter c = new Counter("cnt");
+        c.add(3);
+        c.add(2);
+        println(c.get());
+        println(c.name());
+    }
+}

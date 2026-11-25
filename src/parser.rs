@@ -269,16 +269,11 @@ impl Parser {
                 }
                 args = Some(buf);
             }
-            let reserved = matches!(name.as_str(), "ref" | "mut" | "shared");
-            if reserved {
-                let msg = if name == "shared" {
-                    "`@shared` 尚未实现（SPEC JR-C13）".to_string()
-                } else {
-                    format!("`@{}` 是参数借用注解，尚未实现（SPEC §9.2）", name)
-                };
+            // `@shared` 是字段注解（JR-C13），必须以字段形式出现。
+            if matches!(name.as_str(), "ref" | "mut") {
                 self.err_hint(
-                    msg,
-                    "当前只支持 `@derive(...)`、`@raw(\"…\")` 与按同名透传的 Rust 属性。",
+                    format!("`@{}` 是参数借用注解，尚未实现（SPEC §9.2）", name),
+                    "当前只支持 `@derive(...)`、`@raw(\"…\")`、`@shared` 与按同名透传的 Rust 属性。",
                 );
             } else {
                 attrs.push(Attr { name, args });

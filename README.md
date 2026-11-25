@@ -74,7 +74,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 2. **产物必须可读**。每段代码前带 `// jrust:L<行号>` 源映射，方便左右对照。
 3. **不隐藏 Rust 的规则**。普通赋值按值复制（生成 `.clone()`，两个变量各自独立），
    想搬走所有权就显式写 `move`；不会静默地把两个变量绑到同一块可变数据上。
-4. **砍掉 Java 的包袱**。继承、`try/catch`、反射一律不支持；注解只保留 `@derive` / `@raw`
+4. **砍掉 Java 的包袱**。继承、`try/catch`、反射一律不支持；注解只保留 `@derive` / `@raw` / `@shared`
    与同名 Rust 属性透传；`null` 只在
    可空类型 `T?`（→ `Option<T>`）里出现，裸 `null` 赋给非可空类型会报 `JR3005`。
    异常只保留 `throws` / `throw` 这条映射到 `Result` 的窄路，并在报错时解释 Rust 的替代方案。
@@ -135,7 +135,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
-| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` / `@shared` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
+| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
+| `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [L1 用例](tests/conformance/L1/ok_shared.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -164,6 +165,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - `raw` 目前只保证原样内联：块内 rustc 错误不会映射回 `.jrust` 行列（`JR-X2`），嵌套 `raw` 也不会被识别（`JR-X3`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
+- `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构
