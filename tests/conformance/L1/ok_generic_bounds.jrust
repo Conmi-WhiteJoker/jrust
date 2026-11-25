@@ -1,0 +1,45 @@
+// 泛型上界：`<T extends A & B>` → `impl<T: A + B + Clone>`（JR-T4）。
+public interface Named {
+    String name();
+}
+
+public interface Sizer {
+    int size();
+}
+
+public class Item implements Named, Sizer {
+    private String n;
+
+    public Item(String n) {
+        this.n = n;
+    }
+
+    public String name() {
+        return this.n;
+    }
+
+    public int size() {
+        return 1;
+    }
+}
+
+public class Holder<T extends Named & Sizer> {
+    private T item;
+
+    public Holder(T item) {
+        this.item = item;
+    }
+
+    public T get() {
+        return this.item;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Holder<Item> h = new Holder<Item>(new Item("x"));
+        Item v = h.get();
+        println(v.name());
+        println(v.size());
+    }
+}

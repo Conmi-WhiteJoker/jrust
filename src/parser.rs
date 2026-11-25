@@ -646,8 +646,8 @@ impl Parser {
 
     // ---------- 类型 ----------
 
-    /// 解析声明侧的类型参数列表：`<T, U>`。
-    fn parse_type_params(&mut self) -> Vec<String> {
+    /// 解析声明侧的类型参数列表：`<T, U>` 或带界 `<T extends A & B>`。
+    fn parse_type_params(&mut self) -> Vec<TypeParam> {
         let mut v = Vec::new();
         if !self.eat_punct("<") {
             return v;
@@ -658,14 +658,19 @@ impl Parser {
         }
         loop {
             let name = self.expect_ident();
+            let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
-                self.err_hint(
-                    "jrust MVP 不支持泛型上界（T extends X）",
-                    "Rust 写作 `T: X`；当前版本请去掉上界，或把类型参数换成具体类型。",
-                );
-                let _ = self.parse_type();
+                loop {
+                    match self.parse_type() {
+                        Some(t) => bounds.push(t),
+                        None => break,
+                    }
+                    if !self.eat_punct("&") {
+                        break;
+                    }
+                }
             }
-            v.push(name);
+            v.push(TypeParam { name, bounds });
             if self.eat_punct(",") {
                 continue;
             }
@@ -700,6 +705,31 @@ impl Parser {
 
     fn parse_type(&mut self) -> Option<Type> {
         let line = self.line();
+        // Java 的声明处变型：`?`、`? extends T`、`? super T`，Rust 没有对应机制。
+        if self.check_punct("?") {
+            self.bump();
+            let mut has_bound = false;
+            if self.eat_kw(Kw::Extends) {
+                has_bound = true;
+            } else if matches!(self.peek(), Tok::Ident(n) if n == "super") {
+                self.bump();
+                has_bound = true;
+            }
+            self.diags.push(
+                Diag::error_code(
+                    line,
+                    "JR3010",
+                    "jrust 不支持泛型通配符（`? extends` / `? super`）",
+                )
+                .with_hint(
+                    "Rust 没有声明处变型：改用 trait object（`Box<dyn Trait>`）或写出具体类型。",
+                ),
+            );
+            if has_bound {
+                let _ = self.parse_type();
+            }
+            return None;
+        }
         let mut base = match self.peek().clone() {
             Tok::Kw(Kw::Int) => {
                 self.bump();

@@ -57,12 +57,22 @@ pub struct Param {
     pub name: String,
 }
 
+/// 声明侧类型参数：`<T extends A & B>` 里的 `T` 与上界 `A`、`B`。
+///
+/// 上界只能是 interface（→ Rust trait）；`impl` / 方法位置输出时还会追加 `Clone`，
+/// 因为泛型上下文里的赋值按值语义补 `.clone()`。
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    pub name: String,
+    pub bounds: Vec<Type>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Method {
     pub vis: Vis,
     pub is_static: bool,
     /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
@@ -92,7 +102,7 @@ pub struct Field {
 pub struct ClassDecl {
     pub name: String,
     /// 类级类型参数：`class Box<T>` 里的 `T`。
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     /// `implements A, B<Integer>`：`Named` 或 `Generic`。
     pub implements: Vec<Type>,
     pub fields: Vec<Field>,
@@ -104,7 +114,7 @@ pub struct ClassDecl {
 #[derive(Debug, Clone)]
 pub struct MethodSig {
     /// 方法级类型参数：`interface Mapper<T> { <U> U f(U x); }` 里的 `U`。
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
@@ -115,7 +125,7 @@ pub struct MethodSig {
 pub struct InterfaceDecl {
     pub name: String,
     /// 接口级类型参数：`interface Mapper<T>` 里的 `T`。
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub methods: Vec<MethodSig>,
     pub line: usize,
 }
@@ -133,7 +143,7 @@ pub struct EnumVariant {
 pub struct EnumDecl {
     pub name: String,
     /// 枚举级类型参数：`enum Maybe<T>` 里的 `T`。
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariant>,
     pub line: usize,
 }

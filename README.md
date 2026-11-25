@@ -113,6 +113,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `public <T> T id(T x)` | `pub fn id<T: Clone>(x: T) -> T` | 方法级类型参数写在方法名后；v1 统一要求 `T: Clone` | [Generics](examples/Generics.jrust) |
 | `interface Mapper<T> { T map(T x); }` | `pub trait Mapper<T> { ... }` | 泛型接口；`class X implements Mapper<Integer>` → `impl Mapper<i32> for X`；接口类型字段/变量包成 `Box<dyn Mapper<i32>>` | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
 | `enum Maybe<T> { Some(T value), None }` | `pub enum Maybe<T> { Some(T), None }` | 泛型枚举；`Maybe.Some("hi")` 按左侧 `Maybe<String>` 替换实参 | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
+| `class Holder<T extends Named & Sizer> { ... }` | `pub struct Holder<T>` + `impl<T: Named + Sizer + Clone> Holder<T>` | 上界按 `&` 拆成 `+`；声明位置不带界，`impl` / 方法位置尾随 `Clone`（值语义需要）；`? extends` / `? super` 报 `JR3010` | [L1 用例](tests/conformance/L1/ok_generic_bounds.jrust) |
 | `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
 | `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
 | `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
@@ -137,13 +138,14 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `synchronized` | `Mutex<T>` / `RwLock<T>` |
 | `protected` | 只有 `pub` / 私有 |
 | 反射、泛型擦除、raw type、内部类、装箱 | 没有对应物，直接不提供 |
+| `? extends` / `? super`（声明处变型） | Rust 没有变型：改用 trait object（`Box<dyn Trait>`）或写出具体类型，报 `JR3010` |
 | `++` / `--`（C 风格 `for` 头部除外） | `x += 1` |
 
 ## MVP 的边界
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
-- 不支持字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举，但 `<T extends X>` 上界仍会报解释性错误。
+- 不支持字段初始化、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。

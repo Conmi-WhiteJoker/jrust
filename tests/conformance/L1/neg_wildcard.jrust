@@ -1,0 +1,10 @@
+// `? extends` / `? super`：Java 的声明处变型，Rust 无对应，必须报 JR3010。
+import java.util.List;
+
+public class Main {
+    public static void main(String[] args) {
+        List<? extends String> a = new ArrayList<>();
+        List<? super String> b = new ArrayList<>();
+        println(a.size() + b.size());
+    }
+}

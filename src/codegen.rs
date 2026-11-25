@@ -100,7 +100,7 @@ impl<'a> Codegen<'a> {
             let snapshot = cloneable.clone();
             let mut changed = false;
             for c in &prog.classes {
-                let params: HashSet<String> = c.type_params.iter().cloned().collect();
+                let params: HashSet<String> = c.type_params.iter().map(|p| p.name.clone()).collect();
                 let ok = c
                     .fields
                     .iter()
@@ -110,7 +110,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             for e in &prog.enums {
-                let params: HashSet<String> = e.type_params.iter().cloned().collect();
+                let params: HashSet<String> = e.type_params.iter().map(|p| p.name.clone()).collect();
                 let ok = e
                     .variants
                     .iter()
@@ -641,7 +641,7 @@ impl<'a> Codegen<'a> {
         let phantom = phantom_params(class);
         let prev_generic = std::mem::replace(
             &mut self.generic_params,
-            class.type_params.iter().cloned().collect(),
+            class.type_params.iter().map(|p| p.name.clone()).collect(),
         );
         self.marker(class.line);
         if self.cloneable.contains(&class.name) {
@@ -681,10 +681,14 @@ impl<'a> Codegen<'a> {
 
         // 实现接口的方法 → impl Trait for Type
         for ity in &class.implements {
+            let Some(iface) = prog.interfaces.iter().find(|x| x.name == type_name(ity)) else {
+                continue;
+            };
+            let names: HashSet<&str> = iface.methods.iter().map(|m| m.name.as_str()).collect();
             let methods: Vec<&Method> = class
                 .methods
                 .iter()
-                .filter(|m| !m.is_static && iface_methods.contains(&m.name))
+                .filter(|m| !m.is_static && names.contains(m.name.as_str()))
                 .collect();
             if methods.is_empty() {
                 continue;
@@ -871,7 +875,7 @@ impl<'a> Codegen<'a> {
         ));
         self.indent += 1;
         let prev_generic = self.generic_params.clone();
-        self.generic_params.extend(m.type_params.iter().cloned());
+        self.generic_params.extend(m.type_params.iter().map(|p| p.name.clone()));
         let mut env = Env::new(m.ret.clone());
         for p in &m.params {
             env.vars.insert(p.name.clone(), p.ty.clone());
@@ -1566,7 +1570,7 @@ impl<'a> Codegen<'a> {
         let info: Option<(Vec<String>, Option<Vec<Type>>, bool, bool)> =
             self.classes.get(class).map(|c| {
                 (
-                    c.type_params.clone(),
+                    c.type_params.iter().map(|p| p.name.clone()).collect(),
                     c.ctor
                         .as_ref()
                         .map(|ct| ct.params.iter().map(|p| p.ty.clone()).collect()),
@@ -1647,7 +1651,7 @@ impl<'a> Codegen<'a> {
                             Some(Type::Generic(c, a)) if c == en => a.clone(),
                             _ => Vec::new(),
                         };
-                        ed.type_params.iter().cloned().zip(args).collect()
+                        ed.type_params.iter().map(|p| p.name.clone()).zip(args).collect()
                     })
                     .unwrap_or_default();
                 let vparams: Vec<Type> = vparams.iter().map(|t| subst_type(t, &vmap)).collect();
@@ -1924,12 +1928,19 @@ impl<'a> Codegen<'a> {
         match ty {
             Type::Named(c) => Some((c.clone(), HashMap::new())),
             Type::Generic(c, args) => {
-                let params: &[String] = if let Some(cd) = self.classes.get(c) {
-                    &cd.type_params
+                let names: Vec<String> = if let Some(cd) = self.classes.get(c) {
+                    cd.type_params.iter().map(|p| p.name.clone()).collect()
                 } else {
-                    &self.prog.interfaces.iter().find(|i| &i.name == c)?.type_params
+                    self.prog
+                        .interfaces
+                        .iter()
+                        .find(|i| &i.name == c)?
+                        .type_params
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect()
                 };
-                let map = params.iter().cloned().zip(args.iter().cloned()).collect();
+                let map = names.into_iter().zip(args.iter().cloned()).collect();
                 Some((c.clone(), map))
             }
             _ => None,
@@ -2058,22 +2069,46 @@ fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
     }
 }
 
-/// `<T, U>`；没有类型参数时返回空串。
-fn type_param_decl(params: &[String]) -> String {
+/// `<T, U>`；没有类型参数时返回空串。上界只出现在 impl / 方法位置，声明位置省略。
+fn type_param_decl(params: &[TypeParam]) -> String {
     if params.is_empty() {
         String::new()
     } else {
-        format!("<{}>", params.join(", "))
+        let ps: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        format!("<{}>", ps.join(", "))
     }
 }
 
-/// `<T: Clone, U: Clone>`：泛型类 / 方法的实现需要能按值复制字段和参数。
-fn impl_param_decl(params: &[String]) -> String {
+/// `<T: A + B + Clone>`：泛型类 / 方法的实现需要能按值复制字段和参数，
+/// 因此用户上界之后统一追加 `Clone`（已写则不重复）。
+fn impl_param_decl(params: &[TypeParam]) -> String {
     if params.is_empty() {
         String::new()
     } else {
-        let ps: Vec<String> = params.iter().map(|p| format!("{}: Clone", p)).collect();
+        let ps: Vec<String> = params
+            .iter()
+            .map(|p| {
+                let mut bounds: Vec<String> = p.bounds.iter().map(bound_text).collect();
+                if !bounds.iter().any(|b| b == "Clone") {
+                    bounds.push("Clone".to_string());
+                }
+                format!("{}: {}", p.name, bounds.join(" + "))
+            })
+            .collect();
         format!("<{}>", ps.join(", "))
+    }
+}
+
+/// 泛型上界的 Rust 写法：`A` / `Comparable<T>`。
+fn bound_text(ty: &Type) -> String {
+    match ty {
+        Type::Named(n) => n.clone(),
+        Type::Generic(n, args) => {
+            let inner: Vec<String> = args.iter().map(bound_text).collect();
+            format!("{}<{}>", n, inner.join(", "))
+        }
+        Type::String => "String".to_string(),
+        other => format!("{:?}", other),
     }
 }
 
@@ -2086,8 +2121,8 @@ fn phantom_params(class: &ClassDecl) -> Vec<String> {
     class
         .type_params
         .iter()
-        .filter(|p| !used.contains(*p))
-        .cloned()
+        .filter(|p| !used.contains(&p.name))
+        .map(|p| p.name.clone())
         .collect()
 }
 
