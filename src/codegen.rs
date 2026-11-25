@@ -567,7 +567,25 @@ impl<'a> Codegen<'a> {
                 }
                 self.gen_expr(inner, env, None)
             }
-            Expr::Field(..) | Expr::Index(..) => self.gen_expr(inner, env, None),
+            Expr::Field(recv, f) => {
+                if matches!(**recv, Expr::This) {
+                    self.err(
+                        format!("`move this.{}`：方法的 `self` 是借用（`&self`），字段搬不出去", f),
+                        format!(
+                            "要整个值就 move 拥有者本身；只是要字段的值就写 `this.{}.clone()`。",
+                            f
+                        ),
+                    );
+                }
+                self.gen_expr(inner, env, None)
+            }
+            Expr::Index(..) => {
+                self.err(
+                    "`move` 不能作用于下标：Rust 不允许从 `Vec` 下标搬走所有权",
+                    "元素想拿走用 `v.remove(i)`；只是要值就写 `v[i].clone()`。",
+                );
+                self.gen_expr(inner, env, None)
+            }
             _ => {
                 self.err(
                     "`move` 只能作用于变量、字段或下标",

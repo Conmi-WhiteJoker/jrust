@@ -19,6 +19,9 @@ cargo build
 
 # 端到端验证：转译 examples/*.jrust，再用 cargo 编译产物
 ./verify.sh
+
+# move 的非法边界用例（每种都应报错并给出提示）
+./tests/move_cases.sh
 ```
 
 ## 设计原则
@@ -50,7 +53,7 @@ cargo build
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 |
 | `switch` | （后续版本映射到 `match`） | MVP 未实现 |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 |
-| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释 |
+| `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 |
 | `import` | 忽略（`List` 已在 prelude） | |
 | `private` / `public` | 私有 / `pub` | |
 
@@ -82,7 +85,8 @@ src/lexer.rs    手写词法分析（不引解析框架，便于阅读）
 src/parser.rs   递归下降语法分析 + 解释性诊断
 src/ast.rs      Java 风格的 AST（不含任何 Rust 概念）
 src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推断）
-examples/       4 个示例：HelloWorld、类与接口、多态集合、所有权移动
+examples/       5 个示例：HelloWorld、类与接口、多态集合、所有权移动、move 边界
+tests/          move 关键字的非法边界用例（move_cases.sh）
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```
 

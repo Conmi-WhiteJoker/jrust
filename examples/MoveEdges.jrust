@@ -1,0 +1,42 @@
+// 示例 5：move 的合法边界——参数、实参、字段、赋值右侧
+// 说明 move 不只能用在 `String b = move a;`：凡是「把已有值交出去」的位置都能写。
+public class Coupon {
+    public String label;
+
+    public Coupon(String label) {
+        this.label = label;
+    }
+
+    public String pass(String s) {
+        return move s;
+    }
+}
+
+public class MoveEdges {
+    public static void main(String[] args) {
+        // 1) 作为集合的元素：所有权交给 Vec
+        String a = "hello";
+        List<String> v = new ArrayList<String>();
+        v.add(move a);
+        List<String> w = move v;
+
+        // 2) 作为构造器实参
+        String k = "k";
+        Coupon c = new Coupon(k);
+        Coupon d = move c;
+
+        // 3) 方法参数移入、方法内部再移出（return move s）
+        String out = "out";
+        String got = d.pass(out);
+
+        // 4) 本地变量的字段可以部分搬走（之后不能再用这个字段）
+        String label = move d.label;
+
+        // 5) 赋值右侧：目标变量需要可变
+        String s = "s";
+        s = move label;
+
+        System.out.println(s + " " + got);
+        System.out.println(w.size());
+    }
+}
