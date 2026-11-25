@@ -19,6 +19,10 @@ fn main() {
     // jrust:L9
     println!("n = {}", n);
     // jrust:L10
+    println!("{} + {} = {}", 1, 2, 3);
+    // jrust:L11
+    println!("literal braces: {{}} = {}", 42);
+    // jrust:L12
     println!("System.out 的老写法仍可用");
 }
 

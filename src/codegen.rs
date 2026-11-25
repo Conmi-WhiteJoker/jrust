@@ -692,6 +692,48 @@ impl<'a> Codegen<'a> {
         if args.is_empty() {
             return format!("{}!()", mac);
         }
+        if args.len() > 1 {
+            let fmt = match &args[0] {
+                Expr::Str(s) => s,
+                _ => {
+                    self.err(
+                        format!("{} 多参数时第一个参数必须是格式串字面量", mac),
+                        format!(
+                            "例如 {}(\"{{}} area={{}}\", s.name(), s.area())；单参数仍可写 \"a\" + b 拼接。",
+                            mac
+                        ),
+                    );
+                    let parts: Vec<String> =
+                        args.iter().map(|a| self.gen_expr(a, env, None)).collect();
+                    return format!("{}!(\"{{:?}}\", {})", mac, parts.join(", "));
+                }
+            };
+            let holes = match count_placeholders(fmt) {
+                Some(n) => n,
+                None => {
+                    self.err(
+                        "格式串里的 `{` / `}` 要成对写",
+                        "字面量花括号写成 `{{` / `}}`，例如 println!(\"{{}}\")。",
+                    );
+                    return format!("{}!(\"{}\")", mac, escape_str_literal(fmt));
+                }
+            };
+            if holes != args.len() - 1 {
+                self.err(
+                    format!(
+                        "格式串有 {} 个 `{{}}`，但给了 {} 个参数",
+                        holes,
+                        args.len() - 1
+                    ),
+                    "占位符与参数按顺序一一对应。",
+                );
+            }
+            let rest: Vec<String> = args[1..]
+                .iter()
+                .map(|a| self.gen_expr(a, env, None))
+                .collect();
+            return format!("{}!(\"{}\", {})", mac, escape_str_literal(fmt), rest.join(", "));
+        }
         if args.len() != 1 {
             let parts: Vec<String> = args.iter().map(|a| self.gen_expr(a, env, None)).collect();
             self.err(
@@ -808,7 +850,8 @@ fn expr_is_str_literal(e: &Expr) -> bool {
 }
 
 /// 字符串要放进 `println!("...")` 的模板里，需要转义引号、反斜杠和花括号。
-fn escape_in_fmt(s: &str) -> String {
+/// 字符串字面量转成 Rust 源码里的字面量（转义引号、反斜杠、换行等），不动花括号。
+fn escape_str_literal(s: &str) -> String {
     let mut o = String::new();
     for c in s.chars() {
         match c {
@@ -817,12 +860,43 @@ fn escape_in_fmt(s: &str) -> String {
             '\n' => o.push_str("\\n"),
             '\t' => o.push_str("\\t"),
             '\r' => o.push_str("\\r"),
-            '{' => o.push_str("{{"),
-            '}' => o.push_str("}}"),
             _ => o.push(c),
         }
     }
     o
+}
+
+/// 统计 Rust 格式串里的 `{}` 个数；`{{` / `}}` 是转义不计数。
+/// 孤立的 `{` 或 `}` 返回 `None`（Rust 同样不接受）。
+fn count_placeholders(fmt: &str) -> Option<usize> {
+    let mut it = fmt.chars().peekable();
+    let mut n = 0usize;
+    while let Some(c) = it.next() {
+        match c {
+            '{' => match it.peek() {
+                Some('{') => {
+                    it.next();
+                }
+                Some('}') => {
+                    it.next();
+                    n += 1;
+                }
+                _ => return None,
+            },
+            '}' => match it.peek() {
+                Some('}') => {
+                    it.next();
+                }
+                _ => return None,
+            },
+            _ => {}
+        }
+    }
+    Some(n)
+}
+
+fn escape_in_fmt(s: &str) -> String {
+    escape_str_literal(s).replace('{', "{{").replace('}', "}}")
 }
 
 fn collect_mutated(stmts: &[Stmt]) -> HashSet<String> {

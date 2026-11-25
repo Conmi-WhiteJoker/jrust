@@ -85,7 +85,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 |
 | `switch` | （后续版本映射到 `match`） | MVP 未实现 |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 |
-| `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；`println` 只接受 0 或 1 个参数 |
+| `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` |
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 |
 | `import` | 忽略（`List` 已在 prelude） | |
 | `private` / `public` | 私有 / `pub` | |

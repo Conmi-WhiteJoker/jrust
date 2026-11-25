@@ -961,11 +961,34 @@ impl<'a> Interp<'a> {
     ) -> Result<Value, RuntimeError> {
         let line = self.cur_line;
         if (name == "println" || name == "print") && recv.map_or(true, is_system_out) {
-            let mut parts = Vec::new();
-            for a in args {
-                parts.push(self.eval(a)?.display());
-            }
-            let text = parts.join(" ");
+            let text = if args.is_empty() {
+                String::new()
+            } else if args.len() == 1 {
+                self.eval(&args[0])?.display()
+            } else {
+                let fmt = match &args[0] {
+                    Expr::Str(s) => s.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            line,
+                            "多参数打印要求第一个参数是格式串字面量，例如 println(\"{} {}\", a, b)",
+                        ))
+                    }
+                };
+                let mut vals = Vec::new();
+                for a in &args[1..] {
+                    vals.push(self.eval(a)?.display());
+                }
+                match format_with(&fmt, &vals) {
+                    Some(t) => t,
+                    None => {
+                        return Err(RuntimeError::new(
+                            line,
+                            "格式串里的 `{}` 个数与参数个数不一致（字面花括号写 `{{` / `}}`）",
+                        ))
+                    }
+                }
+            };
             if name == "println" {
                 self.emit(text);
             } else {
@@ -1215,6 +1238,41 @@ fn is_system_out(e: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// 按 Rust 风格格式串拼接：`{}` 依次取 vals，`{{` / `}}` 输出字面花括号。
+/// 占位符与 vals 个数不一致、或花括号不成对时返回 `None`。
+fn format_with(fmt: &str, vals: &[String]) -> Option<String> {
+    let mut out = String::new();
+    let mut vals = vals.iter();
+    let mut it = fmt.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '{' => match it.peek() {
+                Some('{') => {
+                    it.next();
+                    out.push('{');
+                }
+                Some('}') => {
+                    it.next();
+                    out.push_str(vals.next()?);
+                }
+                _ => return None,
+            },
+            '}' => match it.peek() {
+                Some('}') => {
+                    it.next();
+                    out.push('}');
+                }
+                _ => return None,
+            },
+            _ => out.push(c),
+        }
+    }
+    if vals.next().is_some() {
+        return None;
+    }
+    Some(out)
 }
 
 fn collect_vars(name: &str, value: &Value, ty: Option<&Type>, depth: usize, out: &mut Vec<VarView>) {
