@@ -14,7 +14,7 @@
 ```bash
 cargo build
 
-# 新建最小项目（生成 <目录>/main.jrust，目录必须不存在）
+# 新建项目（main.jrust + 即时转译的 main.rs + Cargo.toml，可直接 cargo run；目录必须不存在）
 ./target/debug/jrust new /tmp/hello-jrust
 
 # 转译（输出到同目录的 .rs）

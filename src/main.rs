@@ -89,7 +89,7 @@ fn print_usage() {
         "jrust {} —— Java 风格的 Rust 转译器（教学项目）
 
 用法:
-  jrust new <目录>                         新建一个最小项目（main.jrust）
+  jrust new <目录>                         新建项目（main.jrust + main.rs + Cargo.toml，可直接 cargo run）
   jrust build <文件.jrust> [更多文件...]   转译成同名 .rs
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
@@ -104,8 +104,10 @@ fn print_usage() {
     );
 }
 
-/// `jrust new` 写出的最小项目。文件名固定为 `main.jrust`：OpenIDEA 插件的运行配置
-/// 以它作为项目触发标记，类名与文件名不必一致。
+/// `jrust new` 写出的项目骨架：`main.jrust`（源）+ 即时转译的 `main.rs` + `Cargo.toml`。
+/// 源文件名固定为 `main.jrust`：OpenIDEA 插件的运行配置以它作为项目触发标记，
+/// 类名与文件名不必一致。`Cargo.toml` 用 `[[bin]] path` 直接指向转译产物，
+/// 没有 `src/` 目录也能 `cargo run`。
 const NEW_PROJECT_MAIN: &str = r#"public class Main {
     public static void main(String[] args) {
         System.out.println("Hello, jrust!");
@@ -127,8 +129,45 @@ fn new_project(dir: &Path) -> bool {
         eprintln!("无法写入 {}: {}", main.display(), e);
         return false;
     }
-    println!("已创建 jrust 项目 {}", dir.display());
+    if !build_one(&main) {
+        return false;
+    }
+    let name = crate_name(dir);
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[[bin]]\nname = \"{name}\"\npath = \"main.rs\"\n"
+    );
+    let cargo = dir.join("Cargo.toml");
+    if let Err(e) = std::fs::write(&cargo, manifest) {
+        eprintln!("无法写入 {}: {}", cargo.display(), e);
+        return false;
+    }
+    println!(
+        "已创建 jrust 项目 {}（main.jrust / main.rs / Cargo.toml）",
+        dir.display()
+    );
     true
+}
+
+/// 目录名 → 合法的 crate 名：只保留 ASCII 字母数字与 `-`/`_`，其余替换为 `_`；
+/// 不能以数字或符号开头（Cargo 的限制），必要时加 `app-` 前缀。
+fn crate_name(dir: &Path) -> String {
+    let raw = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let mut name: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.is_empty() {
+        name.push_str("jrust-app");
+    } else if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        name.insert_str(0, "app-");
+    }
+    name
 }
 
 fn build_one(path: &Path) -> bool {
