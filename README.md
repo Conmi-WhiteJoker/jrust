@@ -145,7 +145,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包，这些特性走 `jrust build` + cargo 验证。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
-- 不支持字符串 `+` 拼接（只允许出现在 `println` 参数里，由 jrust 展开）。
+- 字符串 `+` 只在 `println` / `print` 的单参数位置可用（由 jrust 展开成格式串）；赋值、方法实参、返回值、下标赋值等位置报 `JR3015`，整条 `+` 链只报一次。
 
 ## 目录结构
 

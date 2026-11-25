@@ -58,6 +58,8 @@ struct Codegen<'a> {
     in_method: bool,
     /// 可以安全 `#[derive(Clone)]` 的类型名（class / enum）。
     cloneable: HashSet<String>,
+    /// 正在生成一条字符串 `+` 链的子节点：只在最外层报一次 JR3015。
+    in_concat: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -131,6 +133,7 @@ impl<'a> Codegen<'a> {
             cur_line: 0,
             in_method: false,
             cloneable,
+            in_concat: false,
         }
     }
 
@@ -168,6 +171,14 @@ impl<'a> Codegen<'a> {
     /// 这个类型能否按值复制（`.clone()`）。
     fn is_cloneable_type(&self, ty: &Type) -> bool {
         type_cloneable(ty, &self.cloneable)
+    }
+
+    /// 表达式的值是字符串：字面量，或静态类型为 `String` 的变量 / 字段 / 调用结果。
+    fn expr_is_stringy(&self, e: &Expr, env: &Env) -> bool {
+        match strip_parens_expr(e) {
+            Expr::Str(_) => true,
+            other => matches!(self.infer_type(other, env), Some(Type::String)),
+        }
     }
 
     /// `new T[n]` 的默认元素值。元素类型已在 parser 限定为标量 / String。
@@ -1243,11 +1254,23 @@ impl<'a> Codegen<'a> {
                 format!("vec![{}; {}]", default, n)
             }
             Expr::Binary { op, lhs, rhs } => {
-                if *op == BinOp::Add && (expr_is_str_literal(lhs) || expr_is_str_literal(rhs)) {
-                    self.err(
-                        "jrust 不支持用 + 拼接字符串",
-                        "Rust 里拼字符串用 format!(\"{} {}\", a, b) 或 println! 的格式串；`+` 只做数值加法。",
-                    );
+                if *op == BinOp::Add
+                    && (self.expr_is_stringy(lhs, env) || self.expr_is_stringy(rhs, env))
+                {
+                    if !self.in_concat {
+                        self.err_code(
+                            "JR3015",
+                            "字符串 `+` 拼接只支持 `println` / `print` 的单参数位置",
+                            "打印时直接把各部分写进同一个 println：`println(\"n=\" + n)`；要先存成 String 的话 v1 暂不支持，请拆成多次打印。",
+                        );
+                    }
+                    // 整条 `+` 链只报一次：子节点生成时置标志。
+                    let nested = self.in_concat;
+                    self.in_concat = true;
+                    let l = self.gen_expr(lhs, env, None);
+                    let r = self.gen_expr(rhs, env, None);
+                    self.in_concat = nested;
+                    return format!("{} {} {}", l, binop_str(*op), r);
                 }
                 if matches!(op, BinOp::Eq | BinOp::Ne) {
                     let l_null = matches!(strip_parens_expr(lhs), Expr::Null);
