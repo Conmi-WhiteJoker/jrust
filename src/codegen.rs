@@ -22,6 +22,8 @@ struct Env {
     vars: HashMap<String, Type>,
     mutated: HashSet<String>,
     ret: Type,
+    /// 当前函数是否声明了 `throws`（决定 `?` 是否合法、`return` 是否包 `Ok(...)`）。
+    in_throws: bool,
 }
 
 impl Env {
@@ -30,9 +32,14 @@ impl Env {
             vars: HashMap::new(),
             mutated: HashSet::new(),
             ret,
+            in_throws: false,
         }
     }
 }
+
+/// 整个程序共用一个错误枚举：单文件模式下所有 `throws` 方法都返回
+/// `Result<T, JrustError>`，跨类 `?` 不需要额外的 `From` 转换。
+const ERROR_ENUM: &str = "JrustError";
 
 struct Codegen<'a> {
     prog: &'a Program,
@@ -40,6 +47,9 @@ struct Codegen<'a> {
     indent: usize,
     ifaces: HashSet<String>,
     classes: HashMap<String, &'a ClassDecl>,
+    enums: HashMap<String, &'a EnumDecl>,
+    /// 所有 `throws` 列表里出现过的异常名（去重、保持出现顺序）。
+    error_types: Vec<String>,
     diags: Vec<Diag>,
     cur_line: usize,
     in_method: bool,
@@ -55,12 +65,29 @@ impl<'a> Codegen<'a> {
         for c in &prog.classes {
             classes.insert(c.name.clone(), c);
         }
+        let mut enums = HashMap::new();
+        for e in &prog.enums {
+            enums.insert(e.name.clone(), e);
+        }
+        let mut error_types: Vec<String> = Vec::new();
+        for c in &prog.classes {
+            for m in &c.methods {
+                for t in &m.throws {
+                    let n = simple_type_name(t);
+                    if !error_types.contains(&n) {
+                        error_types.push(n);
+                    }
+                }
+            }
+        }
         Codegen {
             prog,
             out: String::new(),
             indent: 0,
             ifaces,
             classes,
+            enums,
+            error_types,
             diags: Vec::new(),
             cur_line: 0,
             in_method: false,
@@ -90,6 +117,12 @@ impl<'a> Codegen<'a> {
     fn err(&mut self, msg: impl Into<String>, hint: impl Into<String>) {
         let line = self.cur_line;
         self.diags.push(Diag::error(line, msg).with_hint(hint));
+    }
+
+    fn err_code(&mut self, code: &'static str, msg: impl Into<String>, hint: impl Into<String>) {
+        let line = self.cur_line;
+        self.diags
+            .push(Diag::error_code(line, code, msg).with_hint(hint));
     }
 
     fn rust_type(&self, t: &Type) -> String {
@@ -146,6 +179,12 @@ impl<'a> Codegen<'a> {
         self.blank();
 
         let prog = self.prog;
+        for e in &prog.enums {
+            self.gen_enum(e);
+        }
+        if !self.error_types.is_empty() {
+            self.gen_error_enum();
+        }
         for iface in &prog.interfaces {
             self.gen_trait(iface);
         }
@@ -182,6 +221,75 @@ impl<'a> Codegen<'a> {
         self.indent -= 1;
         self.emit("}");
         self.blank();
+    }
+
+    fn gen_enum(&mut self, e: &EnumDecl) {
+        self.marker(e.line);
+        self.emit("#[derive(Debug)]");
+        self.emit(&format!("pub enum {} {{", e.name));
+        self.indent += 1;
+        for v in &e.variants {
+            self.marker(v.line);
+            if v.params.is_empty() {
+                self.emit(&format!("{},", v.name));
+            } else {
+                let tys: Vec<String> = v.params.iter().map(|p| self.rust_type(&p.ty)).collect();
+                self.emit(&format!("{}({}),", v.name, tys.join(", ")));
+            }
+        }
+        self.indent -= 1;
+        self.emit("}");
+        self.blank();
+    }
+
+    /// 生成程序级错误枚举 + `Display` / `Error` / 常见标准错误的 `From`。
+    fn gen_error_enum(&mut self) {
+        let types = self.error_types.clone();
+        self.emit("#[derive(Debug)]");
+        self.emit(&format!("pub enum {} {{", ERROR_ENUM));
+        self.indent += 1;
+        for name in &types {
+            self.emit(&format!("{}(String),", name));
+        }
+        self.indent -= 1;
+        self.emit("}");
+        self.blank();
+
+        self.emit(&format!("impl std::fmt::Display for {} {{", ERROR_ENUM));
+        self.indent += 1;
+        self.emit("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+        self.indent += 1;
+        self.emit("match self {");
+        self.indent += 1;
+        for name in &types {
+            self.emit(&format!(
+                "{}::{}(m) => write!(f, \"{}: {{}}\", m),",
+                ERROR_ENUM, name, name
+            ));
+        }
+        self.indent -= 1;
+        self.emit("}");
+        self.indent -= 1;
+        self.emit("}");
+        self.indent -= 1;
+        self.emit("}");
+        self.emit(&format!("impl std::error::Error for {} {{}}", ERROR_ENUM));
+        self.blank();
+
+        for name in types {
+            let Some(src) = std_error_source(&name) else {
+                continue;
+            };
+            self.emit(&format!("impl From<{}> for {} {{", src, ERROR_ENUM));
+            self.indent += 1;
+            self.emit(&format!(
+                "fn from(e: {}) -> Self {{ {}::{}(e.to_string()) }}",
+                src, ERROR_ENUM, name
+            ));
+            self.indent -= 1;
+            self.emit("}");
+            self.blank();
+        }
     }
 
     fn gen_class(&mut self, class: &ClassDecl) {
@@ -261,7 +369,12 @@ impl<'a> Codegen<'a> {
             );
         }
         self.marker(main.line);
-        self.emit("fn main() {");
+        let throws = !main.throws.is_empty();
+        if throws {
+            self.emit(&format!("fn main() -> Result<(), {}> {{", ERROR_ENUM));
+        } else {
+            self.emit("fn main() {");
+        }
         self.indent += 1;
         if stmts_use_ident(&main.body, "args") {
             self.emit("let args: Vec<String> = std::env::args().skip(1).collect();");
@@ -271,10 +384,14 @@ impl<'a> Codegen<'a> {
             env.vars.insert(p.name.clone(), p.ty.clone());
         }
         env.mutated = collect_mutated(&main.body);
+        env.in_throws = throws;
         let prev = self.in_method;
         self.in_method = false;
         self.gen_stmts(&main.body, &mut env);
         self.in_method = prev;
+        if throws {
+            self.emit("Ok(())");
+        }
         self.indent -= 1;
         self.emit("}");
         self.blank();
@@ -331,6 +448,15 @@ impl<'a> Codegen<'a> {
         } else {
             ""
         };
+        let throws = !m.throws.is_empty();
+        if throws && in_trait_impl {
+            self.cur_line = m.line;
+            self.err_code(
+                "JR3021",
+                "接口实现的方法不能声明 throws",
+                "接口签名里没有错误类型；把异常改成返回值，或在实现类里自己吞掉并处理。",
+            );
+        }
         let mut ps = Vec::new();
         if !m.is_static {
             ps.push("&self".to_string());
@@ -339,9 +465,18 @@ impl<'a> Codegen<'a> {
             ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
         }
         let ret = if m.ret == Type::Void {
-            String::new()
+            if throws {
+                format!(" -> Result<(), {}>", ERROR_ENUM)
+            } else {
+                String::new()
+            }
         } else {
-            format!(" -> {}", self.rust_type(&m.ret))
+            let rt = self.rust_type(&m.ret);
+            if throws {
+                format!(" -> Result<{}, {}>", rt, ERROR_ENUM)
+            } else {
+                format!(" -> {}", rt)
+            }
         };
         self.marker(m.line);
         self.emit(&format!("{}fn {}({}){} {{", vis, m.name, ps.join(", "), ret));
@@ -351,10 +486,14 @@ impl<'a> Codegen<'a> {
             env.vars.insert(p.name.clone(), p.ty.clone());
         }
         env.mutated = collect_mutated(&m.body);
+        env.in_throws = throws;
         let prev = self.in_method;
         self.in_method = !m.is_static;
         self.gen_stmts(&m.body, &mut env);
         self.in_method = prev;
+        if throws && m.ret == Type::Void {
+            self.emit("Ok(())");
+        }
         self.indent -= 1;
         self.emit("}");
     }
@@ -432,9 +571,19 @@ impl<'a> Codegen<'a> {
                     Some(e) => {
                         let ret = env.ret.clone();
                         let v = self.gen_expr(e, env, Some(&ret));
-                        self.emit(&format!("return {};", v));
+                        if env.in_throws {
+                            self.emit(&format!("return Ok({});", v));
+                        } else {
+                            self.emit(&format!("return {};", v));
+                        }
                     }
-                    None => self.emit("return;"),
+                    None => {
+                        if env.in_throws {
+                            self.emit("return Ok(());");
+                        } else {
+                            self.emit("return;");
+                        }
+                    }
                 }
             }
             Stmt::If {
@@ -497,7 +646,240 @@ impl<'a> Codegen<'a> {
                 self.marker(*line);
                 self.emit("continue;");
             }
+            Stmt::Throw { expr, line } => {
+                self.cur_line = *line;
+                self.marker(*line);
+                if !env.in_throws {
+                    self.err_code(
+                        "JR3021",
+                        "`throw` 只能出现在声明了 `throws` 的方法里",
+                        "在方法签名后加 `throws 错误名`，该方法就会返回 Result；或用 `return` 返回普通值。",
+                    );
+                    return;
+                }
+                let value = match expr {
+                    Expr::New { class, args } => {
+                        let variant = simple_type_name(class);
+                        if !self.error_types.iter().any(|n| n == &variant) {
+                            self.err_code(
+                                "JR3021",
+                                format!("`throw {}` 的类型没有出现在任何 throws 列表里", class),
+                                format!(
+                                    "在方法签名里声明 `throws {}`，或改用已声明的错误类型（当前可用：{}）。",
+                                    class,
+                                    self.error_types.join(", ")
+                                ),
+                            );
+                            return;
+                        }
+                        let msg = match args.len() {
+                            0 => "String::new()".to_string(),
+                            1 => {
+                                let a = self.gen_expr(&args[0], env, None);
+                                format!("({}).to_string()", a)
+                            }
+                            _ => {
+                                self.err_code(
+                                    "JR3021",
+                                    "`throw new` 只支持 0 或 1 个参数",
+                                    "错误枚举的每个分支只携带一条消息；需要更多信息时把它拼进字符串。",
+                                );
+                                "String::new()".to_string()
+                            }
+                        };
+                        format!("{}::{}({})", ERROR_ENUM, variant, msg)
+                    }
+                    other => self.gen_expr(other, env, None),
+                };
+                self.emit(&format!("return Err({});", value));
+            }
+            Stmt::Switch {
+                subject,
+                cases,
+                default,
+                line,
+            } => {
+                self.cur_line = *line;
+                self.marker(*line);
+                self.gen_switch(subject, cases, default, env);
+            }
         }
+    }
+
+    /// `switch` → Rust `match`，并做穷尽性 / fallthrough 诊断。
+    fn gen_switch(
+        &mut self,
+        subject: &Expr,
+        cases: &[SwitchCase],
+        default: &Option<Vec<Stmt>>,
+        env: &mut Env,
+    ) {
+        let sty = self.infer_type(subject, env);
+        let enum_name = match &sty {
+            Some(Type::Named(n)) if self.enums.contains_key(n) => Some(n.clone()),
+            _ => None,
+        };
+        let subject_is_bool = matches!(sty, Some(Type::Boolean));
+        if enum_name.is_none() && !subject_is_bool {
+            let msg = match &sty {
+                Some(t) => format!(
+                    "switch 只能用于 enum 或 boolean，这里是 `{}`",
+                    self.rust_type(t)
+                ),
+                None => "无法推断 switch 条件表达式的类型（只支持 enum / boolean）".to_string(),
+            };
+            self.err_code(
+                "JR3019",
+                msg,
+                "Rust 的 `match` 要求覆盖全部可能值。int / String 的 switch 请改成 if / else if 链。",
+            );
+            return;
+        }
+
+        let subj = self.gen_expr(subject, env, None);
+        self.emit(&format!("match {} {{", subj));
+        self.indent += 1;
+
+        let mut covered: HashSet<String> = HashSet::new();
+        let mut fallthrough_lines: Vec<usize> = Vec::new();
+        for (idx, c) in cases.iter().enumerate() {
+            self.cur_line = c.line;
+            let pat = match &c.pattern {
+                CasePattern::Bool(b) => {
+                    covered.insert(b.to_string());
+                    b.to_string()
+                }
+                CasePattern::Variant {
+                    enum_name: qual,
+                    name,
+                    bindings,
+                } => {
+                    let Some(en) = &enum_name else {
+                        self.err_code(
+                            "JR3019",
+                            format!("`case {}` 不是合法的枚举分支", name),
+                            "枚举 switch 写 `case 变体(绑定):` 或 `case 枚举.变体(绑定):`。",
+                        );
+                        continue;
+                    };
+                    if let Some(q) = qual {
+                        if q != en {
+                            self.err_code(
+                                "JR3019",
+                                format!("`case {}.{}` 与 switch 条件类型 `{}` 不匹配", q, name, en),
+                                format!("把限定名改成 `{}.{}`，或直接省略枚举名。", en, name),
+                            );
+                            continue;
+                        }
+                    }
+                    let variants = &self.enums.get(en).unwrap().variants;
+                    let Some(v) = variants.iter().find(|v| &v.name == name) else {
+                        self.err_code(
+                            "JR3019",
+                            format!("枚举 `{}` 没有分支 `{}`", en, name),
+                            format!(
+                                "可选分支：{}。",
+                                variants
+                                    .iter()
+                                    .map(|v| v.name.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        );
+                        continue;
+                    };
+                    if v.params.len() != bindings.len() {
+                        self.err_code(
+                            "JR3019",
+                            format!(
+                                "分支 `{}` 需要 {} 个绑定，实际写了 {} 个",
+                                name,
+                                v.params.len(),
+                                bindings.len()
+                            ),
+                            "把 `case 变体(绑定名...)` 的绑定数量与 enum 声明对齐。",
+                        );
+                        continue;
+                    }
+                    covered.insert(name.clone());
+                    if bindings.is_empty() {
+                        format!("{}::{}", en, name)
+                    } else {
+                        format!("{}::{}({})", en, name, bindings.join(", "))
+                    }
+                }
+                CasePattern::Other(_) => {
+                    self.err_code(
+                        "JR3019",
+                        "枚举 / boolean 的 switch 里出现了字面量 case",
+                        "枚举分支写 `case 变体名(...)`；boolean 写 `case true:` / `case false:`。",
+                    );
+                    continue;
+                }
+            };
+
+            let guard = match &c.guard {
+                Some(g) => format!(" if {}", self.gen_expr(g, env, None)),
+                None => String::new(),
+            };
+            self.marker(c.line);
+            self.emit(&format!("{}{} => {{", pat, guard));
+            self.indent += 1;
+
+            let is_last = idx + 1 == cases.len() && default.is_none();
+            let body = strip_trailing_break(&c.body);
+            if !is_last && !matches!(c.body.last(), Some(Stmt::Break { .. })) {
+                fallthrough_lines.push(c.line);
+            }
+            self.gen_stmts(body, env);
+            self.indent -= 1;
+            self.emit("}");
+        }
+
+        let mut missing: Vec<String> = Vec::new();
+        match &enum_name {
+            Some(en) => {
+                for v in &self.enums.get(en).unwrap().variants {
+                    if !covered.contains(&v.name) {
+                        missing.push(v.name.clone());
+                    }
+                }
+            }
+            None => {
+                for b in ["true", "false"] {
+                    if !covered.contains(b) {
+                        missing.push(b.to_string());
+                    }
+                }
+            }
+        }
+        if default.is_some() {
+            let db = default.as_ref().unwrap();
+            self.emit("_ => {");
+            self.indent += 1;
+            self.gen_stmts(strip_trailing_break(db), env);
+            self.indent -= 1;
+            self.emit("}");
+            missing.clear();
+        }
+        if !missing.is_empty() {
+            self.err_code(
+                "JR3019",
+                format!("switch 没有覆盖全部可能值，缺少：{}", missing.join(", ")),
+                "补上缺少的 case，或加 `default:` 分支（产物里生成 `_ =>`）。",
+            );
+        }
+        for line in fallthrough_lines {
+            self.cur_line = line;
+            self.err_code(
+                "JR3020",
+                "case 块没有 break，会产生 fallthrough",
+                "Rust 的 match 分支不会穿透：给该分支补 `break;`，或把相邻分支合并成一个分支。",
+            );
+        }
+
+        self.indent -= 1;
+        self.emit("}");
     }
 
     // ---------- 表达式 ----------
@@ -520,6 +902,17 @@ impl<'a> Codegen<'a> {
             Expr::Ident(n) => n.clone(),
             Expr::This => "self".to_string(),
             Expr::Field(recv, name) => {
+                if let Expr::Ident(en) = &**recv {
+                    if let Some(ed) = self.enums.get(en) {
+                        if ed
+                            .variants
+                            .iter()
+                            .any(|v| &v.name == name && v.params.is_empty())
+                        {
+                            return format!("{}::{}", en, name);
+                        }
+                    }
+                }
                 let r = self.gen_expr(recv, env, None);
                 format!("{}.{}", r, name)
             }
@@ -557,6 +950,28 @@ impl<'a> Codegen<'a> {
             Expr::Paren(inner) => {
                 let x = self.gen_expr(inner, env, expect);
                 format!("({})", x)
+            }
+            Expr::Closure { params, body } => {
+                let mut ps = Vec::new();
+                for p in params {
+                    match &p.ty {
+                        Some(t) => ps.push(format!("{}: {}", p.name, self.rust_type(t))),
+                        None => ps.push(p.name.clone()),
+                    }
+                }
+                let b = self.gen_expr(body, env, None);
+                format!("|{}| {}", ps.join(", "), b)
+            }
+            Expr::Try(inner) => {
+                if !env.in_throws {
+                    self.err_code(
+                        "JR3018",
+                        "`?` 只能用在声明了 throws 的方法里",
+                        "给当前方法签名加 `throws 错误名`（返回 Result 后 `?` 才合法），或在调用处显式处理返回值。",
+                    );
+                }
+                let x = self.gen_expr(inner, env, None);
+                format!("{}?", x)
             }
         }
     }
@@ -672,6 +1087,40 @@ impl<'a> Codegen<'a> {
         if (name == "println" || name == "print") && recv.as_ref().map_or(true, |r| is_system_out(r)) {
             let mac = if name == "println" { "println" } else { "print" };
             return self.gen_print_macro(args, env, mac);
+        }
+
+        // `Shape.Circle(2.0)` → `Shape::Circle(2.0)`：枚举分支构造。
+        if let Some(Expr::Ident(en)) = recv.as_deref() {
+            let nparams = self.enums.get(en).and_then(|ed| {
+                ed.variants
+                    .iter()
+                    .find(|v| &v.name == name)
+                    .map(|v| v.params.len())
+            });
+            if let Some(nparams) = nparams {
+                if nparams != args.len() {
+                    self.err_code(
+                        "JR3019",
+                        format!(
+                            "枚举分支 `{}::{}` 需要 {} 个参数，实际给了 {} 个",
+                            en,
+                            name,
+                            nparams,
+                            args.len()
+                        ),
+                        "构造带数据枚举分支时，参数数量必须与 enum 声明一致。",
+                    );
+                }
+                let mut vals = Vec::new();
+                for a in args {
+                    vals.push(self.gen_expr(a, env, None));
+                }
+                return if vals.is_empty() {
+                    format!("{}::{}", en, name)
+                } else {
+                    format!("{}::{}({})", en, name, vals.join(", "))
+                };
+            }
         }
 
         let recv_ty = recv.as_ref().and_then(|r| self.infer_type(r, env));
@@ -867,6 +1316,15 @@ impl<'a> Codegen<'a> {
             Expr::Ident(n) => env.vars.get(n).cloned(),
             Expr::New { class, .. } => Some(Type::Named(class.clone())),
             Expr::Field(recv, f) => {
+                if let Expr::Ident(en) = &**recv {
+                    if self
+                        .enums
+                        .get(en)
+                        .is_some_and(|ed| ed.variants.iter().any(|v| &v.name == f))
+                    {
+                        return Some(Type::Named(en.clone()));
+                    }
+                }
                 if let Some(Type::Named(cname)) = self.infer_type(recv, env) {
                     if let Some(cd) = self.classes.get(&cname) {
                         return cd.fields.iter().find(|x| &x.name == f).map(|x| x.ty.clone());
@@ -874,12 +1332,40 @@ impl<'a> Codegen<'a> {
                 }
                 None
             }
+            Expr::Call { recv: Some(r), .. } => match &**r {
+                Expr::Ident(en) if self.enums.contains_key(en) => Some(Type::Named(en.clone())),
+                _ => None,
+            },
+            Expr::Try(inner) => self.infer_type(inner, env),
             _ => None,
         }
     }
 }
 
 // ---------- 自由函数 ----------
+
+/// `java.io.IOException` → `IOException`
+fn simple_type_name(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or(name).to_string()
+}
+
+/// `throws` 里的常见异常名映射到标准库错误类型，用于生成 `impl From<...>`。
+fn std_error_source(name: &str) -> Option<&'static str> {
+    match name {
+        "IOException" | "IoError" | "UncheckedIOException" => Some("std::io::Error"),
+        "ParseIntError" | "NumberFormatException" => Some("std::num::ParseIntError"),
+        "ParseFloatError" => Some("std::num::ParseFloatError"),
+        _ => None,
+    }
+}
+
+/// 去掉 case 块结尾的 `break;`（它只表示「不穿透」，产物 match 分支天然不穿透）。
+fn strip_trailing_break(body: &[Stmt]) -> &[Stmt] {
+    match body.last() {
+        Some(Stmt::Break { .. }) => &body[..body.len() - 1],
+        _ => body,
+    }
+}
 
 fn binop_str(op: BinOp) -> &'static str {
     match op {
@@ -1012,6 +1498,24 @@ fn walk_mut(stmts: &[Stmt], set: &mut HashSet<String>) {
             }
             Stmt::While { body, .. } => walk_mut(body, set),
             Stmt::ForEach { body, .. } => walk_mut(body, set),
+            Stmt::Switch {
+                subject,
+                cases,
+                default,
+                ..
+            } => {
+                walk_mut_expr(subject, set);
+                for c in cases {
+                    if let Some(g) = &c.guard {
+                        walk_mut_expr(g, set);
+                    }
+                    walk_mut(&c.body, set);
+                }
+                if let Some(d) = default {
+                    walk_mut(d, set);
+                }
+            }
+            Stmt::Throw { expr, .. } => walk_mut_expr(expr, set),
             Stmt::Expr { expr, .. } => walk_mut_expr(expr, set),
             Stmt::Return { value: Some(e), .. } => walk_mut_expr(e, set),
             _ => {}
@@ -1050,6 +1554,8 @@ fn walk_mut_expr(e: &Expr, set: &mut HashSet<String>) {
             walk_mut_expr(b, set);
         }
         Expr::Paren(i) => walk_mut_expr(i, set),
+        Expr::Try(i) => walk_mut_expr(i, set),
+        Expr::Closure { body, .. } => walk_mut_expr(body, set),
         Expr::New { args, .. } => {
             for a in args {
                 walk_mut_expr(a, set);
@@ -1083,6 +1589,22 @@ fn stmt_uses_ident(s: &Stmt, want: &str) -> bool {
             name == want || expr_uses_ident(iter, want) || stmts_use_ident(body, want)
         }
         Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        Stmt::Switch {
+            subject,
+            cases,
+            default,
+            ..
+        } => {
+            expr_uses_ident(subject, want)
+                || cases.iter().any(|c| {
+                    c.guard.as_ref().map_or(false, |g| expr_uses_ident(g, want))
+                        || stmts_use_ident(&c.body, want)
+                })
+                || default
+                    .as_ref()
+                    .map_or(false, |d| stmts_use_ident(d, want))
+        }
+        Stmt::Throw { expr, .. } => expr_uses_ident(expr, want),
     }
 }
 
@@ -1099,6 +1621,8 @@ fn expr_uses_ident(e: &Expr, want: &str) -> bool {
         Expr::Unary { expr, .. } => expr_uses_ident(expr, want),
         Expr::Index(a, b) => expr_uses_ident(a, want) || expr_uses_ident(b, want),
         Expr::Paren(i) => expr_uses_ident(i, want),
+        Expr::Try(i) => expr_uses_ident(i, want),
+        Expr::Closure { body, .. } => expr_uses_ident(body, want),
         _ => false,
     }
 }

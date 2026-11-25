@@ -1,0 +1,19 @@
+public class Calc {
+    public int divide(int a, int b) throws DivByZero {
+        if (b == 0) {
+            throw new DivByZero("division by zero");
+        }
+        return a / b;
+    }
+
+    public int twice(int a, int b) throws DivByZero {
+        return this.divide(a, b)? * 2;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) throws DivByZero {
+        Calc c = new Calc();
+        println("{}", c.twice(14, 2)?);
+    }
+}

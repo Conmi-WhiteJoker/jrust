@@ -1,0 +1,38 @@
+public enum Shape {
+    Circle(double r),
+    Rect(double w, double h),
+    Empty
+}
+
+public class Printer {
+    public void printArea(Shape s) {
+        switch (s) {
+            case Circle(double r):
+                println("circle {}", 3.14 * r * r);
+                break;
+            case Rect(double w, double h) if w > h:
+                println("wide rect {}", w * h);
+                break;
+            case Rect(double w, double h):
+                println("tall rect {}", w * h);
+                break;
+            case Empty:
+                println("empty");
+                break;
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Printer p = new Printer();
+        Shape a = Shape.Circle(2.0);
+        Shape b = Shape.Rect(5.0, 2.0);
+        Shape c = Shape.Rect(2.0, 5.0);
+        Shape e = Shape.Empty;
+        p.printArea(a);
+        p.printArea(b);
+        p.printArea(c);
+        p.printArea(e);
+    }
+}

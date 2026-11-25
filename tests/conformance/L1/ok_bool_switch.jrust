@@ -1,0 +1,13 @@
+public class Main {
+    public static void main(String[] args) {
+        boolean flag = false;
+        switch (flag) {
+            case true:
+                println("on");
+                break;
+            case false:
+                println("off");
+                break;
+        }
+    }
+}

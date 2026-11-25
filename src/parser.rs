@@ -11,6 +11,7 @@ use crate::lexer::{lex, Kw, Tok, Token};
 enum TopItem {
     Class(ClassDecl),
     Interface(InterfaceDecl),
+    Enum(EnumDecl),
 }
 
 pub fn parse_file(src: &str) -> Result<Program, Vec<Diag>> {
@@ -276,16 +277,17 @@ impl Parser {
                         prog.imports.push(path);
                     }
                 }
-                Tok::Kw(Kw::Public) | Tok::Kw(Kw::Class) | Tok::Kw(Kw::Interface) => {
+                Tok::Kw(Kw::Public) | Tok::Kw(Kw::Class) | Tok::Kw(Kw::Interface) | Tok::Kw(Kw::Enum) => {
                     if let Some(item) = self.parse_type_decl() {
                         match item {
                             TopItem::Class(c) => prog.classes.push(c),
                             TopItem::Interface(i) => prog.interfaces.push(i),
+                            TopItem::Enum(e) => prog.enums.push(e),
                         }
                     }
                 }
                 _ => {
-                    self.err("顶层只允许 `public class` / `public interface` / `import`");
+                    self.err("顶层只允许 `public class` / `public interface` / `public enum` / `import`");
                     self.bump();
                 }
             }
@@ -304,9 +306,59 @@ impl Parser {
         if self.check_kw(Kw::Interface) {
             return Some(TopItem::Interface(self.parse_interface()));
         }
-        self.err("这里期望 `class` 或 `interface`");
+        if self.check_kw(Kw::Enum) {
+            return Some(TopItem::Enum(self.parse_enum()));
+        }
+        self.err("这里期望 `class`、`interface` 或 `enum`");
         self.bump();
         None
+    }
+
+    /// 带数据枚举：
+    /// ```
+    /// enum Shape { Circle(double r), Rect(double w, double h), Empty }
+    /// ```
+    fn parse_enum(&mut self) -> EnumDecl {
+        let line = self.line();
+        self.bump(); // enum
+        let name = self.expect_ident();
+        if self.check_punct("<") {
+            self.err_hint(
+                "jrust MVP 不支持泛型 enum",
+                "把类型参数换成具体类型，Rust 泛型 enum 后续版本再支持。",
+            );
+            self.skip_generic_args();
+        }
+        let mut variants = Vec::new();
+        if self.expect_punct("{") {
+            while !self.at_eof() && !self.check_punct("}") {
+                let start = self.pos;
+                let vline = self.line();
+                let vname = self.expect_ident();
+                let params = if self.check_punct("(") {
+                    self.parse_params()
+                } else {
+                    Vec::new()
+                };
+                variants.push(EnumVariant {
+                    name: vname,
+                    params,
+                    line: vline,
+                });
+                if !self.eat_punct(",") {
+                    break;
+                }
+                if self.pos == start && !self.at_eof() {
+                    self.bump();
+                }
+            }
+            self.expect_punct("}");
+        }
+        EnumDecl {
+            name,
+            variants,
+            line,
+        }
     }
 
     fn parse_class(&mut self) -> ClassDecl {
@@ -446,13 +498,20 @@ impl Parser {
         if self.check_punct("(") {
             let mline = self.line();
             let params = self.parse_params();
-            if self.check_kw(Kw::Throws) {
-                self.diags.push(
-                    Diag::error(mline, "jrust 不支持受检异常（throws）").with_hint(
-                        "Rust 用 `Result<T, E>` 表达可能失败：返回类型写 Result，调用处用 `?` 传播。",
-                    ),
-                );
-                self.skip_to_stmt_end();
+            let mut throws = Vec::new();
+            if self.eat_kw(Kw::Throws) {
+                loop {
+                    let mut n = self.expect_ident();
+                    while self.eat_punct(".") {
+                        let seg = self.expect_ident();
+                        n.push('.');
+                        n.push_str(&seg);
+                    }
+                    throws.push(n);
+                    if !self.eat_punct(",") {
+                        break;
+                    }
+                }
             }
             let body = self.parse_block();
             class.methods.push(Method {
@@ -461,6 +520,7 @@ impl Parser {
                 name,
                 ret: ty,
                 params,
+                throws,
                 body,
                 line: mline,
             });
@@ -802,6 +862,7 @@ impl Parser {
                 self.expect_punct(";");
                 Some(Stmt::Continue { line })
             }
+            Tok::Kw(Kw::Switch) => self.parse_switch(line),
             Tok::Kw(Kw::Try) | Tok::Kw(Kw::Catch) | Tok::Kw(Kw::Finally) => {
                 self.diags.push(
                     Diag::error(line, "jrust 不支持 try / catch / finally").with_hint(
@@ -824,13 +885,10 @@ impl Parser {
                 None
             }
             Tok::Kw(Kw::Throw) => {
-                self.diags.push(
-                    Diag::error(line, "jrust 不支持 throw").with_hint(
-                        "用 `return Err(...)` 返回错误，调用方用 `?` 传播。",
-                    ),
-                );
-                self.skip_to_stmt_end();
-                None
+                self.bump();
+                let expr = self.parse_expr();
+                self.expect_punct(";");
+                Some(Stmt::Throw { expr, line })
             }
             Tok::Kw(Kw::Synchronized) => {
                 self.diags.push(
@@ -853,6 +911,149 @@ impl Parser {
                 }
             }
         }
+    }
+
+    /// `switch (x) { case ...: ... default: ... }` → 交给 codegen 生成 `match`。
+    fn parse_switch(&mut self, line: usize) -> Option<Stmt> {
+        self.bump(); // switch
+        self.expect_punct("(");
+        let subject = self.parse_expr();
+        self.expect_punct(")");
+        let mut cases = Vec::new();
+        let mut default: Option<Vec<Stmt>> = None;
+        if !self.expect_punct("{") {
+            return None;
+        }
+        while !self.at_eof() && !self.check_punct("}") {
+            let start = self.pos;
+            if self.eat_kw(Kw::Case) {
+                let cline = self.line();
+                let pattern = self.parse_case_pattern();
+                let guard = if self.eat_kw(Kw::If) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                self.expect_punct(":");
+                let body = self.parse_case_body();
+                cases.push(SwitchCase {
+                    pattern,
+                    guard,
+                    body,
+                    line: cline,
+                });
+            } else if self.eat_kw(Kw::Default) {
+                self.expect_punct(":");
+                if default.is_some() {
+                    self.err("switch 只能有一个 default 分支");
+                }
+                default = Some(self.parse_case_body());
+            } else {
+                self.err("switch 里只允许 `case` 或 `default`");
+                self.bump();
+            }
+            if self.pos == start && !self.at_eof() {
+                self.bump();
+            }
+        }
+        self.expect_punct("}");
+        Some(Stmt::Switch {
+            subject,
+            cases,
+            default,
+            line,
+        })
+    }
+
+    fn parse_case_pattern(&mut self) -> CasePattern {
+        match self.peek().clone() {
+            Tok::Kw(Kw::True) => {
+                self.bump();
+                CasePattern::Bool(true)
+            }
+            Tok::Kw(Kw::False) => {
+                self.bump();
+                CasePattern::Bool(false)
+            }
+            Tok::Ident(first) => {
+                self.bump();
+                let (enum_name, name) = if self.eat_punct(".") {
+                    (Some(first), self.expect_ident())
+                } else {
+                    (None, first)
+                };
+                let bindings = if self.check_punct("(") {
+                    self.parse_case_bindings()
+                } else {
+                    Vec::new()
+                };
+                CasePattern::Variant {
+                    enum_name,
+                    name,
+                    bindings,
+                }
+            }
+            _ => {
+                // 字面量分支（int / String……）：codegen 会以 JR3019 拒绝，因为 Rust 的 match 需要穷尽。
+                let e = self.parse_expr();
+                CasePattern::Other(e)
+            }
+        }
+    }
+
+    /// `case Circle(double r)` 里的绑定：类型可省略。
+    fn parse_case_bindings(&mut self) -> Vec<String> {
+        let mut v = Vec::new();
+        if !self.expect_punct("(") {
+            return v;
+        }
+        if self.eat_punct(")") {
+            return v;
+        }
+        loop {
+            if self.looks_like_typed_binding() {
+                let _ = self.parse_type();
+            }
+            v.push(self.expect_ident());
+            if self.eat_punct(",") {
+                continue;
+            }
+            break;
+        }
+        self.expect_punct(")");
+        v
+    }
+
+    /// 当前是否形如 `Type name`（类型 + 标识符），用于区分 `Circle(double r)` 和 `Circle(r)`。
+    fn looks_like_typed_binding(&self) -> bool {
+        match self.peek() {
+            Tok::Kw(Kw::Int)
+            | Tok::Kw(Kw::Long)
+            | Tok::Kw(Kw::Double)
+            | Tok::Kw(Kw::Float)
+            | Tok::Kw(Kw::Boolean)
+            | Tok::Kw(Kw::Char) => true,
+            Tok::Ident(_) => matches!(self.peek_at(1), Tok::Ident(_)),
+            _ => false,
+        }
+    }
+
+    fn parse_case_body(&mut self) -> Vec<Stmt> {
+        let mut v = Vec::new();
+        while !self.at_eof()
+            && !self.check_punct("}")
+            && !self.check_kw(Kw::Case)
+            && !self.check_kw(Kw::Default)
+        {
+            let start = self.pos;
+            if let Some(s) = self.parse_stmt() {
+                v.push(s);
+            }
+            if self.pos == start && !self.at_eof() {
+                self.bump();
+            }
+        }
+        v
     }
 
     fn is_foreach_paren(&self) -> bool {
@@ -1153,6 +1354,9 @@ impl Parser {
                 let idx = self.parse_expr();
                 self.expect_punct("]");
                 e = Expr::Index(Box::new(e), Box::new(idx));
+            } else if self.check_punct("?") {
+                self.bump();
+                e = Expr::Try(Box::new(e));
             } else if self.check_punct("++") || self.check_punct("--") {
                 self.diags.push(
                     Diag::error(self.line(), "jrust 不支持 ++ / --")
@@ -1183,6 +1387,68 @@ impl Parser {
         }
         self.expect_punct(")");
         v
+    }
+
+    /// 从当前 `(` 扫到配对的 `)`，看后面是否紧跟 `->`，以此区分闭包和普通括号表达式。
+    fn is_closure_paren(&self) -> bool {
+        let mut depth = 0i32;
+        let mut i = self.pos;
+        while i < self.toks.len() {
+            match &self.toks[i].tok {
+                Tok::Punct("(") => depth += 1,
+                Tok::Punct(")") => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return matches!(
+                            self.toks.get(i + 1).map(|t| &t.tok),
+                            Some(Tok::Punct("->"))
+                        );
+                    }
+                }
+                Tok::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    fn parse_closure_paren(&mut self) -> Expr {
+        self.expect_punct("(");
+        let mut params = Vec::new();
+        if !self.eat_punct(")") {
+            loop {
+                let ty = if self.looks_like_typed_binding() {
+                    self.parse_type()
+                } else {
+                    None
+                };
+                let name = self.expect_ident();
+                params.push(ClosureParam { ty, name });
+                if self.eat_punct(",") {
+                    continue;
+                }
+                break;
+            }
+            self.expect_punct(")");
+        }
+        self.expect_punct("->");
+        if self.check_punct("{") {
+            self.err_hint(
+                "闭包体先只支持单个表达式",
+                "把多行逻辑写进普通方法；闭包写成 `(a, b) -> a + b`。",
+            );
+            self.skip_block();
+            return Expr::Closure {
+                params,
+                body: Box::new(Expr::Ident("()".to_string())),
+            };
+        }
+        let body = self.parse_expr();
+        Expr::Closure {
+            params,
+            body: Box::new(body),
+        }
     }
 
     fn parse_primary(&mut self) -> Expr {
@@ -1260,6 +1526,18 @@ impl Parser {
             }
             Tok::Ident(n) => {
                 self.bump();
+                // 单参数闭包：`x -> x * 2`
+                if matches!(self.peek(), Tok::Punct("->")) {
+                    self.bump();
+                    let body = self.parse_expr();
+                    return Expr::Closure {
+                        params: vec![ClosureParam {
+                            ty: None,
+                            name: n,
+                        }],
+                        body: Box::new(body),
+                    };
+                }
                 // 裸 `print` / `println` 视作 System.out 的简写；其它裸调用仍不解析。
                 if (n == "print" || n == "println") && self.check_punct("(") {
                     let args = self.parse_args();
@@ -1272,6 +1550,7 @@ impl Parser {
                     Expr::Ident(n)
                 }
             }
+            Tok::Punct("(") if self.is_closure_paren() => self.parse_closure_paren(),
             Tok::Punct("(") => {
                 self.bump();
                 let e = self.parse_expr();
@@ -1336,5 +1615,9 @@ fn kw_text(k: Kw) -> &'static str {
         Kw::Throw => "throw",
         Kw::Throws => "throws",
         Kw::Instanceof => "instanceof",
+        Kw::Enum => "enum",
+        Kw::Switch => "switch",
+        Kw::Case => "case",
+        Kw::Default => "default",
     }
 }

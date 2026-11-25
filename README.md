@@ -74,8 +74,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 2. **产物必须可读**。每段代码前带 `// jrust:L<行号>` 源映射，方便左右对照。
 3. **不隐藏 Rust 的规则**。`String b = a;` 就生成移动（不自动 `clone`）；
    第二个例子会直接撞上借用检查器——这正是教学内容。
-4. **砍掉 Java 的包袱**。继承、异常、反射、注解、`null` 一律不支持，
-   并在报错时解释 Rust 的替代方案。
+4. **砍掉 Java 的包袱**。继承、`try/catch`、反射、注解、`null` 一律不支持，
+   异常只保留 `throws` / `throw` 这条映射到 `Result` 的窄路，并在报错时解释 Rust 的替代方案。
 5. **零外部依赖**。`Cargo.toml` 无 `[dependencies]`，手写 lexer + 递归下降 parser，
    `cargo build` 全程不联网——学生克隆仓库后第一条命令就能跑通，不会被
    「拉不到 crates」卡住；代价是 token 表与错误恢复全靠自管。
@@ -102,7 +102,10 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo.jrust) |
 | `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo.jrust) |
 | `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 | [MapDemo](examples/MapDemo.jrust) |
-| `switch` | （后续版本映射到 `match`） | MVP 未实现 | — |
+| `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
+| `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
+| `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
+| `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort.jrust) |
 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` | [PrintShort](examples/PrintShort.jrust) |
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：显式声明搬走所有权；产物与隐式 move 相同，只多一条提示注释。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
@@ -115,7 +118,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | 砍掉 | 报错里的 Rust 替代方案 |
 |---|---|
 | `extends` 类继承 | trait 组合 + 字段组合，组合优于继承 |
-| `try` / `catch` / `finally` / `throw` / `throws` | `Result<T, E>` + `?`；清理交给 `Drop` |
+| `try` / `catch` / `finally` | Rust 没有异常：可能失败的操作返回 `Result<T, E>`，用 `throws` + `?` 传播；清理交给 `Drop` |
 | `null` | `Option<T>`：`Some(x)` / `None` |
 | `instanceof` | `enum` + `match`，或多态方法 |
 | 注解 `@Xxx` | derive 宏 / 显式代码 |
@@ -129,6 +132,10 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
 - 不支持泛型声明、字段初始化、接口 static 方法、数组 `new`。
+- `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
+- `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
+- 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
+- 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包，这些特性走 `jrust build` + cargo 验证。
 - `Map` 只支持 `put` / `get` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 不支持字符串 `+` 拼接（只允许出现在 `println` 参数里，由 jrust 展开）。
 
@@ -145,7 +152,7 @@ src/json.rs     零依赖 JSON（只服务 DAP）
 examples/       9 个示例（各含 .jrust 源码 + 生成的 .rs）：
                 HelloWorld、ClassInterface、PolymorphicList、Ownership、MoveEdges、
                 PrintShort、RustTypes、MapDemo、VecImport
-tests/          move 非法边界用例 + 解释/编译输出对拍
+tests/          一致性用例（move 边界、解释/编译对拍、L1 语法）+ verify 脚本
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```
 

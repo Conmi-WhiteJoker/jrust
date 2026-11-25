@@ -1,0 +1,15 @@
+public enum Shape {
+    Circle(double r),
+    Rect(double w, double h)
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Shape s = Shape.Circle(1.0);
+        switch (s) {
+            case Circle(double r):
+                println("circle");
+                break;
+        }
+    }
+}

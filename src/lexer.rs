@@ -57,6 +57,12 @@ pub enum Kw {
     Throw,
     Throws,
     Instanceof,
+    /// v1 L1：带数据枚举
+    Enum,
+    /// switch → match
+    Switch,
+    Case,
+    Default,
 }
 
 pub fn keyword(s: &str) -> Option<Kw> {
@@ -99,6 +105,10 @@ pub fn keyword(s: &str) -> Option<Kw> {
         "throw" => Kw::Throw,
         "throws" => Kw::Throws,
         "instanceof" => Kw::Instanceof,
+        "enum" => Kw::Enum,
+        "switch" => Kw::Switch,
+        "case" => Kw::Case,
+        "default" => Kw::Default,
         _ => return None,
     })
 }

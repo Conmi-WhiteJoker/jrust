@@ -485,6 +485,20 @@ impl<'a> Interp<'a> {
             }
             Stmt::Break { .. } => Ok(Flow::Break),
             Stmt::Continue { .. } => Ok(Flow::Continue),
+            Stmt::Switch { line, .. } => Err(RuntimeError::new(
+                *line,
+                "解释器暂不支持 switch / enum",
+            )
+            .with_hint(
+                "带数据 enum 与 switch→match 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+            )),
+            Stmt::Throw { line, .. } => Err(RuntimeError::new(
+                *line,
+                "解释器暂不支持 throw / throws",
+            )
+            .with_hint(
+                "错误传播目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+            )),
         }
     }
 
@@ -712,6 +726,18 @@ impl<'a> Interp<'a> {
             }
             Expr::New { class, args } => self.eval_new(class, args),
             Expr::Call { recv, name, args } => self.eval_call(recv.as_deref(), name, args),
+            Expr::Closure { .. } => {
+                let line = self.cur_line;
+                Err(RuntimeError::new(line, "解释器暂不支持闭包").with_hint(
+                    "闭包目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+                ))
+            }
+            Expr::Try(_) => {
+                let line = self.cur_line;
+                Err(RuntimeError::new(line, "解释器暂不支持 `?` 传播").with_hint(
+                    "throws / `?` 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
+                ))
+            }
         }
     }
 
@@ -1299,7 +1325,9 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::While { line, .. }
         | Stmt::ForEach { line, .. }
         | Stmt::Break { line }
-        | Stmt::Continue { line } => *line,
+        | Stmt::Continue { line }
+        | Stmt::Switch { line, .. }
+        | Stmt::Throw { line, .. } => *line,
     }
 }
 

@@ -1,0 +1,9 @@
+public class Main {
+    public static void main(String[] args) {
+        Util u = new Util();
+        int r = u.apply(3, (x) -> x * 2);
+        int s = u.apply(4, x -> x + 1);
+        int t = u.apply(5, (double a, double b) -> a + b);
+        println("{} {} {}", r, s, t);
+    }
+}

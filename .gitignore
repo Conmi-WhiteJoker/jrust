@@ -4,3 +4,6 @@
 
 # verify.sh 每次从 examples 复制生成的 .rs
 /verify/src/bin/
+
+# 一致性用例转译产物
+/tests/conformance/**/*.rs

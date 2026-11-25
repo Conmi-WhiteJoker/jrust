@@ -59,6 +59,8 @@ pub struct Method {
     pub name: String,
     pub ret: Type,
     pub params: Vec<Param>,
+    /// `throws A, B` 里的异常类型名（可带包路径），codegen 用它生成错误枚举分支。
+    pub throws: Vec<String>,
     pub body: Vec<Stmt>,
     pub line: usize,
 }
@@ -104,11 +106,28 @@ pub struct InterfaceDecl {
     pub line: usize,
 }
 
+/// 带数据枚举的分支：`Circle(double r)`。
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub line: usize,
+}
+
+/// `enum Shape { Circle(double r), Rect(double w, double h), Empty }`
+#[derive(Debug, Clone)]
+pub struct EnumDecl {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub line: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Program {
     pub imports: Vec<String>,
     pub interfaces: Vec<InterfaceDecl>,
     pub classes: Vec<ClassDecl>,
+    pub enums: Vec<EnumDecl>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +175,40 @@ pub enum Stmt {
     Continue {
         line: usize,
     },
+    /// `switch (x) { case ...: ... }` → Rust `match`。
+    Switch {
+        subject: Expr,
+        cases: Vec<SwitchCase>,
+        default: Option<Vec<Stmt>>,
+        line: usize,
+    },
+    /// `throw new E("msg");` → `return Err(JrustError::E(...));`
+    Throw {
+        expr: Expr,
+        line: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchCase {
+    pub pattern: CasePattern,
+    pub guard: Option<Expr>,
+    pub body: Vec<Stmt>,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum CasePattern {
+    /// `case true:` / `case false:`
+    Bool(bool),
+    /// `case Circle(r):` / `case Shape.Circle(double r):`
+    Variant {
+        enum_name: Option<String>,
+        name: String,
+        bindings: Vec<String>,
+    },
+    /// 其它字面量（int / String 等）：Rust 的 match 无法穷尽，codegen 会报 JR3019。
+    Other(Expr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +234,13 @@ pub enum UnOp {
     Not,
     /// jrust 扩展：`move x` 显式移走 x 的所有权（Rust 中赋值本身就是 move）。
     Move,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClosureParam {
+    /// 可选类型标注：`(double x) -> x`；省略时由 Rust 推断。
+    pub ty: Option<Type>,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -213,4 +273,11 @@ pub enum Expr {
     },
     Index(Box<Expr>, Box<Expr>),
     Paren(Box<Expr>),
+    /// `(a, b) -> expr` → `|a, b| expr`
+    Closure {
+        params: Vec<ClosureParam>,
+        body: Box<Expr>,
+    },
+    /// `f()?`：错误传播，只能出现在声明了 `throws` 的函数里。
+    Try(Box<Expr>),
 }

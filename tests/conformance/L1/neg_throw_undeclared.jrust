@@ -1,0 +1,12 @@
+public class Helper {
+    public void go() throws Known {
+        throw new Boom("x");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Helper h = new Helper();
+        h.go();
+    }
+}
