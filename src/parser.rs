@@ -1027,8 +1027,38 @@ impl Parser {
         e
     }
 
+    /// `break outer;` / `continue outer;`：消费标签并报 JR2004（JR-E6）。
+    fn reject_labeled_jump(&mut self, kw: &str) {
+        if let Tok::Ident(label) = self.peek().clone() {
+            let line = self.line();
+            self.bump();
+            self.diags.push(
+                Diag::error_code(
+                    line,
+                    "JR2004",
+                    format!("jrust 不支持带标签的 `{} {}`", kw, label),
+                )
+                .with_hint(
+                    "Rust 有 `break 'label;`，但 jrust 不暴露标签：用布尔标志或把循环抽成独立方法。",
+                ),
+            );
+        }
+    }
+
     fn parse_stmt(&mut self) -> Option<Stmt> {
         let line = self.line();
+        // `outer: for (...) { ... }`：jrust 不支持标签（JR-E6）。
+        if matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::Punct(p) if *p == ":") {
+            let label = self.expect_ident();
+            self.bump(); // :
+            self.diags.push(
+                Diag::error_code(line, "JR2004", format!("jrust 不支持带标签的循环 `{}:`", label))
+                    .with_hint(
+                        "Rust 有 `'label: loop { break 'label; }`，但 jrust 不暴露标签：用布尔标志或把循环抽成独立方法。",
+                    ),
+            );
+            return self.parse_stmt();
+        }
         match self.peek().clone() {
             Tok::Raw(code) => {
                 self.bump();
@@ -1124,11 +1154,13 @@ impl Parser {
             }
             Tok::Kw(Kw::Break) => {
                 self.bump();
+                self.reject_labeled_jump("break");
                 self.expect_punct(";");
                 Some(Stmt::Break { line })
             }
             Tok::Kw(Kw::Continue) => {
                 self.bump();
+                self.reject_labeled_jump("continue");
                 self.expect_punct(";");
                 Some(Stmt::Continue { line })
             }
