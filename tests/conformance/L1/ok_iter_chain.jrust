@@ -1,0 +1,19 @@
+// 迭代器链：stream / map / filter / collectList（JR-E18）。
+public class Main {
+    public static void main(String[] args) {
+        List<Integer> xs = new ArrayList<Integer>();
+        xs.add(1);
+        xs.add(2);
+        xs.add(3);
+        xs.add(4);
+
+        List<Integer> evens = xs.stream().filter(v -> v % 2 == 0).collectList();
+        List<Integer> doubled = xs.stream().map(v -> v * 2).collectList();
+
+        println(evens.size());
+        println(evens.get(0));
+        println(evens.get(1));
+        println(doubled.size());
+        println(doubled.get(3));
+    }
+}

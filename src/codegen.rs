@@ -1897,6 +1897,67 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// 迭代器链白名单（JR-E18）。
+    fn is_iter_step(name: &str) -> bool {
+        matches!(name, "map" | "filter" | "collectList")
+    }
+
+    /// `e` 是否是 `x.stream()....` 链（基座或中间步骤）。
+    fn is_iter_chain(e: &Expr) -> bool {
+        match e {
+            Expr::Call {
+                recv: Some(inner),
+                name,
+                ..
+            } => name == "stream" || Self::is_iter_step(name) || Self::is_iter_chain(inner),
+            _ => false,
+        }
+    }
+
+    /// 沿调用链一路走到基座表达式（`xs.stream().map(..)` → `xs`）。
+    fn chain_base(mut e: &Expr) -> &Expr {
+        while let Expr::Call {
+            recv: Some(inner), ..
+        } = e
+        {
+            e = inner;
+        }
+        e
+    }
+
+    /// 生成迭代器链的一步（JR-E18）：`map` / `filter` 透传，`collectList` 收集成 `Vec`。
+    fn gen_iter_step(
+        &mut self,
+        recv: &Expr,
+        name: &str,
+        args: &[Expr],
+        env: &mut Env,
+    ) -> String {
+        let base = self.gen_expr(recv, env, None);
+        match name {
+            "map" | "filter" => {
+                if args.len() != 1 {
+                    self.err(
+                        format!("`{}` 需要一个闭包参数", name),
+                        format!("例如 `xs.stream().{}(x -> x * 2).collectList()`。", name),
+                    );
+                    return format!("{}.{}()", base, name);
+                }
+                let f = self.gen_expr(&args[0], env, None);
+                format!("{}.{}({})", base, name, f)
+            }
+            "collectList" => format!("{}.collect::<Vec<_>>()", base),
+            other => {
+                self.err_code(
+                    "JR3017",
+                    format!("迭代器链不支持方法 `{}`", other),
+                    "MVP 白名单：stream / map / filter / collectList。",
+                );
+                format!("{}.{}()", base, other)
+            }
+        }
+    }
+
     /// `Cls.method` / `Iface.method` 对应静态方法时返回（Rust 调用路径，形参类型）（JR-D10）。
     fn static_method(&self, ty: &str, name: &str) -> Option<(String, Vec<Type>)> {
         if let Some(cd) = self.classes.get(ty) {
@@ -1928,6 +1989,12 @@ impl<'a> Codegen<'a> {
         env: &mut Env,
         expect: Option<&Type>,
     ) -> String {
+        // 迭代器链（JR-E18）：链上的每一步都交给 gen_iter_step。
+        if let Some(r) = recv.as_deref() {
+            if Self::is_iter_chain(r) {
+                return self.gen_iter_step(r, name, args, env);
+            }
+        }
         if (name == "println" || name == "print") && recv.as_ref().map_or(true, |r| is_system_out(r)) {
             let mac = if name == "println" { "println" } else { "print" };
             return self.gen_print_macro(args, env, mac);
@@ -2124,6 +2191,13 @@ impl<'a> Codegen<'a> {
             _ => None,
         };
         let param_types = self.call_param_types(recv, name, env);
+
+        if is_list && name == "stream" {
+            let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
+            // 值语义：`iter()` 产出 `&T`，`cloned()` 还原成 `T`；否则 `filter` 里是 `&&T`、
+            // `collect` 得到 `Vec<&T>`，与 Java 的按值流不一致（JR-E18）。
+            return format!("{}.iter().cloned()", r);
+        }
 
         let mut arg_strs = Vec::new();
         for (i, a) in args.iter().enumerate() {
@@ -2364,6 +2438,17 @@ impl<'a> Codegen<'a> {
                             return Some(m.ret.clone());
                         }
                     }
+                }
+                // 迭代器链 `…collectList()` → List<元素类型>（JR-E18）
+                if name == "collectList" {
+                    if let Some(r) = recv.as_deref() {
+                        if let Some(Type::List(inner)) =
+                            self.infer_type(Self::chain_base(r), env)
+                        {
+                            return Some(Type::List(inner));
+                        }
+                    }
+                    return None;
                 }
                 let recv_ty = recv.as_deref().and_then(|r| self.infer_type(r, env));
                 if let Some(Type::Map(_, v)) = &recv_ty {

@@ -1,0 +1,9 @@
+// 迭代器链白名单外的方法报 JR3017。
+public class Main {
+    public static void main(String[] args) {
+        List<Integer> xs = new ArrayList<Integer>();
+        xs.add(1);
+        List<Integer> ys = xs.stream().sorted().collectList();
+        println(ys.size());
+    }
+}

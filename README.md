@@ -101,6 +101,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `int[] a = new int[n]` | `let mut a: Vec<i32> = vec![0; (n) as usize];` | 元素只支持标量 / `String`（默认值 `0` / `0.0` / `false` / `String::new()`）；`a.size()` / `a[i]` / 增强 for 与 `List` 一致；`new Foo[n]` 报 `JR3014` | [L1 用例](tests/conformance/L1/ok_newarray.jrust) |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport.jrust) |
 | `for (T x : list)` | `for x in &list` | 借用而不是移动 | [VecImport](examples/VecImport.jrust) |
+| `list.stream().map(..).filter(..).collectList()` | `list.iter().cloned().map(..).filter(..).collect::<Vec<_>>()` | 白名单 `stream` / `map` / `filter` / `collectList`，其它方法报 `JR3017`；`cloned()` 保证按值处理元素；`collectList` 元素类型沿用基座集合 | [L1 用例](tests/conformance/L1/ok_iter_chain.jrust) |
 | `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor.jrust) |
 | `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo.jrust) |
 | `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo.jrust) |
@@ -162,6 +163,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包 / raw，这些特性走 `jrust build` + cargo 验证。
 - `raw` 目前只保证原样内联：块内 rustc 错误不会映射回 `.jrust` 行列（`JR-X2`），嵌套 `raw` 也不会被识别（`JR-X3`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
+- 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构
