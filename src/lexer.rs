@@ -66,6 +66,8 @@ pub enum Kw {
     /// 异步（JR-C9 / JR-C10）
     Async,
     Await,
+    /// 并发任务（JR-C11）
+    Spawn,
 }
 
 pub fn keyword(s: &str) -> Option<Kw> {
@@ -114,6 +116,7 @@ pub fn keyword(s: &str) -> Option<Kw> {
         "default" => Kw::Default,
         "async" => Kw::Async,
         "await" => Kw::Await,
+        "spawn" => Kw::Spawn,
         _ => return None,
     })
 }

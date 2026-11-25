@@ -62,6 +62,8 @@ struct Codegen<'a> {
     generic_params: HashSet<String>,
     /// 当前方法是否 `async`：`await` 只在其中合法（JR-C10 → JR3022）。
     in_async: bool,
+    /// 最近一次生成的表达式是否用到了 `self`（`spawn` 的 Send + 'static 检查用）。
+    saw_this: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -140,6 +142,7 @@ impl<'a> Codegen<'a> {
             cloneable,
             generic_params: HashSet::new(),
             in_async: false,
+            saw_this: false,
         }
     }
 
@@ -1190,6 +1193,30 @@ impl<'a> Codegen<'a> {
                 self.marker(*line);
                 self.emit("continue;");
             }
+            Stmt::Spawn { body, line } => {
+                self.cur_line = *line;
+                self.marker(*line);
+                // `spawn` 的闭包按值捕获：`self` 是 `&self`，不满足 'static（JR3023）。
+                let prev_this = self.saw_this;
+                self.saw_this = false;
+                let prev_async = self.in_async;
+                self.in_async = true;
+                self.emit("tokio::spawn(async move {");
+                self.indent += 1;
+                self.gen_stmts(body, env);
+                self.indent -= 1;
+                self.emit("});");
+                self.in_async = prev_async;
+                let captured_self = self.saw_this;
+                self.saw_this = prev_this;
+                if captured_self {
+                    self.err_code(
+                        "JR3023",
+                        "`spawn` 块捕获了 `this`，它不满足 Send + 'static",
+                        "`this` 是 `&self`，不能跨线程持有；先把需要的字段复制到局部变量（标量 / String / Vec 可 clone）再 spawn。",
+                    );
+                }
+            }
             Stmt::Throw { expr, line } => {
                 self.cur_line = *line;
                 self.marker(*line);
@@ -1470,7 +1497,10 @@ impl<'a> Codegen<'a> {
                 }
             },
             Expr::Ident(n) => n.clone(),
-            Expr::This => "self".to_string(),
+            Expr::This => {
+                self.saw_this = true;
+                "self".to_string()
+            }
             Expr::Field(recv, name) => {
                 if let Expr::Ident(en) = &**recv {
                     if let Some(cd) = self.classes.get(en) {
@@ -2664,6 +2694,7 @@ fn stmt_uses_ident(s: &Stmt, want: &str) -> bool {
                     .as_ref()
                     .map_or(false, |d| stmts_use_ident(d, want))
         }
+        Stmt::Spawn { body, .. } => stmts_use_ident(body, want),
         Stmt::Throw { expr, .. } => expr_uses_ident(expr, want),
     }
 }

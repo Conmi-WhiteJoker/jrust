@@ -622,6 +622,11 @@ impl<'a> Interp<'a> {
             .with_hint(
                 "带数据 enum 与 switch→match 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
             )),
+            // 解释器无并发：spawn 块同步执行一次（JR-C11）。
+            Stmt::Spawn { body, .. } => {
+                let _ = self.exec_block(body)?;
+                Ok(Flow::Normal)
+            }
             Stmt::Throw { line, .. } => Err(RuntimeError::new(
                 *line,
                 "解释器暂不支持 throw / throws",
@@ -1596,6 +1601,7 @@ fn stmt_line(s: &Stmt) -> usize {
         | Stmt::Break { line }
         | Stmt::Continue { line }
         | Stmt::Switch { line, .. }
+        | Stmt::Spawn { line, .. }
         | Stmt::Throw { line, .. } => *line,
     }
 }

@@ -250,6 +250,11 @@ pub enum Stmt {
         default: Option<Vec<Stmt>>,
         line: usize,
     },
+    /// `spawn { ... }` / `spawn f();` → `tokio::spawn(async move { ... });`（JR-C11）。
+    Spawn {
+        body: Vec<Stmt>,
+        line: usize,
+    },
     /// `throw new E("msg");` → `return Err(JrustError::E(...));`
     Throw {
         expr: Expr,

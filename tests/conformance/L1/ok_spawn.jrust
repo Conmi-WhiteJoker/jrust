@@ -1,0 +1,10 @@
+// spawn 块 → tokio::spawn(async move { ... })（JR-C11）。无 tokio 依赖，仅校验产物形态。
+public class Main {
+    public static void main(String[] args) {
+        int n = 3;
+        spawn {
+            println(n + 1);
+        }
+        println("ok");
+    }
+}

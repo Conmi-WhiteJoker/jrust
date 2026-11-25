@@ -83,6 +83,25 @@ run_closure() {
     fi
 }
 
+# 只校验产物形态（需要外部运行时、无法用 rustc 直接编译运行的特性）
+run_build_has() {
+    local base=$1
+    local pattern=$2
+    if ! $JRUST build "$DIR/$base.jrust" >/dev/null 2>"$TMP/err"; then
+        echo "FAIL $base：转译失败"
+        cat "$TMP/err"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q -- "$pattern" "$DIR/$base.rs"; then
+        echo "PASS $base"
+        pass=$((pass + 1))
+    else
+        echo "FAIL $base：产物里没有预期写法（$pattern）"
+        fail=$((fail + 1))
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -98,6 +117,7 @@ run_ok ok_attrs
 run_ok ok_assert
 run_ok ok_async
 run_closure
+run_build_has ok_spawn 'tokio::spawn(async move {'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"
@@ -113,6 +133,7 @@ run_neg neg_newarray_type JR3014 "只支持标量 / String"
 run_neg neg_wildcard JR3010 "trait object"
 run_neg neg_mutable_static JR3013 "可变全局"
 run_neg neg_await_sync JR3022 "async"
+run_neg neg_spawn_this JR3023 "this"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

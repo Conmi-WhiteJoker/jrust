@@ -229,7 +229,6 @@ impl Parser {
     fn parse_annotations(&mut self) -> Vec<Attr> {
         let mut attrs = Vec::new();
         while self.check_punct("@") {
-            let line = self.line();
             self.bump(); // @
             if !matches!(self.peek(), Tok::Ident(_)) {
                 let d = self.describe();
@@ -1120,6 +1119,17 @@ impl Parser {
                     self.skip_block();
                 }
                 None
+            }
+            Tok::Kw(Kw::Spawn) => {
+                self.bump();
+                let body = if self.check_punct("{") {
+                    self.parse_block()
+                } else {
+                    let expr = self.parse_expr();
+                    self.expect_punct(";");
+                    vec![Stmt::Expr { expr, line }]
+                };
+                Some(Stmt::Spawn { body, line })
             }
             Tok::Kw(Kw::Throw) => {
                 self.bump();
@@ -2132,5 +2142,6 @@ fn kw_text(k: Kw) -> &'static str {
         Kw::Default => "default",
         Kw::Async => "async",
         Kw::Await => "await",
+        Kw::Spawn => "spawn",
     }
 }

@@ -1,0 +1,22 @@
+// spawn 捕获 this 应报 JR3023（&self 不满足 Send + 'static）。
+public class Job {
+    private int x;
+
+    public Job(int x) {
+        this.x = x;
+    }
+
+    public void run() {
+        spawn {
+            println(this.x);
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Job j = new Job(1);
+        j.run();
+        println("ok");
+    }
+}

@@ -126,6 +126,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：真正的移动，不 `clone`，之后 `a` 不可再用。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges.jrust) |
 | `panic("msg")` / `assert(cond, "msg")` | `panic!("{}", msg)` / `assert!(cond, "{}", msg)` | 内置函数；`assert` 也接受单参数；其它裸调用报「未知的函数」 | [L1 用例](tests/conformance/L1/ok_assert.jrust) |
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
+| `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
