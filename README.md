@@ -132,7 +132,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
 | `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
 | `public static async void main(String[] args)` | `#[tokio::main] async fn main()` | 异步入口需要 tokio 运行时（产物同样依赖 tokio） | [L1 用例](tests/conformance/L1/ok_async_main.jrust) |
-| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
+| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`） | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
@@ -169,6 +169,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。
 - `synchronized` 只能锁定 `@shared` 可变字段（`synchronized (this.f)`），不支持锁定任意对象；`synchronized` 方法按字段名排序加锁，多个 `@shared` 可变字段时顺序固定以防交叉死锁。
+- `raw` 块不能嵌套（内层 `raw { ... }` 报 `JR3027`）；raw 内的 rustc 错误目前不会映射回 `.jrust` 行号。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构

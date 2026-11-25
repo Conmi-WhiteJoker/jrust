@@ -145,6 +145,7 @@ run_neg neg_iface_static_no_body JR3024 "必须有方法体"
 run_neg neg_iter_unknown JR3017 "白名单"
 run_neg neg_sync_target JR3026 "this.f"
 run_neg neg_labeled JR2004 "不支持带标签"
+run_neg neg_raw_nested JR3027 "不能嵌套"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

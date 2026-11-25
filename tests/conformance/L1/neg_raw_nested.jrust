@@ -1,0 +1,10 @@
+// raw 块不能嵌套（JR-X3 → JR3027）。
+public class Main {
+    public static void main(String[] args) {
+        raw {
+            let x = 1;
+            raw { let y = 2; }
+            println!("{}", x);
+        }
+    }
+}

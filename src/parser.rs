@@ -487,10 +487,21 @@ impl Parser {
         class
     }
 
+    /// `raw` 块不得嵌套（JR-X3）。
+    fn reject_nested_raw(&mut self, code: &str, line: usize) {
+        if contains_nested_raw(code) {
+            self.diags.push(
+                Diag::error_code(line, "JR3027", "raw 块不能嵌套")
+                    .with_hint("把内层 Rust 代码直接并入外层 raw，或拆成相邻的两个 raw 块。"),
+            );
+        }
+    }
+
     fn parse_member(&mut self, class: &mut ClassDecl) {
         // 类内 `raw { ... }`（JR-X1）：作为成员原样收集。
         if let Tok::Raw(code) = self.peek().clone() {
             let line = self.line();
+            self.reject_nested_raw(&code, line);
             self.bump();
             class.raw_members.push(RawCode { code, line });
             return;
@@ -1061,6 +1072,8 @@ impl Parser {
         }
         match self.peek().clone() {
             Tok::Raw(code) => {
+                let line = self.line();
+                self.reject_nested_raw(&code, line);
                 self.bump();
                 Some(Stmt::Raw { code, line })
             }
@@ -2027,6 +2040,7 @@ impl Parser {
         match self.peek().clone() {
             Tok::Raw(code) => {
                 let line = self.line();
+                self.reject_nested_raw(&code, line);
                 self.bump();
                 Expr::Raw { code, line }
             }
@@ -2162,6 +2176,72 @@ impl Parser {
             }
         }
     }
+}
+
+/// `raw` 块内容里是否又出现 `raw {`（JR-X3）。
+///
+/// 跳过字符串字面量与 `//` / `/* */` 注释；`raw` 作为标识符（如 `fn raw() {`）不算嵌套，
+/// 只有紧跟 `{` 的独立 `raw` 单词才算。
+fn contains_nested_raw(code: &str) -> bool {
+    let cs: Vec<char> = code.chars().collect();
+    let n = cs.len();
+    let mut i = 0;
+    while i < n {
+        let c = cs[i];
+        // 字符串字面量
+        if c == '"' {
+            i += 1;
+            while i < n {
+                if cs[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if cs[i] == '"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // 行注释
+        if c == '/' && i + 1 < n && cs[i + 1] == '/' {
+            i += 2;
+            while i < n && cs[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // 块注释（不处理嵌套注释，Rust 里极少）
+        if c == '/' && i + 1 < n && cs[i + 1] == '*' {
+            i += 2;
+            while i + 1 < n && !(cs[i] == '*' && cs[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+            continue;
+        }
+        // 标识符
+        if c.is_alphabetic() || c == '_' {
+            let start = i;
+            while i < n && (cs[i].is_alphanumeric() || cs[i] == '_') {
+                i += 1;
+            }
+            let word: String = cs[start..i].iter().collect();
+            if word == "raw" {
+                let mut j = i;
+                while j < n && cs[j].is_whitespace() {
+                    j += 1;
+                }
+                if cs.get(j) == Some(&'{') {
+                    return true;
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    false
 }
 
 fn tok_text(t: &Tok) -> String {
