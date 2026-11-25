@@ -1250,7 +1250,17 @@ impl Parser {
             }
             Tok::Ident(n) => {
                 self.bump();
-                Expr::Ident(n)
+                // 裸 `print` / `println` 视作 System.out 的简写；其它裸调用仍不解析。
+                if (n == "print" || n == "println") && self.check_punct("(") {
+                    let args = self.parse_args();
+                    Expr::Call {
+                        recv: None,
+                        name: n,
+                        args,
+                    }
+                } else {
+                    Expr::Ident(n)
+                }
             }
             Tok::Punct("(") => {
                 self.bump();

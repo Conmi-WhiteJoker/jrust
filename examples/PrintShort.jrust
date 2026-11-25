@@ -1,0 +1,12 @@
+public class PrintShort {
+    public static void main(String[] args) {
+        print("a");
+        print("b");
+        println();
+        println("Hello, jrust!");
+        println(1 + 2);
+        int n = 7;
+        println("n = " + n);
+        System.out.println("System.out 的老写法仍可用");
+    }
+}

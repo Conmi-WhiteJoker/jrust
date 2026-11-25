@@ -960,21 +960,20 @@ impl<'a> Interp<'a> {
         args: &[Expr],
     ) -> Result<Value, RuntimeError> {
         let line = self.cur_line;
-        if let Some(r) = recv {
-            if is_system_out(r) && (name == "println" || name == "print") {
-                let mut parts = Vec::new();
-                for a in args {
-                    parts.push(self.eval(a)?.display());
-                }
-                let text = parts.join(" ");
-                if name == "println" {
-                    self.emit(text);
-                } else {
-                    self.emit_no_newline(text);
-                }
-                return Ok(Value::Unit);
+        if (name == "println" || name == "print") && recv.map_or(true, is_system_out) {
+            let mut parts = Vec::new();
+            for a in args {
+                parts.push(self.eval(a)?.display());
             }
-
+            let text = parts.join(" ");
+            if name == "println" {
+                self.emit(text);
+            } else {
+                self.emit_no_newline(text);
+            }
+            return Ok(Value::Unit);
+        }
+        if let Some(r) = recv {
             let rv = self.eval(r)?;
             match &rv {
                 Value::List(rc) => match name {

@@ -637,11 +637,9 @@ impl<'a> Codegen<'a> {
         args: &[Expr],
         env: &mut Env,
     ) -> String {
-        if let Some(r) = recv {
-            if is_system_out(r) && (name == "println" || name == "print") {
-                let mac = if name == "println" { "println" } else { "print" };
-                return self.gen_print_macro(args, env, mac);
-            }
+        if (name == "println" || name == "print") && recv.as_ref().map_or(true, |r| is_system_out(r)) {
+            let mac = if name == "println" { "println" } else { "print" };
+            return self.gen_print_macro(args, env, mac);
         }
 
         let recv_ty = recv.as_ref().and_then(|r| self.infer_type(r, env));
@@ -691,6 +689,9 @@ impl<'a> Codegen<'a> {
     /// 把 `System.out.println(...)` 转成 `println!`。
     /// 参数是 `+` 串联的字符串时，自动展开成格式串：`"a" + x` → `"a{}"` + `x`。
     fn gen_print_macro(&mut self, args: &[Expr], env: &mut Env, mac: &str) -> String {
+        if args.is_empty() {
+            return format!("{}!()", mac);
+        }
         if args.len() != 1 {
             let parts: Vec<String> = args.iter().map(|a| self.gen_expr(a, env, None)).collect();
             self.err(
