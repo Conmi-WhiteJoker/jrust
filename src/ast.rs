@@ -67,10 +67,23 @@ pub struct TypeParam {
     pub bounds: Vec<Type>,
 }
 
+/// `@Xxx(args)` 注解（JR-D9）。
+///
+/// `@derive(A, B)` 合并进 `#[derive(...)]`；`@raw("…")` 把字符串内容原样输出；
+/// 其余按同名 Rust 属性透传（`@inline` → `#[inline]`）。
+#[derive(Debug, Clone)]
+pub struct Attr {
+    pub name: String,
+    /// 括号内实参的原始 token 文本拼接（无参时为 `None`）。
+    pub args: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Method {
     pub vis: Vis,
     pub is_static: bool,
+    /// 方法上的注解（→ `#[...]`）。
+    pub attrs: Vec<Attr>,
     /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub name: String,
@@ -85,6 +98,7 @@ pub struct Method {
 #[derive(Debug, Clone)]
 pub struct Constructor {
     pub vis: Vis,
+    pub attrs: Vec<Attr>,
     pub params: Vec<Param>,
     pub body: Vec<Stmt>,
     pub line: usize,
@@ -98,6 +112,7 @@ pub struct Field {
     pub is_final: bool,
     /// 仅 `static final` 字段有初始值（Java 静态常量必须带初值）。
     pub init: Option<Expr>,
+    pub attrs: Vec<Attr>,
     pub ty: Type,
     pub name: String,
     pub line: usize,
@@ -106,6 +121,7 @@ pub struct Field {
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
     pub name: String,
+    pub attrs: Vec<Attr>,
     /// 类级类型参数：`class Box<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     /// `implements A, B<Integer>`：`Named` 或 `Generic`。
@@ -118,6 +134,7 @@ pub struct ClassDecl {
 
 #[derive(Debug, Clone)]
 pub struct MethodSig {
+    pub attrs: Vec<Attr>,
     /// 方法级类型参数：`interface Mapper<T> { <U> U f(U x); }` 里的 `U`。
     pub type_params: Vec<TypeParam>,
     pub name: String,
@@ -129,6 +146,7 @@ pub struct MethodSig {
 #[derive(Debug, Clone)]
 pub struct InterfaceDecl {
     pub name: String,
+    pub attrs: Vec<Attr>,
     /// 接口级类型参数：`interface Mapper<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub methods: Vec<MethodSig>,
@@ -147,6 +165,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    pub attrs: Vec<Attr>,
     /// 枚举级类型参数：`enum Maybe<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariant>,

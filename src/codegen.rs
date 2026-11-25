@@ -529,6 +529,9 @@ impl<'a> Codegen<'a> {
 
     fn gen_trait(&mut self, iface: &InterfaceDecl) {
         self.marker(iface.line);
+        for l in self.attr_lines(&iface.attrs) {
+            self.emit(&l);
+        }
         self.emit(&format!(
             "pub trait {}{} {{",
             iface.name,
@@ -537,6 +540,9 @@ impl<'a> Codegen<'a> {
         self.indent += 1;
         for m in &iface.methods {
             self.marker(m.line);
+            for l in self.attr_lines(&m.attrs) {
+                self.emit(&l);
+            }
             let mut ps = vec!["&self".to_string()];
             for p in &m.params {
                 ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
@@ -561,10 +567,16 @@ impl<'a> Codegen<'a> {
 
     fn gen_enum(&mut self, e: &EnumDecl) {
         self.marker(e.line);
-        if self.cloneable.contains(&e.name) {
-            self.emit("#[derive(Debug, Clone)]");
+        for l in self.attr_lines(&e.attrs) {
+            self.emit(&l);
+        }
+        let extra: Vec<&str> = if self.cloneable.contains(&e.name) {
+            vec!["Debug", "Clone"]
         } else {
-            self.emit("#[derive(Debug)]");
+            vec!["Debug"]
+        };
+        if let Some(d) = self.derive_line(&e.attrs, &extra) {
+            self.emit(&d);
         }
         self.emit(&format!(
             "pub enum {}{} {{",
@@ -663,6 +675,53 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// 注解 → `#[...]` 行（JR-D9）。`derive` 单独合并，`raw` 原样输出。
+    fn attr_lines(&self, attrs: &[Attr]) -> Vec<String> {
+        let mut out = Vec::new();
+        for a in attrs {
+            match a.name.as_str() {
+                "derive" => {}
+                "raw" => {
+                    if let Some(s) = &a.args {
+                        if let Some(inner) = strip_str_literal(s) {
+                            out.extend(inner.lines().map(|l| l.trim().to_string()));
+                        }
+                    }
+                }
+                _ => match &a.args {
+                    Some(x) => out.push(format!("#[{}({})]", a.name, x)),
+                    None => out.push(format!("#[{}]", a.name)),
+                },
+            }
+        }
+        out
+    }
+
+    /// 合并 `@derive(...)` 与自动推导（Clone / Debug），输出单条 `#[derive(...)]`。
+    fn derive_line(&self, attrs: &[Attr], extra: &[&str]) -> Option<String> {
+        let mut names: Vec<String> = Vec::new();
+        for a in attrs.iter().filter(|a| a.name == "derive") {
+            if let Some(args) = &a.args {
+                for part in args.split(',') {
+                    let p = part.trim();
+                    if !p.is_empty() && !names.iter().any(|n| n == p) {
+                        names.push(p.to_string());
+                    }
+                }
+            }
+        }
+        for e in extra {
+            if !names.iter().any(|n| n == e) {
+                names.push((*e).to_string());
+            }
+        }
+        if names.is_empty() {
+            None
+        } else {
+            Some(format!("#[derive({})]", names.join(", ")))
+        }
+    }
+
     fn gen_class(&mut self, class: &ClassDecl) {
         let tparams = type_param_decl(&class.type_params);
         let phantom = phantom_params(class);
@@ -672,8 +731,16 @@ impl<'a> Codegen<'a> {
         );
         self.gen_consts(class);
         self.marker(class.line);
-        if self.cloneable.contains(&class.name) {
-            self.emit("#[derive(Clone)]");
+        for l in self.attr_lines(&class.attrs) {
+            self.emit(&l);
+        }
+        let extra: Vec<&str> = if self.cloneable.contains(&class.name) {
+            vec!["Clone"]
+        } else {
+            Vec::new()
+        };
+        if let Some(d) = self.derive_line(&class.attrs, &extra) {
+            self.emit(&d);
         }
         if instance_fields(class).next().is_none() && phantom.is_empty() {
             self.emit(&format!("pub struct {}{};", class.name, tparams));
@@ -682,6 +749,9 @@ impl<'a> Codegen<'a> {
             self.indent += 1;
             for f in instance_fields(class) {
                 self.marker(f.line);
+                for l in self.attr_lines(&f.attrs) {
+                    self.emit(&l);
+                }
                 let vis = if f.vis == Vis::Public { "pub " } else { "" };
                 self.emit(&format!("{}{}: {},", vis, f.name, self.rust_type(&f.ty)));
             }
@@ -808,6 +878,9 @@ impl<'a> Codegen<'a> {
         }
         let vis = if ctor.vis == Vis::Public { "pub " } else { "" };
         self.marker(ctor.line);
+        for l in self.attr_lines(&ctor.attrs) {
+            self.emit(&l);
+        }
         self.emit(&format!("{}fn new({}) -> Self {{", vis, ps.join(", ")));
         self.indent += 1;
         let mut env = Env::new(Type::Void);
@@ -900,6 +973,9 @@ impl<'a> Codegen<'a> {
             }
         };
         self.marker(m.line);
+        for l in self.attr_lines(&m.attrs) {
+            self.emit(&l);
+        }
         self.emit(&format!(
             "{}fn {}{}({}){} {{",
             vis,
@@ -2154,6 +2230,12 @@ fn bound_text(ty: &Type) -> String {
         Type::String => "String".to_string(),
         other => format!("{:?}", other),
     }
+}
+
+/// 把 `"..."` 形式的 token 文本还原成字符串内容（`@raw("…")` 用）。
+fn strip_str_literal(s: &str) -> Option<String> {
+    let inner = s.trim().strip_prefix('"')?.strip_suffix('"')?;
+    Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
 }
 
 /// `static final` 字段：产物是模块级 `const`，不属于结构体（JR-D8）。

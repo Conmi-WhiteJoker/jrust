@@ -74,7 +74,8 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 2. **产物必须可读**。每段代码前带 `// jrust:L<行号>` 源映射，方便左右对照。
 3. **不隐藏 Rust 的规则**。普通赋值按值复制（生成 `.clone()`，两个变量各自独立），
    想搬走所有权就显式写 `move`；不会静默地把两个变量绑到同一块可变数据上。
-4. **砍掉 Java 的包袱**。继承、`try/catch`、反射、注解一律不支持；`null` 只在
+4. **砍掉 Java 的包袱**。继承、`try/catch`、反射一律不支持；注解只保留 `@derive` / `@raw`
+   与同名 Rust 属性透传；`null` 只在
    可空类型 `T?`（→ `Option<T>`）里出现，裸 `null` 赋给非可空类型会报 `JR3005`。
    异常只保留 `throws` / `throw` 这条映射到 `Result` 的窄路，并在报错时解释 Rust 的替代方案。
 5. **零外部依赖**。`Cargo.toml` 无 `[dependencies]`，手写 lexer + 递归下降 parser，
@@ -127,6 +128,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
+| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` / `@shared` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -135,7 +137,6 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `extends` 类继承 | trait 组合 + 字段组合，组合优于继承 |
 | `try` / `catch` / `finally` | Rust 没有异常：可能失败的操作返回 `Result<T, E>`，用 `throws` + `?` 传播；清理交给 `Drop` |
 | `instanceof` | `enum` + `match`，或多态方法 |
-| 注解 `@Xxx` | derive 宏 / 显式代码 |
 | `synchronized` | `Mutex<T>` / `RwLock<T>` |
 | `protected` | 只有 `pub` / 私有 |
 | 反射、泛型擦除、raw type、内部类、装箱 | 没有对应物，直接不提供 |
@@ -145,7 +146,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 ## MVP 的边界
 
 - 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
-- 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法）。
+- 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
 - 不支持实例字段初始化（`static final` 常量除外）、接口 static 方法、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。

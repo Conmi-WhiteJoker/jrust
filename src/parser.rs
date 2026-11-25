@@ -225,14 +225,61 @@ impl Parser {
         }
     }
 
-    fn skip_annotation(&mut self) {
-        self.bump(); // @
-        while matches!(self.peek(), Tok::Ident(_)) || self.check_punct(".") {
-            self.bump();
+    /// 解析 `@Xxx(args)` 注解序列（JR-D9）。实参按 token 原文拼接，交给 codegen 输出属性。
+    fn parse_annotations(&mut self) -> Vec<Attr> {
+        let mut attrs = Vec::new();
+        while self.check_punct("@") {
+            let line = self.line();
+            self.bump(); // @
+            if !matches!(self.peek(), Tok::Ident(_)) {
+                let d = self.describe();
+                self.err(format!("`@` 后面期望注解名，实际是 {}", d));
+                break;
+            }
+            let mut name = self.expect_ident();
+            while self.eat_punct(".") {
+                let seg = self.expect_ident();
+                name.push('.');
+                name.push_str(&seg);
+            }
+            let mut args = None;
+            if self.eat_punct("(") {
+                let mut depth = 1usize;
+                let mut buf = String::new();
+                while !self.at_eof() {
+                    if self.check_punct("(") {
+                        depth += 1;
+                    } else if self.check_punct(")") {
+                        depth -= 1;
+                        if depth == 0 {
+                            self.bump();
+                            break;
+                        }
+                    }
+                    buf.push_str(&tok_text(self.peek()));
+                    self.bump();
+                }
+                if depth != 0 {
+                    self.err("注解的括号没有闭合");
+                }
+                args = Some(buf);
+            }
+            let reserved = matches!(name.as_str(), "ref" | "mut" | "shared");
+            if reserved {
+                let msg = if name == "shared" {
+                    "`@shared` 尚未实现（SPEC JR-C13）".to_string()
+                } else {
+                    format!("`@{}` 是参数借用注解，尚未实现（SPEC §9.2）", name)
+                };
+                self.err_hint(
+                    msg,
+                    "当前只支持 `@derive(...)`、`@raw(\"…\")` 与按同名透传的 Rust 属性。",
+                );
+            } else {
+                attrs.push(Attr { name, args });
+            }
         }
-        if self.check_punct("(") {
-            self.skip_parens();
-        }
+        attrs
     }
 
     // ---------- 顶层 ----------
@@ -277,7 +324,11 @@ impl Parser {
                         prog.imports.push(path);
                     }
                 }
-                Tok::Kw(Kw::Public) | Tok::Kw(Kw::Class) | Tok::Kw(Kw::Interface) | Tok::Kw(Kw::Enum) => {
+                Tok::Kw(Kw::Public)
+                | Tok::Kw(Kw::Class)
+                | Tok::Kw(Kw::Interface)
+                | Tok::Kw(Kw::Enum)
+                | Tok::Punct("@") => {
                     if let Some(item) = self.parse_type_decl() {
                         match item {
                             TopItem::Class(c) => prog.classes.push(c),
@@ -299,15 +350,16 @@ impl Parser {
     }
 
     fn parse_type_decl(&mut self) -> Option<TopItem> {
+        let attrs = self.parse_annotations();
         self.eat_kw(Kw::Public);
         if self.check_kw(Kw::Class) {
-            return Some(TopItem::Class(self.parse_class()));
+            return Some(TopItem::Class(self.parse_class(attrs)));
         }
         if self.check_kw(Kw::Interface) {
-            return Some(TopItem::Interface(self.parse_interface()));
+            return Some(TopItem::Interface(self.parse_interface(attrs)));
         }
         if self.check_kw(Kw::Enum) {
-            return Some(TopItem::Enum(self.parse_enum()));
+            return Some(TopItem::Enum(self.parse_enum(attrs)));
         }
         self.err("这里期望 `class`、`interface` 或 `enum`");
         self.bump();
@@ -318,7 +370,7 @@ impl Parser {
     /// ```
     /// enum Shape { Circle(double r), Rect(double w, double h), Empty }
     /// ```
-    fn parse_enum(&mut self) -> EnumDecl {
+    fn parse_enum(&mut self, attrs: Vec<Attr>) -> EnumDecl {
         let line = self.line();
         self.bump(); // enum
         let name = self.expect_ident();
@@ -354,13 +406,14 @@ impl Parser {
         }
         EnumDecl {
             name,
+            attrs,
             type_params,
             variants,
             line,
         }
     }
 
-    fn parse_class(&mut self) -> ClassDecl {
+    fn parse_class(&mut self, attrs: Vec<Attr>) -> ClassDecl {
         let line = self.line();
         self.bump(); // class
         let name = self.expect_ident();
@@ -409,6 +462,7 @@ impl Parser {
 
         let mut class = ClassDecl {
             name: name.clone(),
+            attrs,
             type_params,
             implements,
             fields: Vec::new(),
@@ -433,14 +487,7 @@ impl Parser {
     }
 
     fn parse_member(&mut self, class: &mut ClassDecl) {
-        // 注解：报告后跳过注解本身，方法体仍可继续转译
-        while self.check_punct("@") {
-            self.err_hint(
-                "jrust 不支持注解（@Xxx）",
-                "Rust 没有注解：需要的能力（序列化、测试等）用 derive 宏或显式代码表达。",
-            );
-            self.skip_annotation();
-        }
+        let attrs = self.parse_annotations();
         if self.at_eof() || self.check_punct("}") {
             return;
         }
@@ -497,6 +544,7 @@ impl Parser {
                 }
                 class.ctor = Some(Constructor {
                     vis,
+                    attrs,
                     params,
                     body,
                     line: ctor_line,
@@ -537,6 +585,7 @@ impl Parser {
             class.methods.push(Method {
                 vis,
                 is_static,
+                attrs,
                 type_params,
                 name,
                 ret: ty,
@@ -576,6 +625,7 @@ impl Parser {
                         is_static: true,
                         is_final: true,
                         init: Some(init),
+                        attrs,
                         ty,
                         name,
                         line: member_line,
@@ -602,6 +652,7 @@ impl Parser {
                     is_static: false,
                     is_final,
                     init: None,
+                    attrs,
                     ty,
                     name,
                     line: member_line,
@@ -610,7 +661,7 @@ impl Parser {
         }
     }
 
-    fn parse_interface(&mut self) -> InterfaceDecl {
+    fn parse_interface(&mut self, attrs: Vec<Attr>) -> InterfaceDecl {
         let line = self.line();
         self.bump(); // interface
         let name = self.expect_ident();
@@ -652,6 +703,7 @@ impl Parser {
                         ),
                     );
                 }
+                let mattrs = self.parse_annotations();
                 let mtype_params = if self.check_punct("<") {
                     self.parse_type_params()
                 } else {
@@ -663,6 +715,7 @@ impl Parser {
                         let params = self.parse_params();
                         self.expect_punct(";");
                         methods.push(MethodSig {
+                            attrs: mattrs,
                             type_params: mtype_params,
                             name: mname,
                             ret,
@@ -680,6 +733,7 @@ impl Parser {
         }
         InterfaceDecl {
             name,
+            attrs,
             type_params,
             methods,
             line,
@@ -1997,7 +2051,7 @@ impl Parser {
                     "jrust 不支持注解",
                     "Rust 用 derive 宏或显式代码代替注解。",
                 );
-                self.skip_annotation();
+                self.parse_annotations();
                 Expr::Ident("<注解>".to_string())
             }
             _ => {
@@ -2007,6 +2061,19 @@ impl Parser {
                 Expr::Ident("<错误>".to_string())
             }
         }
+    }
+}
+
+fn tok_text(t: &Tok) -> String {
+    match t {
+        Tok::Ident(s) => s.clone(),
+        Tok::Int(n) => n.to_string(),
+        Tok::Float(f) => format!("{:?}", f),
+        Tok::Str(s) => format!("{:?}", s),
+        Tok::CharLit(c) => format!("{:?}", c),
+        Tok::Kw(k) => kw_text(*k).to_string(),
+        Tok::Punct(p) => p.to_string(),
+        Tok::Eof => String::new(),
     }
 }
 

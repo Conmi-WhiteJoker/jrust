@@ -1,0 +1,22 @@
+// 注解：`@derive(...)` 合并进 derive，其余按同名 Rust 属性透传，`@raw("…")` 原样输出（JR-D9）。
+@raw("#[allow(dead_code)]")
+@derive(Debug)
+public class Point {
+    private int x;
+
+    public Point(int x) {
+        this.x = x;
+    }
+
+    @inline
+    public int get() {
+        return this.x;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Point p = new Point(7);
+        println(p.get());
+    }
+}
