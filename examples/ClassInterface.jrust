@@ -1,4 +1,7 @@
-// 示例 2：类与接口（interface → trait，构造器 → new）
+// 示例 2：类与接口（interface → trait，构造器 → new，多态集合）
+import java.util.List;
+import java.util.ArrayList;
+
 public interface Shape {
     double area();
     String name();
@@ -20,11 +23,43 @@ public class Circle implements Shape {
     }
 }
 
+public class Rectangle implements Shape {
+    private double w;
+    private double h;
+
+    public Rectangle(double w, double h) {
+        this.w = w;
+        this.h = h;
+    }
+
+    public double area() {
+        return this.w * this.h;
+    }
+
+    public String name() {
+        return "Rectangle";
+    }
+}
+
 public class Main {
     public static void main(String[] args) {
         Shape s = new Circle(2.0);
-        // 格式串写法（推荐）：{} 按顺序填入后面的参数，输出与下面注释里的写法一致
+        // 格式串写法：{} 按顺序填入后面的参数
         println("{} area={}", s.name(), s.area());
-        // 老写法：println(s.name() + " area=" + s.area());
+        // 老写法等价：println(s.name() + " area=" + s.area());
+
+        // List<Shape> → Vec<Box<dyn Shape>>，多态集合里元素自动装箱
+        List<Shape> shapes = new ArrayList<>();
+        shapes.add(new Circle(1.0));
+        shapes.add(new Rectangle(3.0, 4.0));
+
+        double total = 0.0;
+        for (Shape sh : shapes) {
+            // print 不换行，println 换行；两者都支持格式串
+            print(sh.name());
+            println(" area={}", sh.area());
+            total = total + sh.area();
+        }
+        println("total={}", total);
     }
 }

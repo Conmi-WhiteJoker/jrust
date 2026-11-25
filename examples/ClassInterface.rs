@@ -2,45 +2,92 @@
 // 每段代码前的 `// jrust:L<行号>` 指向 .jrust 源码行。
 #![allow(dead_code, unused_variables, unused_mut)]
 
-// jrust:L2
+// jrust:L5
 pub trait Shape {
-    // jrust:L3
+    // jrust:L6
     fn area(&self) -> f64;
-    // jrust:L4
+    // jrust:L7
     fn name(&self) -> String;
 }
 
-// jrust:L7
+// jrust:L10
 pub struct Circle {
-    // jrust:L8
+    // jrust:L11
     radius: f64,
 }
 
 impl Shape for Circle {
-    // jrust:L14
+    // jrust:L17
     fn area(&self) -> f64 {
-        // jrust:L15
+        // jrust:L18
         return 3.14159 * self.radius * self.radius;
     }
-    // jrust:L18
+    // jrust:L21
     fn name(&self) -> String {
-        // jrust:L19
+        // jrust:L22
         return "Circle".to_string();
     }
 }
 
 impl Circle {
-    // jrust:L10
+    // jrust:L13
     pub fn new(radius: f64) -> Self {
         Self { radius }
     }
 }
 
-// jrust:L24
-fn main() {
-    // jrust:L25
-    let s: Box<dyn Shape> = Box::new(Circle::new(2.0));
+// jrust:L26
+pub struct Rectangle {
     // jrust:L27
+    w: f64,
+    // jrust:L28
+    h: f64,
+}
+
+impl Shape for Rectangle {
+    // jrust:L35
+    fn area(&self) -> f64 {
+        // jrust:L36
+        return self.w * self.h;
+    }
+    // jrust:L39
+    fn name(&self) -> String {
+        // jrust:L40
+        return "Rectangle".to_string();
+    }
+}
+
+impl Rectangle {
+    // jrust:L30
+    pub fn new(w: f64, h: f64) -> Self {
+        Self { w, h }
+    }
+}
+
+// jrust:L45
+fn main() {
+    // jrust:L46
+    let s: Box<dyn Shape> = Box::new(Circle::new(2.0));
+    // jrust:L48
     println!("{} area={}", s.name(), s.area());
+    // jrust:L52
+    let mut shapes: Vec<Box<dyn Shape>> = Vec::new();
+    // jrust:L53
+    shapes.push(Box::new(Circle::new(1.0)));
+    // jrust:L54
+    shapes.push(Box::new(Rectangle::new(3.0, 4.0)));
+    // jrust:L56
+    let mut total: f64 = 0.0;
+    // jrust:L57
+    for sh in &shapes {
+        // jrust:L59
+        print!("{}", sh.name());
+        // jrust:L60
+        println!(" area={}", sh.area());
+        // jrust:L61
+        total = total + sh.area();
+    }
+    // jrust:L63
+    println!("total={}", total);
 }
 
