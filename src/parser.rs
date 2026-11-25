@@ -495,6 +495,7 @@ impl Parser {
         let mut vis = Vis::Package;
         let mut is_static = false;
         let mut is_final = false;
+        let mut is_async = false;
         loop {
             if self.eat_kw(Kw::Public) {
                 vis = Vis::Public;
@@ -508,6 +509,8 @@ impl Parser {
                 self.bump();
             } else if self.eat_kw(Kw::Static) {
                 is_static = true;
+            } else if self.eat_kw(Kw::Async) {
+                is_async = true;
             } else if self.eat_kw(Kw::Final) {
                 // final 对字段是「不可变」（static final → const），对方法是「不可覆写」
                 is_final = true;
@@ -586,6 +589,7 @@ impl Parser {
                 vis,
                 is_static,
                 attrs,
+                is_async,
                 type_params,
                 name,
                 ret: ty,
@@ -1815,6 +1819,11 @@ impl Parser {
                 expr: Box::new(e),
             };
         }
+        if self.check_kw(Kw::Await) {
+            self.bump();
+            let e = self.parse_unary();
+            return Expr::Await(Box::new(e));
+        }
         self.parse_postfix()
     }
 
@@ -2121,5 +2130,7 @@ fn kw_text(k: Kw) -> &'static str {
         Kw::Switch => "switch",
         Kw::Case => "case",
         Kw::Default => "default",
+        Kw::Async => "async",
+        Kw::Await => "await",
     }
 }

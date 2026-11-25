@@ -82,6 +82,8 @@ pub struct Attr {
 pub struct Method {
     pub vis: Vis,
     pub is_static: bool,
+    /// `async` 修饰符：`pub async fn`（JR-C9）。
+    pub is_async: bool,
     /// 方法上的注解（→ `#[...]`）。
     pub attrs: Vec<Attr>,
     /// 方法级类型参数：`public <T> T id(T x)` 里的 `T`。
@@ -353,6 +355,8 @@ pub enum Expr {
         params: Vec<ClosureParam>,
         body: Box<Expr>,
     },
+    /// `await expr` → `expr.await`（JR-C10）；只能在 `async` 方法里出现。
+    Await(Box<Expr>),
     /// `f()?`：错误传播，只能出现在声明了 `throws` 的函数里。
     Try(Box<Expr>),
 }

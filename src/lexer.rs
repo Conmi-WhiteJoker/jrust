@@ -63,6 +63,9 @@ pub enum Kw {
     Switch,
     Case,
     Default,
+    /// 异步（JR-C9 / JR-C10）
+    Async,
+    Await,
 }
 
 pub fn keyword(s: &str) -> Option<Kw> {
@@ -109,6 +112,8 @@ pub fn keyword(s: &str) -> Option<Kw> {
         "switch" => Kw::Switch,
         "case" => Kw::Case,
         "default" => Kw::Default,
+        "async" => Kw::Async,
+        "await" => Kw::Await,
         _ => return None,
     })
 }

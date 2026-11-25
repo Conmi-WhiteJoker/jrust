@@ -60,6 +60,8 @@ struct Codegen<'a> {
     cloneable: HashSet<String>,
     /// 当前正在生成的方法 / 类所处的类型参数（`T` 等），视为可 Clone。
     generic_params: HashSet<String>,
+    /// 当前方法是否 `async`：`await` 只在其中合法（JR-C10 → JR3022）。
+    in_async: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -137,6 +139,7 @@ impl<'a> Codegen<'a> {
             in_method: false,
             cloneable,
             generic_params: HashSet::new(),
+            in_async: false,
         }
     }
 
@@ -977,8 +980,9 @@ impl<'a> Codegen<'a> {
             self.emit(&l);
         }
         self.emit(&format!(
-            "{}fn {}{}({}){} {{",
+            "{}{}fn {}{}({}){} {{",
             vis,
+            if m.is_async { "async " } else { "" },
             m.name,
             impl_param_decl(&m.type_params),
             ps.join(", "),
@@ -995,8 +999,11 @@ impl<'a> Codegen<'a> {
         env.in_throws = throws;
         env.self_class = Some(class_name.to_string());
         let prev = self.in_method;
+        let prev_async = self.in_async;
         self.in_method = !m.is_static;
+        self.in_async = m.is_async;
         self.gen_stmts(&m.body, &mut env);
+        self.in_async = prev_async;
         self.in_method = prev;
         self.generic_params = prev_generic;
         if throws && m.ret == Type::Void {
@@ -1574,6 +1581,17 @@ impl<'a> Codegen<'a> {
                 }
                 let b = self.gen_expr(body, env, None);
                 format!("|{}| {}", ps.join(", "), b)
+            }
+            Expr::Await(inner) => {
+                if !self.in_async {
+                    self.err_code(
+                        "JR3022",
+                        "`await` 只能出现在 async 方法里",
+                        "给当前方法加 `async` 修饰符，或去掉 `await`（同步调用会直接返回结果）。",
+                    );
+                }
+                let x = self.gen_expr(inner, env, None);
+                format!("{}.await", x)
             }
             Expr::Try(inner) => {
                 if !env.in_throws {
@@ -2193,7 +2211,9 @@ impl<'a> Codegen<'a> {
                 }
                 None
             }
-            Expr::Paren(inner) | Expr::Try(inner) => self.infer_type(inner, env),
+            Expr::Paren(inner) | Expr::Try(inner) | Expr::Await(inner) => {
+                self.infer_type(inner, env)
+            }
             Expr::Unary {
                 op: UnOp::Move,
                 expr,

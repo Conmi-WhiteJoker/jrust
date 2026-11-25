@@ -96,6 +96,7 @@ run_ok ok_generic_bounds
 run_ok ok_const
 run_ok ok_attrs
 run_ok ok_assert
+run_ok ok_async
 run_closure
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
@@ -111,6 +112,7 @@ run_neg neg_cfor_dir JR2003 "方向不一致"
 run_neg neg_newarray_type JR3014 "只支持标量 / String"
 run_neg neg_wildcard JR3010 "trait object"
 run_neg neg_mutable_static JR3013 "可变全局"
+run_neg neg_await_sync JR3022 "async"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

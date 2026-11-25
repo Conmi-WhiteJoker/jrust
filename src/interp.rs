@@ -941,6 +941,8 @@ impl<'a> Interp<'a> {
                     "闭包目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
                 ))
             }
+            // 解释器同步执行：`await e` 就是 `e`（JR-C10）。
+            Expr::Await(inner) => self.eval(inner),
             Expr::Try(_) => {
                 let line = self.cur_line;
                 Err(RuntimeError::new(line, "解释器暂不支持 `?` 传播").with_hint(

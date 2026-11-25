@@ -1,0 +1,16 @@
+// await 出现在非 async 方法里应报 JR3022。
+public class Bad {
+    public int f() {
+        return await this.g() + 1;
+    }
+
+    public int g() {
+        return 1;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println("ok");
+    }
+}

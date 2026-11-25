@@ -1,0 +1,16 @@
+// async 方法 + await 表达式（JR-C9 / JR-C10）。
+public class Worker {
+    public async int one() {
+        return 1;
+    }
+
+    public async int two() {
+        return await this.one() + 1;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println("ok");
+    }
+}
