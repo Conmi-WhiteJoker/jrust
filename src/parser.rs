@@ -963,6 +963,21 @@ impl Parser {
                             Type::Map(Box::new(Type::String), Box::new(Type::String))
                         }
                     }
+                    "Set" | "HashSet" => {
+                        if self.eat_punct("<") {
+                            let inner = self.parse_type().unwrap_or(Type::String);
+                            self.expect_punct(">");
+                            Type::Set(Box::new(inner))
+                        } else {
+                            self.diags.push(
+                                Diag::error(line, "jrust 不支持 raw type（不带类型参数的 Set）")
+                                    .with_hint(
+                                        "写成 `Set<Integer>`；Rust 的 HashSet<T> 必须写明元素类型，没有泛型擦除。",
+                                    ),
+                            );
+                            Type::Set(Box::new(Type::String))
+                        }
+                    }
                     _ => Type::Named(name),
                 }
             }

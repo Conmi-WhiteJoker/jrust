@@ -108,6 +108,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo.jrust) |
 | `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 | [MapDemo](examples/MapDemo.jrust) |
 | `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic | [Nullable](examples/Nullable.jrust) |
+| `Set<T>` / `HashSet<T>` | `HashSet<T>` | `new HashSet<>()` → `HashSet::new()`；`add`→`insert`、`size`→`len`、`isEmpty`→`is_empty`；`contains` / `remove` 自动取引用（`String` 元素走 `.as_str()`） | [L1 用例](tests/conformance/L1/ok_set.jrust) |
 | `T? x` | `Option<T>` | `T? x = null;` → `None`；`T? x = v;` → `Some(v)`；`x == null` / `x != null` → `is_none()` / `is_some()`；对 `T?` 直接调用 `T` 的方法报 `JR3006` | [Nullable](examples/Nullable.jrust) |
 | `T v = x;`（`x` 是 `T?`） | `let v: T = x.clone().unwrap();` | 显式解包：`None` 会 panic（等价于 Java 的 NPE）；先用 `if (x != null)` 判空 | [Nullable](examples/Nullable.jrust) |
 | `class Box<T> { T value; ... }` | `pub struct Box<T>` + `impl<T: Clone> Box<T>` | 字段未使用的类型参数补 `PhantomData` 占位（`class Tag<T> {}`） | [Generics](examples/Generics.jrust) |

@@ -18,6 +18,8 @@ pub enum Type {
     List(Box<Type>),
     /// `Map<K, V>` / `HashMap<K, V>` → `HashMap<K, V>`
     Map(Box<Type>, Box<Type>),
+    /// `Set<T>` / `HashSet<T>` → `HashSet<T>`
+    Set(Box<Type>),
     Array(Box<Type>),
     /// 用户自定义类型（class 或 interface 的名字）
     Named(String),

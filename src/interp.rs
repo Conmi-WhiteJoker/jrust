@@ -227,6 +227,7 @@ fn type_str(t: &Type) -> String {
         Type::RustPrim(name) => name.clone(),
         Type::List(inner) => format!("List<{}>", type_str(inner)),
         Type::Map(k, v) => format!("Map<{}, {}>", type_str(k), type_str(v)),
+        Type::Set(inner) => format!("Set<{}>", type_str(inner)),
         Type::Array(inner) => format!("{}[]", type_str(inner)),
         Type::Named(name) => name.clone(),
         Type::Generic(name, args) => {
@@ -249,6 +250,8 @@ fn default_value(t: &Type) -> Value {
         Type::String => Value::Str(String::new()),
         Type::List(_) | Type::Array(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
         Type::Map(_, _) => Value::Map(Rc::new(RefCell::new(HashMap::new()))),
+        // 解释器暂不支持 Set 的方法语义，兜底为空列表以保持可运行（仅占位）。
+        Type::Set(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
         Type::Named(_) | Type::Generic(_, _) | Type::Void => Value::Unit,
         Type::Nullable(_) => Value::Option(None),
     }

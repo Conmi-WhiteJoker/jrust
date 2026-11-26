@@ -3,6 +3,7 @@
 #![allow(dead_code, unused_variables, unused_mut, unused_imports)]
 use std::vec::Vec;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 // jrust:L8
 fn main() {

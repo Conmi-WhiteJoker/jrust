@@ -534,6 +534,7 @@ impl<'a> Codegen<'a> {
                 self.rust_type(k),
                 self.rust_type(v)
             ),
+            Type::Set(inner) => format!("HashSet<{}>", self.rust_type(inner)),
             Type::Array(inner) => format!("Vec<{}>", self.rust_type(inner)),
             Type::Named(n) => {
                 if self.ifaces.contains(n) {
@@ -573,9 +574,12 @@ impl<'a> Codegen<'a> {
             }
             self.emit(&format!("use {};", imp.replace('.', "::")));
         }
-        // Map 统一映射到 std::collections::HashMap；未用到时由 allow(unused_imports) 兜住。
+        // Map / Set 统一映射到 std；未用到时由 allow(unused_imports) 兜住。
         if !seen.contains("std.collections.HashMap") {
             self.emit("use std::collections::HashMap;");
+        }
+        if !seen.contains("std.collections.HashSet") {
+            self.emit("use std::collections::HashSet;");
         }
         self.blank();
 
@@ -2023,6 +2027,15 @@ impl<'a> Codegen<'a> {
         env: &mut Env,
         expect: Option<&Type>,
     ) -> String {
+        if matches!(class, "HashSet") {
+            if !args.is_empty() {
+                self.err(
+                    "jrust MVP 只支持无参的 new HashSet<>()",
+                    "Rust 用 `HashSet::new()` 再逐个 `insert`。",
+                );
+            }
+            return "HashSet::new()".to_string();
+        }
         if matches!(class, "ArrayList" | "LinkedList" | "Vector") {
             if !args.is_empty() {
                 self.err(
@@ -2316,6 +2329,45 @@ impl<'a> Codegen<'a> {
                 ),
             );
         }
+        if let Some(Type::Set(elem_ty)) = &recv_ty {
+            let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
+            match name {
+                "size" => return format!("{}.len()", r),
+                "isEmpty" => return format!("{}.is_empty()", r),
+                "add" => {
+                    if args.len() != 1 {
+                        self.err("add 需要一个元素", "例如 `s.add(1)`；Rust 对应 `insert`。");
+                    }
+                    let v = args
+                        .first()
+                        .map(|a| self.gen_arg(a, elem_ty, env))
+                        .unwrap_or_default();
+                    return format!("{}.insert({})", r, v);
+                }
+                // contains / remove 用引用查表：String 元素走 `as_str()`，其余加 `&`。
+                "contains" => {
+                    if args.len() != 1 {
+                        self.err("contains 需要一个元素", "例如 `s.contains(1)`。");
+                    }
+                    let v = self.gen_map_key(args.first(), elem_ty, env);
+                    return format!("{}.contains({})", r, v);
+                }
+                "remove" => {
+                    if args.len() != 1 {
+                        self.err("remove 需要一个元素", "例如 `s.remove(1)`。");
+                    }
+                    let v = self.gen_map_key(args.first(), elem_ty, env);
+                    return format!("{}.remove({})", r, v);
+                }
+                other => {
+                    self.err(
+                        format!("Set 没有方法 `{}`", other),
+                        "MVP 支持 add / contains / remove / size / isEmpty。",
+                    );
+                    return format!("{}.{}()", r, other);
+                }
+            }
+        }
         if let Some(Type::Map(k_ty, v_ty)) = &recv_ty {
             let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
             match name {
@@ -2371,8 +2423,7 @@ impl<'a> Codegen<'a> {
             }
         }
         // `T[]`（`new T[n]`）与 `List<T>` 在产物里都是 `Vec`，方法映射共享。
-        let is_list = matches!(recv_ty, Some(Type::List(_)) | Some(Type::Array(_)));
-        let elem_is_trait = match &recv_ty {
+        let is_list = matches!(recv_ty, Some(Type::List(_)) | Some(Type::Array(_)));        let elem_is_trait = match &recv_ty {
             Some(Type::List(inner) | Type::Array(inner)) => match &**inner {
                 Type::Named(n) | Type::Generic(n, _) => self.ifaces.contains(n),
                 _ => false,
@@ -2714,6 +2765,7 @@ fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
             Box::new(subst_type(k, map)),
             Box::new(subst_type(v, map)),
         ),
+        Type::Set(inner) => Type::Set(Box::new(subst_type(inner, map))),
         Type::Array(inner) => Type::Array(Box::new(subst_type(inner, map))),
         Type::Nullable(inner) => Type::Nullable(Box::new(subst_type(inner, map))),
         other => other.clone(),
@@ -2803,7 +2855,7 @@ fn collect_type_params(ty: &Type, out: &mut HashSet<String>) {
                 collect_type_params(a, out);
             }
         }
-        Type::List(inner) | Type::Array(inner) | Type::Nullable(inner) => {
+        Type::List(inner) | Type::Array(inner) | Type::Set(inner) | Type::Nullable(inner) => {
             collect_type_params(inner, out)
         }
         Type::Map(k, v) => {
@@ -2821,7 +2873,9 @@ fn type_cloneable(ty: &Type, named: &HashSet<String>, params: &HashSet<String>) 
         t if t.is_copy_scalar() => true,
         Type::Void => true,
         Type::String => true,
-        Type::List(inner) | Type::Array(inner) => type_cloneable(inner, named, params),
+        Type::List(inner) | Type::Array(inner) | Type::Set(inner) => {
+            type_cloneable(inner, named, params)
+        }
         Type::Map(k, v) => type_cloneable(k, named, params) && type_cloneable(v, named, params),
         Type::Named(n) => named.contains(n) || params.contains(n),
         Type::Generic(n, args) => {

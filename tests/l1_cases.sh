@@ -122,6 +122,7 @@ run_ok ok_iter_chain
 run_ok ok_shared
 run_ok ok_sync
 run_ok ok_docs
+run_ok ok_set
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'

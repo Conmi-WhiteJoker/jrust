@@ -2,6 +2,7 @@
 // 每段代码前的 `// jrust:L<行号>` 指向 .jrust 源码行。
 #![allow(dead_code, unused_variables, unused_mut, unused_imports)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 // jrust:L2
 fn main() {
