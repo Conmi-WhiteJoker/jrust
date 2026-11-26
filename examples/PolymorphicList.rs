@@ -50,4 +50,3 @@ fn main() {
         println!("{}", a.speak());
     }
 }
-

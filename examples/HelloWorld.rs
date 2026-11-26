@@ -11,4 +11,3 @@ fn main() {
     // jrust:L6
     println!("Hello, jrust!");
 }
-

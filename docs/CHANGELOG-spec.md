@@ -140,3 +140,18 @@
   6. 闭包按引用捕获 `this` 字段与局部变量，外层仍可用——`ok_closure_capture`（rustc 编译运行）。
 - 工具：`run_neg_plain` 的第 3 参数改为可选（部分解析错误没有「提示:」行）。
 - 验证：L1 114 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.16 — 2026-11-26
+
+- **L2 里程碑落地（SPEC §15）**：多文件工程 + 一个外部 crate（`serde_json`），验收标准「`cargo build` 通过且行为与手写版本一致」首次**可执行**。
+  - 新增 `tests/l2/` 夹具：`src/**/*.jrust`（`package app` + crate 根）+ `ref/reference.rs` 手写等价实现，同一 `Cargo.toml` 下两个 bin（`generated` / `reference`），stdout 逐字节对拍。
+  - `tests/l1_cases.sh` 新增 `run_l2`（转译 → 产物形态三条断言 → `cargo build` → 与 `expected.txt` 对拍 → 与手写实现对拍）与 `run_l2_missing_dep`（删掉 `serde_json` 依赖后必须报 `JR5001`）。
+- **新增 `jrust verify <目录>`**（JR-G5 扩展）：单文件模式用 `--crate-type lib --emit=metadata` 就够，多文件工程不行 —— `mod` 树要求文件按真实路径排布、外部 crate 要求依赖可解析。做法是把 `plan_tree` 的产物写进临时目录、抄一份最近的 `Cargo.toml`（去掉 `[[bin]]`/`[lib]` 等 target 段）再用 `cargo build` 编整 crate，报错按产物文本映射回 `.jrust` 行。
+- **重构**：`build_tree` 拆成 `plan_tree`（解析 + 全局分析 + 生成，不落盘，返回 `TreePlan`）与 `build_tree`（只负责写盘），供 `verify_tree` 复用。
+- **raw 产物的两处 JR-G9 违规修复**（此前 13 个示例全部过不了 `rustfmt --check`）：
+  - 产物尾部多余空行（`}\n\n`）→ `into_result` 统一削成单个 `\n`；
+  - 表达式位置 `({ /* jrust:L */ x })` → `(/* jrust:L */x)`：前者的括号内是块表达式，rustfmt 必定拆成多行。
+  - 顺带：单行 `raw` 语句补当前缩进（多行 raw 仍逐字保留，避免改动多行字符串内容）。
+- **已知残留**：`examples/` 里仍有 4 个产物过不了 `rustfmt --check`（`Generics` / `MapDemo` / `SharedState` / `VecImport`），原因是单行超 100 列需拆行、`use` 顺序需重排 —— 属于「生成器不做行长优化」的既有缺口，未在本轮处理。
+- **L2 的边界**（写进 SPEC §15）：外部 crate 的**函数签名** jrust 无法得知（没有源码可分析），因此实际调用走 `raw` 原样内联；jrust 负责工程结构（`package`→`mod`、`import`→`use`、`Cargo.toml` 依赖校验）与本地类之间的借用推断。
+- 验证：L1 **116 通过 0 失败**（新增 2 条），`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过；`jrust verify tests/l2/src` 通过。

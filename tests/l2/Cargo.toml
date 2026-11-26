@@ -1,0 +1,17 @@
+[package]
+name = "l2"
+version = "0.1.0"
+edition = "2021"
+
+# 两个 bin 指向同一份输入的两条路径：`generated` 是 jrust 产物，`reference` 是手写 Rust。
+# 验收标准（SPEC §15 L2）：`cargo build` 通过，且两者行为一致。
+[[bin]]
+name = "generated"
+path = "src/main.rs"
+
+[[bin]]
+name = "reference"
+path = "ref/reference.rs"
+
+[dependencies]
+serde_json = "1"

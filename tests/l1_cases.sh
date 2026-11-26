@@ -452,6 +452,85 @@ run_spawn_capture() {
     fi
 }
 
+# L2（SPEC §15）：多文件工程 + 一个外部 crate（serde_json）。
+# 验收标准是「`cargo build` 通过且行为与手写版本一致」，所以这里走 cargo 真实编译，
+# 再把 jrust 产物（bin `generated`）与手写参考实现（bin `reference`）的 stdout 逐字节对拍。
+# 另附三条产物断言：`package app` → `pub mod app;`、外部 import → `use serde_json::Value;`、
+# 本地 import → `use crate::app::Config;`（JR-S4/M3 的 crate 前缀）。
+run_l2() {
+    local work="$TMP/l2"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    if ! $JRUST build "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL l2：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q '^pub mod app;$' "$work/src/main.rs"; then
+        echo "FAIL l2：crate 根缺少 pub mod app;"
+        cat "$work/src/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q '^use serde_json::Value;$' "$work/src/main.rs"; then
+        echo "FAIL l2：外部 crate 的 import 没有生成 use"
+        cat "$work/src/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q '^use crate::app::Config;$' "$work/src/main.rs"; then
+        echo "FAIL l2：本地模块的 import 没有加 crate:: 前缀"
+        cat "$work/src/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! cargo build --quiet --offline --manifest-path "$work/Cargo.toml" >"$TMP/out" 2>&1; then
+        echo "FAIL l2：cargo 编译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    "$work/target/debug/generated" >"$TMP/gen_out" 2>&1
+    if ! diff -u "$work/expected.txt" "$TMP/gen_out" >"$TMP/diff"; then
+        echo "FAIL l2：jrust 产物输出与期望不一致"
+        cat "$TMP/diff"
+        fail=$((fail + 1))
+        return
+    fi
+    # 手写参考实现也必须产出同样的输出（否则期望值本身有问题）。
+    "$work/target/debug/reference" >"$TMP/ref_out" 2>&1
+    if ! diff -u "$TMP/gen_out" "$TMP/ref_out" >"$TMP/diff"; then
+        echo "FAIL l2：产物与手写参考实现行为不一致"
+        cat "$TMP/diff"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS l2"
+    pass=$((pass + 1))
+}
+
+# L2 的负向面：目录工程里的外部 crate 未在 Cargo.toml 声明 → JR5001。
+run_l2_missing_dep() {
+    local work="$TMP/l2_nodep"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    sed -i '/^serde_json/d' "$work/Cargo.toml"
+    if $JRUST build "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL l2_nodep：本应报错却成功了"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q 'error\[JR5001\]' "$TMP/out" && grep -q 'serde_json' "$TMP/out"; then
+        echo "PASS l2_nodep"
+        pass=$((pass + 1))
+    else
+        echo "FAIL l2_nodep：缺少 JR5001 / serde_json"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -579,6 +658,9 @@ run_verify verify_ok ok
 run_verify verify_raw_error fail 'raw 块内'
 run_fmt
 run_spawn_capture
+# SPEC §15 L2：多文件 + 外部 crate，cargo 编译 + 与手写实现行为对拍。
+run_l2
+run_l2_missing_dep
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

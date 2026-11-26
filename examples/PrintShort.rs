@@ -27,4 +27,3 @@ fn main() {
     // jrust:L12
     println!("System.out 的老写法仍可用");
 }
-

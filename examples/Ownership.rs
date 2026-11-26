@@ -21,4 +21,3 @@ fn main() {
     // jrust:L13
     println!("{} {}", b, d);
 }
-

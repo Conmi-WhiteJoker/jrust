@@ -43,4 +43,3 @@ fn main() {
     // jrust:L33
     println!("{}", also[0]);
 }
-

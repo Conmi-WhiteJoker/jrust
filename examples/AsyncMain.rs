@@ -10,4 +10,3 @@ async fn main() {
     // jrust:L7
     println!("async main ready");
 }
-

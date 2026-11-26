@@ -60,4 +60,3 @@ fn main() {
     // jrust:L37
     println!("{}", u.identity("ab"));
 }
-

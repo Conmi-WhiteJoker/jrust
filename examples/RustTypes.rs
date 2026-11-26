@@ -47,4 +47,3 @@ fn main() {
     // jrust:L27
     println!("{}", ok);
 }
-

@@ -1,0 +1,29 @@
+package app;
+
+// L2 的本地模块：验证「多文件 + 外部 crate 类型」能同时成立
+// （`Config` 是本地类，`describe` 里拼 String，与 main 里的 serde_json 调用共存）。
+public class Config {
+    private String name;
+    private int port;
+
+    public Config(String name, int port) {
+        this.name = name;
+        this.port = port;
+    }
+
+    public static Config of(String name, int port) {
+        return new Config(name, port);
+    }
+
+    public String name() {
+        return this.name;
+    }
+
+    public int port() {
+        return this.port;
+    }
+
+    public String describe() {
+        return this.name + ":" + this.port;
+    }
+}

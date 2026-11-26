@@ -57,4 +57,3 @@ fn main() {
     // jrust:L43
     println!("total={}", total);
 }
-

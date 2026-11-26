@@ -95,7 +95,13 @@ fn main() -> ExitCode {
             } else {
                 let mut all_ok = true;
                 for f in &args[2..] {
-                    if !verify_one(Path::new(f)) {
+                    let p = Path::new(f);
+                    let ok = if p.is_dir() {
+                        verify_tree(p)
+                    } else {
+                        verify_one(p)
+                    };
+                    if !ok {
                         all_ok = false;
                     }
                 }
@@ -243,6 +249,26 @@ fn find_manifest(path: &Path) -> Option<PathBuf> {
             return None;
         }
     }
+}
+
+/// 去掉 `Cargo.toml` 里的 target 段（`[[bin]]` / `[lib]` / `[[test]]` / `[[bench]]` /
+/// `[[example]]`），只留包信息与依赖。`jrust verify <目录>` 把产物放进临时目录时用它，
+/// 否则原工程里指向 `src/xxx.rs` 的 target 会让 cargo 报「can't find bin」。
+fn strip_target_sections(text: &str) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            let name = t.trim_matches(|c| c == '[' || c == ']').trim();
+            skipping = matches!(name, "bin" | "lib" | "test" | "bench" | "example");
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// 读取 `Cargo.toml` 里声明的依赖名（`-` 归一成 `_`，与 Rust crate 名一致）。
@@ -463,17 +489,50 @@ fn insert_mod_block(code: &mut String, block: &str) {
     code.push_str(block);
 }
 
+/// 多文件模式的生成结果：相对路径 → 产物源码，外加 crate 根产物。
+struct TreePlan {
+    files: BTreeMap<PathBuf, String>,
+    root_out: PathBuf,
+}
+
 /// 多文件模式构建（JR-S4/M3）：
 /// - `package a.b.c;` → `a/b/c.rs`，package 最后一段必须等于文件名；
 /// - 含 `main` 的文件是 crate 根，不能声明 package；
 /// - 每层父模块补 `pub mod 子模块;`：父模块有源文件就写进它的产物，否则生成 `a/mod.rs`。
 fn build_tree(dir: &Path) -> bool {
+    let plan = match plan_tree(dir) {
+        Some(p) => p,
+        None => return false,
+    };
+    let mut ok = true;
+    for (rel, content) in &plan.files {
+        let out = dir.join(rel);
+        if let Some(d) = out.parent() {
+            if let Err(e) = std::fs::create_dir_all(d) {
+                eprintln!("无法创建 {}: {}", d.display(), e);
+                ok = false;
+                continue;
+            }
+        }
+        if let Err(e) = std::fs::write(&out, content) {
+            eprintln!("无法写入 {}: {}", out.display(), e);
+            ok = false;
+            continue;
+        }
+        println!("已生成 {}", out.display());
+    }
+    ok
+}
+
+/// 解析目录下全部 `.jrust`、做一次全局分析并生成所有产物，**不落盘**。
+/// `build_tree` 与 `verify_tree` 共用；诊断已经打印，返回 `None` 表示有错误。
+fn plan_tree(dir: &Path) -> Option<TreePlan> {
     let mut files = Vec::new();
     collect_jrust(dir, &mut files);
     files.sort();
     if files.is_empty() {
         eprintln!("{} 下没有 .jrust 文件", dir.display());
-        return false;
+        return None;
     }
 
     struct Unit {
@@ -569,7 +628,7 @@ fn build_tree(dir: &Path) -> bool {
         });
     }
     if !ok {
-        return false;
+        return None;
     }
 
     let roots: Vec<usize> = units
@@ -580,11 +639,11 @@ fn build_tree(dir: &Path) -> bool {
         .collect();
     if roots.is_empty() {
         eprintln!("多文件项目里没有含 main 的 crate 根文件");
-        return false;
+        return None;
     }
     if roots.len() > 1 {
         eprintln!("多文件项目里只能有一个含 main 的 crate 根文件");
-        return false;
+        return None;
     }
     let root_out = units[roots[0]].out_rel.clone();
 
@@ -602,7 +661,7 @@ fn build_tree(dir: &Path) -> bool {
         }
     }
     if !ok {
-        return false;
+        return None;
     }
 
     // Stage C：诊断按文件跑（行号归属清楚），签名表则对全工程做一次全局分析，
@@ -615,7 +674,7 @@ fn build_tree(dir: &Path) -> bool {
         }
     }
     if !ok {
-        return false;
+        return None;
     }
     let global_sigs = analysis::analyze_all(units.iter().map(|u| &u.prog));
 
@@ -652,7 +711,7 @@ fn build_tree(dir: &Path) -> bool {
         }
     }
     if !ok {
-        return false;
+        return None;
     }
 
     // 每层父模块需要声明哪些子模块。
@@ -706,23 +765,10 @@ fn build_tree(dir: &Path) -> bool {
         insert_mod_block(entry, &block);
     }
 
-    for (rel, content) in &files_out {
-        let out = dir.join(rel);
-        if let Some(d) = out.parent() {
-            if let Err(e) = std::fs::create_dir_all(d) {
-                eprintln!("无法创建 {}: {}", d.display(), e);
-                ok = false;
-                continue;
-            }
-        }
-        if let Err(e) = std::fs::write(&out, content) {
-            eprintln!("无法写入 {}: {}", out.display(), e);
-            ok = false;
-            continue;
-        }
-        println!("已生成 {}", out.display());
-    }
-    ok
+    Some(TreePlan {
+        files: files_out,
+        root_out,
+    })
 }
 
 fn check_one(path: &Path) -> bool {
@@ -1065,6 +1111,145 @@ fn verify_one(path: &Path) -> bool {
         eprintln!("rustc 编译失败（未能定位到 .jrust 行）：\n{}", stderr);
     }
     false
+}
+
+/// `jrust verify <目录>`：多文件工程（L2）的整 crate 校验。
+///
+/// 单文件模式用 `--crate-type lib --emit=metadata` 就能查，多文件工程不行：
+/// ① `mod` 树要求文件按真实路径排布，② 外部 crate（`serde_json` 等）要求依赖可解析。
+/// 因此这里把 `plan_tree` 的产物写进临时目录，抄一份最近的 `Cargo.toml`（依赖是
+/// 唯一事实来源，JR-M4），再用 `cargo build` 编整个 crate —— 与用户手工验收同一条路径。
+fn verify_tree(dir: &Path) -> bool {
+    let plan = match plan_tree(dir) {
+        Some(p) => p,
+        None => return false,
+    };
+    let manifest = match find_manifest(dir.join("x.jrust").as_path()) {
+        Some(m) => m,
+        None => {
+            eprintln!(
+                "{} 及其上级目录都没有 Cargo.toml；多文件工程必须能解析依赖（JR-M4）",
+                dir.display()
+            );
+            return false;
+        }
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let work = std::env::temp_dir().join(format!("jrust-vtree-{}-{}", std::process::id(), stamp));
+    if let Err(e) = std::fs::create_dir_all(&work) {
+        eprintln!("无法创建临时目录 {}: {}", work.display(), e);
+        return false;
+    }
+    let cleanup = || {
+        let _ = std::fs::remove_dir_all(&work);
+    };
+
+    // 产物按相对路径落盘；crate 根由 `[[bin]]` 指向它（`main.rs` 不是必需的名字）。
+    for (rel, content) in &plan.files {
+        let out = work.join(rel);
+        if let Some(d) = out.parent() {
+            if let Err(e) = std::fs::create_dir_all(d) {
+                eprintln!("无法创建 {}: {}", d.display(), e);
+                cleanup();
+                return false;
+            }
+        }
+        if let Err(e) = std::fs::write(&out, content) {
+            eprintln!("无法写入 {}: {}", out.display(), e);
+            cleanup();
+            return false;
+        }
+    }
+    let manifest_text = std::fs::read_to_string(&manifest).unwrap_or_default();
+    // 只保留依赖与包信息：原 manifest 里的 `[[bin]]` / `[lib]` / `[[test]]` 等 target 段
+    // 指向的是用户工程里的路径，抄进临时目录会变成「找不到 bin」；crate 根由下面这条 `[[bin]]` 指定。
+    let bin_manifest = format!(
+        "{}\n[[bin]]\nname = \"jrust-verify-tree\"\npath = \"{}\"\n",
+        strip_target_sections(&manifest_text).trim_end(),
+        plan.root_out.to_string_lossy().replace('\\', "/")
+    );
+    if let Err(e) = std::fs::write(work.join("Cargo.toml"), bin_manifest) {
+        eprintln!("无法写入临时 Cargo.toml: {}", e);
+        cleanup();
+        return false;
+    }
+
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--quiet", "--offline"])
+        .current_dir(&work)
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("无法运行 cargo（{}）；请确认 cargo 在 PATH 里", e);
+            cleanup();
+            return false;
+        }
+    };
+    if out.status.success() {
+        println!("验证通过 {}", dir.display());
+        cleanup();
+        return true;
+    }
+    // rustc 报错里的路径是临时目录下的生成文件；映射回原 .jrust 需要产物文本。
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut reported = 0;
+    for (gen_file, gen_line, msg) in scan_rustc_errors_multi(&stderr) {
+        let rel = gen_file
+            .strip_prefix(work.to_string_lossy().as_ref())
+            .unwrap_or(&gen_file)
+            .trim_start_matches('/');
+        let code = plan
+            .files
+            .get(Path::new(rel))
+            .cloned()
+            .unwrap_or_default();
+        let (jline, off) = map_to_jrust(&code, gen_line);
+        eprintln!("错误: {}/{}:{} - rustc {}", dir.display(), rel, jline, msg);
+        if off > 0 {
+            eprintln!(
+                "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
+                gen_line,
+                jline + off,
+                off
+            );
+        }
+        if msg.contains("E0277") {
+            eprintln!(
+                "  提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
+            );
+        }
+        reported += 1;
+    }
+    if reported == 0 {
+        eprintln!("cargo 编译失败（未能定位到 .jrust 行）：\n{}", stderr);
+    }
+    cleanup();
+    false
+}
+
+/// 提取 `error[..]` 及其 `--> <文件>:<行>:<列>` 的三元组（多文件版：文件也带出来）。
+fn scan_rustc_errors_multi(stderr: &str) -> Vec<(String, usize, String)> {
+    let mut out = Vec::new();
+    let mut pending: Option<String> = None;
+    for raw in stderr.lines() {
+        let line = raw.trim();
+        if let Some(pos) = line.strip_prefix("--> ") {
+            let mut parts = pos.rsplitn(3, ':');
+            let _col = parts.next();
+            let gen_line = parts.next().and_then(|s| s.trim().parse::<usize>().ok());
+            let file = parts.next().unwrap_or("").to_string();
+            if let (Some(gen_line), Some(msg)) = (gen_line, pending.take()) {
+                out.push((file, gen_line, msg));
+            }
+        } else if line.starts_with("error[") || line.starts_with("error:") {
+            pending = Some(line.to_string());
+        }
+    }
+    out
 }
 
 /// `jrust verify`（无参数）：跑仓库里的一致性套件（JR-G5）。

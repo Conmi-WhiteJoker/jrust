@@ -56,4 +56,3 @@ fn main() {
     // jrust:L40
     println!("{}", w.len());
 }
-

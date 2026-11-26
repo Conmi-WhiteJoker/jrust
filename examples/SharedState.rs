@@ -66,4 +66,3 @@ fn main() {
     // jrust:L43
     println!("{} = {}", c.name(), c.get());
 }
-

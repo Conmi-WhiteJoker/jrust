@@ -257,8 +257,10 @@ impl<'a> Codegen<'a> {
     /// 收尾：有 error 级诊断就失败，否则返回产物与 warning。
     fn into_result(self) -> Result<Generated, Vec<Diag>> {
         if self.diags.is_empty() {
+            // JR-G9：产物必须能过 `rustfmt --check`，而 rustfmt 要求文件以单个 `\n` 结尾。
+            // `blank()` 收尾时会留下空行（文件末尾 `}\n\n`），这里统一削掉。
             Ok(Generated {
-                code: self.out,
+                code: self.out.trim_end_matches('\n').to_string() + "\n",
                 warnings: self.warnings,
             })
         } else {
@@ -286,14 +288,27 @@ impl<'a> Codegen<'a> {
         self.emit(&format!("// jrust:L{}", line));
     }
 
-    /// `raw { ... }`（JR-X1）：内容逐字输出（不加缩进，避免改动多行字符串），
-    /// 前后各留一条 `// jrust:L` 源映射标记。
+    /// `raw { ... }`（JR-X1）：内容逐字输出，前后各留一条 `// jrust:L` 源映射标记。
+    ///
+    /// 逐字输出意味着**不加缩进**（改了缩进就改了多行字符串字面量的内容）。
+    /// 但语句位置的 raw 产物需要符合 rustfmt 期望，因此只对「不含换行的单行 raw」
+    /// 补当前缩进 —— 单行内容不可能包含多行字符串，补缩进是安全的。
     fn emit_raw(&mut self, code: &str, line: usize) {
         let end = line + code.matches('\n').count();
         self.marker(line);
-        for l in code.trim_matches('\n').lines() {
-            self.out.push_str(l);
-            self.out.push('\n');
+        let body = code.trim_matches('\n');
+        if body.contains('\n') {
+            for l in body.lines() {
+                self.out.push_str(l);
+                self.out.push('\n');
+            }
+        } else {
+            let t = body.trim();
+            if t.is_empty() {
+                self.out.push('\n');
+            } else {
+                self.emit(t);
+            }
         }
         self.marker(end);
     }
@@ -2679,8 +2694,13 @@ impl<'a> Codegen<'a> {
                 format!("{}.await", x)
             }
             Expr::Raw { code, line } => {
-                // 表达式位置：包成块表达式，并保留源映射标记（JR-X1）。
-                format!("({{ /* jrust:L{} */ {} }})", line, code.trim())
+                // 表达式位置：保留源映射标记（JR-X1）。
+                //
+                // 形态选择过三种，只有当前这种能过 `rustfmt --check`（JR-G9）：
+                //   `({ /* jrust:L */ x })` → rustfmt 会拆成多行（括号内是块表达式）；
+                //   `(/* jrust:L */ x)`      → 稳定，单行多行都保持原样。
+                // 多行 raw 本身就以 `{` 开头时，`(/* … */{ … })` 同样稳定。
+                format!("(/* jrust:L{} */{})", line, code.trim())
             }
             Expr::Try(inner) => {
                 if !env.in_throws {

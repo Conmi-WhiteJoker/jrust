@@ -1,0 +1,28 @@
+import app.Config;
+import serde_json.Value;
+
+// L2 验收用例：多文件工程 + 一个外部 crate（serde_json）。
+//
+// 边界说明（SPEC §15 L2 / §13.1）：外部 crate 的**函数签名** jrust 无法得知
+// （没有源码可分析），因此实际调用走 `raw` 原样内联；jrust 负责的是工程结构
+// （package → mod、import → use、Cargo.toml 依赖校验）与本地类之间的借用推断。
+public class Main {
+    public static void main(String[] args) {
+        String text = "{\"name\":\"api\",\"port\":8080}";
+
+        // 外部 crate 的解析入口：签名不可知，走 raw。
+        Value v = raw { serde_json::from_str::<serde_json::Value>(&text).unwrap() };
+        // 取出字段：外部 crate 的返回值形状（Option<&str> / i64）同样由 raw 兜住。
+        String name = raw { v["name"].as_str().unwrap().to_string() };
+        int port = raw { v["port"].as_i64().unwrap() as i32 };
+
+        // 本地类跨文件构造 + 借用推断：`Config.of` 的形参三态由全工程分析得到。
+        Config c = Config.of(name, port);
+        println(c.describe());
+
+        // 反向序列化：再走一次 raw，验证产物里 `use serde_json::Value` 真的生效。
+        Value o = raw { serde_json::json!({"name": c.name(), "port": c.port()}) };
+        String out = raw { serde_json::to_string(&o).unwrap() };
+        println(out);
+    }
+}

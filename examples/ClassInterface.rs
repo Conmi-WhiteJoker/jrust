@@ -96,4 +96,3 @@ fn main() {
     // jrust:L65
     println!("total={}", total);
 }
-
