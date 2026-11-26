@@ -169,7 +169,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
 | `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
 | `public static async void main(String[] args)` | `#[tokio::main] async fn main()` | 异步入口需要 tokio 运行时（`examples/AsyncMain/Cargo.toml` 已声明） | [AsyncMain](examples/AsyncMain/main.jrust) |
-| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`）；表达式位置的**多行** raw 会包成块表达式 `{ … }`，体内可写 `let` 等语句 | [L1 用例](tests/conformance/L1/ok_raw.jrust) / [多行表达式](tests/conformance/L1/ok_raw_multiline.jrust) |
+| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`）；表达式位置的**多行** raw 会包成块表达式 `{ … }`，体内可写 `let` 等语句 | [L1 用例](tests/conformance/L1/ok_raw.jrust) / [多行表达式](tests/conformance/L1/ok_raw_multiline/main.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport/main.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport/main.jrust) |
 | `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [SharedState](examples/SharedState/main.jrust) |
@@ -278,6 +278,8 @@ examples/       13 个独立 cargo 工程（examples/Cargo.toml 是 workspace，
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain（唯一带 tokio 依赖）
 tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate）+ verify 脚本
+tests/conformance/L1/  单文件夹具。新用例用目录式 `<case>/{main.jrust, expected.txt}`；
+                存量扁平的 `ok_*.jrust` / `neg_*.jrust` 仍被 runner 兼容（见 tests/l1_cases.sh 的 case_paths）
 tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 ```

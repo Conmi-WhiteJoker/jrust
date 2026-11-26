@@ -195,3 +195,16 @@
   `String` 返回值的多行 raw、`if` 内更深嵌套三处；用未修复的二进制复跑会失败（真实回归钉）。
 - README `raw` 行补充形态说明；SPEC §15 L1 计数 119 → 120。
 - 验证：`verify.sh` 全绿（L1 **120 通过 0 失败**，`fmt` 仍通过）。
+
+## v1.20 — 2026-11-26
+
+- **一致性用例支持目录式布局**（对齐 examples）：`tests/conformance/L1/<case>/{main.jrust, expected.txt}`。
+  `tests/l1_cases.sh` 新增 `case_paths()`，统一解析 8 个 runner（`run_ok` / `run_neg` /
+  `run_neg_plain` / `run_closure` / `run_build_has` / `run_build_lacks` / `run_warn` / `run_check`）
+  的源码 / 产物 / 期望路径：**目录式优先，扁平 `ok_*.jrust` / `neg_*.jrust` 兼容**。
+  存量 79 个用例一个没迁，零死链、零 diff 噪音。
+- 首个目录式用例：`ok_raw_multiline`（v1.19 的扁平版迁入），作为新约定的样板；
+  以后新增用例直接用目录，需要多文件/附属资产时也不用再改 runner。
+- 生成的 `.rs` 仍就近落在用例旁边（已 gitignore），与 examples 一致，产物可对照。
+- README 结构树补布局说明，`raw` 行的多行用例链接同步。
+- 验证：`tests/l1_cases.sh` **120 通过 0 失败**（目录式与扁平式共存）。

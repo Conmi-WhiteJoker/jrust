@@ -11,24 +11,40 @@ trap 'rm -rf "$TMP"' EXIT
 fail=0
 pass=0
 
+# 用例布局：目录式 `L1/<case>/{main.jrust, expected.txt}` 优先，扁平 `L1/<case>.jrust` 兼容。
+# 调用后可用 CASE_SRC（源码）/ CASE_RS（产物，就近生成）/ CASE_EXPECTED（期望 stdout）。
+case_paths() {
+    local base=$1
+    if [ -d "$DIR/$base" ]; then
+        CASE_SRC="$DIR/$base/main.jrust"
+        CASE_RS="$DIR/$base/main.rs"
+        CASE_EXPECTED="$DIR/$base/expected.txt"
+    else
+        CASE_SRC="$DIR/$base.jrust"
+        CASE_RS="$DIR/$base.rs"
+        CASE_EXPECTED="$DIR/$base.expected"
+    fi
+}
+
 # 正向用例：转译 → rustc 编译 → 运行 → 比对输出
 run_ok() {
     local base=$1
-    local src="$DIR/$base.jrust"
+    case_paths "$base"
+    local src="$CASE_SRC"
     if ! $JRUST build "$src" >/dev/null 2>"$TMP/err"; then
         echo "FAIL $base：转译失败"
         cat "$TMP/err"
         fail=$((fail + 1))
         return
     fi
-    if ! rustc --edition 2021 -A warnings "$DIR/$base.rs" -o "$TMP/$base" 2>"$TMP/err"; then
+    if ! rustc --edition 2021 -A warnings "$CASE_RS" -o "$TMP/$base" 2>"$TMP/err"; then
         echo "FAIL $base：生成的 Rust 编译失败"
         cat "$TMP/err"
         fail=$((fail + 1))
         return
     fi
     "$TMP/$base" >"$TMP/out"
-    if diff -u "$DIR/$base.expected" "$TMP/out" >"$TMP/diff"; then
+    if diff -u "$CASE_EXPECTED" "$TMP/out" >"$TMP/diff"; then
         echo "PASS $base"
         pass=$((pass + 1))
     else
@@ -44,7 +60,8 @@ run_neg() {
     local code=$2
     local pattern=$3
     local line=${4:-}
-    if $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+    case_paths "$base"
+    if $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
         echo "FAIL $base：本应报错却成功了"
         fail=$((fail + 1))
         return
@@ -77,7 +94,8 @@ run_neg_plain() {
     local base=$1
     local pattern=$2
     local hint=${3:-}
-    if $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+    case_paths "$base"
+    if $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
         echo "FAIL $base：本应报错却成功了"
         fail=$((fail + 1))
         return
@@ -102,14 +120,15 @@ run_neg_plain() {
 # 闭包目前没有可表达的函数类型，只校验产物形态。
 run_closure() {
     local base=ok_closure_transpile
-    if ! $JRUST build "$DIR/$base.jrust" >/dev/null 2>&1; then
+    case_paths "$base"
+    if ! $JRUST build "$CASE_SRC" >/dev/null 2>&1; then
         echo "FAIL $base：转译失败"
         fail=$((fail + 1))
         return
     fi
-    if grep -q '|x| x \* 2' "$DIR/$base.rs" \
-        && grep -q '|x| x + 1' "$DIR/$base.rs" \
-        && grep -q '|a: f64, b: f64| a + b' "$DIR/$base.rs"; then
+    if grep -q '|x| x \* 2' "$CASE_RS" \
+        && grep -q '|x| x + 1' "$CASE_RS" \
+        && grep -q '|a: f64, b: f64| a + b' "$CASE_RS"; then
         echo "PASS $base"
         pass=$((pass + 1))
     else
@@ -122,13 +141,14 @@ run_closure() {
 run_build_has() {
     local base=$1
     local pattern=$2
-    if ! $JRUST build "$DIR/$base.jrust" >/dev/null 2>"$TMP/err"; then
+    case_paths "$base"
+    if ! $JRUST build "$CASE_SRC" >/dev/null 2>"$TMP/err"; then
         echo "FAIL $base：转译失败"
         cat "$TMP/err"
         fail=$((fail + 1))
         return
     fi
-    if grep -q -- "$pattern" "$DIR/$base.rs"; then
+    if grep -q -- "$pattern" "$CASE_RS"; then
         echo "PASS $base"
         pass=$((pass + 1))
     else
@@ -141,13 +161,14 @@ run_build_has() {
 run_build_lacks() {
     local base=$1
     local pattern=$2
-    if ! $JRUST build "$DIR/$base.jrust" >/dev/null 2>"$TMP/err"; then
+    case_paths "$base"
+    if ! $JRUST build "$CASE_SRC" >/dev/null 2>"$TMP/err"; then
         echo "FAIL $base：转译失败"
         cat "$TMP/err"
         fail=$((fail + 1))
         return
     fi
-    if grep -q -- "$pattern" "$DIR/$base.rs"; then
+    if grep -q -- "$pattern" "$CASE_RS"; then
         echo "FAIL $base：产物里不应出现（$pattern）"
         fail=$((fail + 1))
     else
@@ -160,7 +181,8 @@ run_build_lacks() {
 run_warn() {
     local base=$1
     local pattern=$2
-    if ! $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+    case_paths "$base"
+    if ! $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
         echo "FAIL $base：转译失败"
         cat "$TMP/out"
         fail=$((fail + 1))
@@ -172,7 +194,7 @@ run_warn() {
         fail=$((fail + 1))
         return
     fi
-    if ! grep -q -- "$pattern" "$DIR/$base.rs"; then
+    if ! grep -q -- "$pattern" "$CASE_RS"; then
         echo "FAIL $base：产物里没有预期写法（$pattern）"
         fail=$((fail + 1))
         return
@@ -185,8 +207,9 @@ run_warn() {
 run_check() {
     local base=$1
     local expect=$2
+    case_paths "$base"
     if [ "$expect" = ok ]; then
-        if $JRUST check "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+        if $JRUST check "$CASE_SRC" >"$TMP/out" 2>&1; then
             echo "PASS check:$base"
             pass=$((pass + 1))
         else
@@ -195,7 +218,7 @@ run_check() {
             fail=$((fail + 1))
         fi
     else
-        if $JRUST check "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+        if $JRUST check "$CASE_SRC" >"$TMP/out" 2>&1; then
             echo "FAIL check:$base：本应报错"
             fail=$((fail + 1))
         else
