@@ -311,6 +311,7 @@ run_ok ok_borrow_param
 run_ok ok_borrow_string
 run_ok ok_borrow_list
 run_ok ok_getter_ref
+run_ok ok_pick_lifetime
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'
@@ -327,6 +328,9 @@ run_build_has ok_borrow_string 'who: &str'
 run_build_has ok_borrow_list 'xs: &\[String\]'
 run_build_has ok_getter_ref 'fn name(&self) -> &str'
 run_build_has ok_getter_ref 'fn age(&self) -> i32'
+run_build_has ok_pick_lifetime "fn pick<'a>(&self, x: &'a str, y: &str) -> &'a str"
+run_build_has ok_pick_lifetime "fn choose<'a>(&self, x: &'a str, y: &'a str) -> &'a str"
+run_build_has ok_pick_lifetime 'fn tag(&self) -> &str'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"
@@ -351,6 +355,7 @@ run_neg neg_raw_nested JR3027 "不能嵌套"
 run_neg neg_mutable_set JR3028 "只适用于 List"
 run_neg neg_return_this JR4003 "静态工厂"
 run_neg neg_conflict JR4001 "所有权已经移走"
+run_neg neg_borrow_field JR3011 "无法统一"
 
 run_check ok_shared ok
 run_check neg_labeled fail

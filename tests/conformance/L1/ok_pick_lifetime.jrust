@@ -1,0 +1,32 @@
+public class Picker {
+    private String tag;
+
+    public Picker(String tag) {
+        this.tag = tag;
+    }
+
+    public String pick(String x, String y) {
+        println("consider " + y);
+        return x;
+    }
+
+    public String choose(String x, String y) {
+        if (x.length() > y.length()) {
+            return x;
+        }
+        return y;
+    }
+
+    public String tag() {
+        return this.tag;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Picker p = new Picker("P");
+        println(p.pick("long", "s") + " / " + p.tag());
+        println(p.choose("aa", "b"));
+        println(p.choose("a", "bb"));
+    }
+}

@@ -58,3 +58,11 @@
 - 顺带修正：`size()`/`length()` 落回 `int` / `long` 上下文时补 `as i32` / `as i64`（`len()` 是 `usize`）。
 - L1 新增用例：`ok_borrow_param`、`ok_borrow_string`、`ok_borrow_list`、`ok_getter_ref`、`neg_conflict`（`JR4001`），并加产物形态断言（`&mut Vec<i32>`、`&[String]`、`-> &str` 等）。L1 79 通过 0 失败，`verify.sh` / move 12 例 / 解释一致全部通过。
 - 诊断码新增：`JR4001`。
+
+## v1.6 — 2026-11-26
+
+- **JR-T5 / JR-O9**（借用返回来源，✅）：`RetMode` 从「getter 特例」升级为 `Owned | Borrow(Vec<Origin>)`，`Origin = SelfRef | Param(i)`。对每个 `return` 表达式求来源集合：`return x`（借用形参）、`return this.f`（非 `@shared` String 字段）、`return p.f`（形参字段）、`return helper(p)`（沿调用链映射被调方法的来源）。来源集合进独立单调不动点，接口方法取默认方法 ∪ 所有实现（任一实现 owned → 整组 owned）。
+- **生命周期**：唯一来源且全签名只有一个借用输入 → 省略（`-> &str`）；否则在**来源输入**上标 `<'a>`，返回 `-> &'a T`。`ok_pick_lifetime` 断言 `fn pick<'a>(&self, x: &'a str, y: &str) -> &'a str` 与 `fn choose<'a>(&self, x: &'a str, y: &'a str) -> &'a str`；`fn tag(&self) -> &str` 仍省略。
+- **JR3011**（新增）：来源不可统一时报错并降级 owned —— `&mut` 形参作来源、多个来源类型不一致、来源形参已被按值使用。`neg_borrow_field` 覆盖「借 `&mut` 形参的字段」。
+- **回归修正**：`return p` 不再直接判成 owned（改由来源推断决定）；借用返回方法体内的 `return` 不再被落地转换误加 `.to_string()`；借用返回落到 owned 上下文时的转换从「String 专用」推广到 `to_string` / `to_vec` / `clone`。
+- L1 84 通过 0 失败（新增 `ok_pick_lifetime`、`neg_borrow_field` 与三条产物形态断言）；`verify.sh`、move 12 例、解释一致全部通过。

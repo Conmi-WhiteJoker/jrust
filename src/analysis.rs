@@ -46,11 +46,24 @@ pub enum Recv {
     Mut,
 }
 
-/// 返回值形态：owned，或「借出 `this` 的 String 字段」（→ `-> &str`，O9/T5）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// 借用返回的来源：`&self` 或第 `i` 个形参。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Origin {
+    SelfRef,
+    Param(usize),
+}
+
+/// 返回值形态：owned，或借出某个 / 某些来源（→ `-> &T`，多个来源时统一 `'a`）。
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RetMode {
     Owned,
-    SelfStrRef,
+    Borrow(Vec<Origin>),
+}
+
+impl RetMode {
+    pub fn is_borrow(&self) -> bool {
+        matches!(self, RetMode::Borrow(_))
+    }
 }
 
 /// 一个方法的签名推断结果。
@@ -92,7 +105,7 @@ impl Sigs {
     }
 
     pub fn ret(&self, ty: &str, name: &str) -> RetMode {
-        self.get(ty, name).map_or(RetMode::Owned, |s| s.ret)
+        self.get(ty, name).map_or(RetMode::Owned, |s| s.ret.clone())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -286,101 +299,403 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
         }
     }
 
-    infer_ret_modes(prog, &mut sigs);
+    let ret_diags = infer_ret_modes(prog, &mut sigs);
+    diags.extend(ret_diags);
     (sigs, diags)
 }
 
-/// 返回值模式（D4）：纯 getter 且字段是 `String` → `&str`。
+/// 返回值来源推断（B2 / §13.2.2）。
 ///
-/// 接口方法取「所有实现类都是纯 getter」：只要有一个实现返回计算值，整组降级 owned，
-/// 否则 trait 与 impl 的签名会对不上。
-fn infer_ret_modes(prog: &Program, sigs: &mut Sigs) {
-    let mut cand: HashMap<(String, String), bool> = HashMap::new();
-    for c in &prog.classes {
-        for m in &c.methods {
-            if m.is_static {
-                continue;
+/// 借用只可能来自 `&self` 与借用形参，因此不需要完整区域推断：对每个 `return`
+/// 表达式求「来源集合」，方法级并集即可。多个来源统一成一个 `'a`；来源不可借用
+/// （`&mut` 形参、类型不一致、形参已按值使用）时 `JR3011`。
+fn infer_ret_modes(prog: &Program, sigs: &mut Sigs) -> Vec<Diag> {
+    // 1) 单调不动点：`return helper(p)` 的来源随被调方法的 ret 增长而增长。
+    let limit = prog
+        .classes
+        .iter()
+        .map(|c| c.methods.len())
+        .sum::<usize>()
+        + prog
+            .interfaces
+            .iter()
+            .map(|i| i.methods.len())
+            .sum::<usize>()
+        + 4;
+    for _ in 0..limit {
+        let mut changed = false;
+        for c in &prog.classes {
+            for m in &c.methods {
+                if m.is_static || m.is_async || !m.throws.is_empty() {
+                    continue;
+                }
+                let want = class_ret(c, m, sigs);
+                if sigs.ret(&c.name, &m.name) != want {
+                    sigs.entry(&c.name, &m.name, m.params.len()).ret = want;
+                    changed = true;
+                }
             }
-            let ok = is_pure_str_getter(c, m, sigs.recv(&c.name, &m.name));
-            cand.insert((c.name.clone(), m.name.clone()), ok);
+        }
+        for i in &prog.interfaces {
+            for m in &i.methods {
+                if m.is_static {
+                    continue;
+                }
+                let want = iface_ret(
+                    prog,
+                    i,
+                    &m.name,
+                    &m.params,
+                    &m.type_params,
+                    m.body.as_deref(),
+                    sigs,
+                );
+                if sigs.ret(&i.name, &m.name) != want {
+                    sigs.entry(&i.name, &m.name, m.params.len()).ret = want;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
-    // 接口：所有实现类都是纯 getter 才借出。
+
+    // 2) 归一化：trait 与所有实现必须逐字一致（所有权优先，整组降级）。
     for i in &prog.interfaces {
         for m in &i.methods {
             if m.is_static {
                 continue;
             }
-            let mut impls = 0usize;
-            let mut all_getter = m.body.is_none();
+            let mut impls: Vec<&ClassDecl> = Vec::new();
             for c in &prog.classes {
-                if !implements_iface(c, &i.name, prog) {
-                    continue;
-                }
-                if c.methods.iter().any(|x| x.name == m.name && !x.is_static) {
-                    impls += 1;
-                    all_getter &= cand
-                        .get(&(c.name.clone(), m.name.clone()))
-                        .copied()
-                        .unwrap_or(false);
+                if implements_iface(c, &i.name, prog)
+                    && c.methods.iter().any(|x| x.name == m.name && !x.is_static)
+                {
+                    impls.push(c);
                 }
             }
-            let want = impls > 0 && all_getter;
-            let sig = sigs.entry(&i.name, &m.name, m.params.len());
-            sig.ret = if want { RetMode::SelfStrRef } else { RetMode::Owned };
+            let iface_mode = sigs.ret(&i.name, &m.name);
+            match iface_mode {
+                RetMode::Borrow(uni) => {
+                    for c in impls {
+                        let want = RetMode::Borrow(uni.clone());
+                        if sigs.ret(&c.name, &m.name) != want {
+                            sigs.entry(&c.name, &m.name, m.params.len()).ret = want;
+                        }
+                    }
+                }
+                RetMode::Owned => {
+                    for c in impls {
+                        if sigs.ret(&c.name, &m.name).is_borrow() {
+                            sigs.entry(&c.name, &m.name, m.params.len()).ret = RetMode::Owned;
+                        }
+                    }
+                }
+            }
         }
     }
-    // 实现类：自己是纯 getter，且所实现接口的同一方法也借出。
+
+    // 3) 校验：借出来源必须都是 `&self` / 只读形参，且类型一致。
+    let mut diags = Vec::new();
     for c in &prog.classes {
         for m in &c.methods {
             if m.is_static {
                 continue;
             }
-            let mut want = cand
-                .get(&(c.name.clone(), m.name.clone()))
-                .copied()
-                .unwrap_or(false);
-            for t in &c.implements {
-                let mut seen = HashSet::new();
-                let mut names = HashSet::new();
-                iface_closure(t, prog, &mut names);
-                seen.extend(names);
-                for name in seen {
-                    if prog
-                        .interfaces
-                        .iter()
-                        .find(|x| x.name == name)
-                        .map_or(false, |x| x.methods.iter().any(|mm| mm.name == m.name))
-                        && sigs.ret(&name, &m.name) != RetMode::SelfStrRef
-                    {
-                        want = false;
+            if let Some(d) = validate_ret(prog, c, m, sigs) {
+                diags.push(d);
+                sigs.entry(&c.name, &m.name, m.params.len()).ret = RetMode::Owned;
+            }
+        }
+    }
+    diags
+}
+
+/// 方法自身的返回来源（不含接口并集）。
+fn class_ret(c: &ClassDecl, m: &Method, sigs: &Sigs) -> RetMode {
+    // 只有不可变方法才能借出（`&mut self` 的 getter 仍返回 owned）。
+    if sigs.recv(&c.name, &m.name) != Recv::Ref {
+        return RetMode::Owned;
+    }
+    let mut set: Vec<Origin> = Vec::new();
+    let mut owned_return = false;
+    let generics = generic_names(&c.type_params, &m.type_params);
+    walk_stmts_all(&m.body, &mut |s| {
+        if let Stmt::Return {
+            value: Some(e), ..
+        } = s
+        {
+            match origins_of_expr(Some(c), &c.name, &m.params, &generics, e, sigs) {
+                Some(v) if !v.is_empty() => {
+                    for o in v {
+                        if !set.contains(&o) {
+                            set.push(o);
+                        }
                     }
                 }
+                _ => owned_return = true,
             }
-            let sig = sigs.entry(&c.name, &m.name, m.params.len());
-            sig.ret = if want { RetMode::SelfStrRef } else { RetMode::Owned };
         }
+    });
+    if owned_return || set.is_empty() {
+        RetMode::Owned
+    } else {
+        RetMode::Borrow(set)
     }
 }
 
-/// 方法体恰好是 `return this.f;`，`f` 是 String 字段（非 `@shared`），且接收者是 `&self`。
-fn is_pure_str_getter(c: &ClassDecl, m: &Method, recv: Recv) -> bool {
-    if m.is_static || m.is_async || !m.throws.is_empty() || recv != Recv::Ref {
-        return false;
+/// 接口方法的返回来源：默认方法自身 ∪ 所有实现；任一实现是 owned → 整组 owned。
+fn iface_ret(
+    prog: &Program,
+    i: &InterfaceDecl,
+    name: &str,
+    params: &[Param],
+    type_params: &[TypeParam],
+    body: Option<&[Stmt]>,
+    sigs: &Sigs,
+) -> RetMode {
+    let mut set: Vec<Origin> = Vec::new();
+    let mut any = false;
+    if let Some(body) = body {
+        let mut owned = false;
+        let generics = generic_names(type_params, &[]);
+        walk_stmts_all(body, &mut |s| {
+            if let Stmt::Return {
+                value: Some(e), ..
+            } = s
+            {
+                match origins_of_expr(None, &i.name, params, &generics, e, sigs) {
+                    Some(v) if !v.is_empty() => {
+                        any = true;
+                        for o in v {
+                            if !set.contains(&o) {
+                                set.push(o);
+                            }
+                        }
+                    }
+                    _ => owned = true,
+                }
+            }
+        });
+        if owned {
+            return RetMode::Owned;
+        }
     }
-    if m.ret != Type::String {
-        return false;
+    for c in &prog.classes {
+        if !implements_iface(c, &i.name, prog)
+            || !c.methods.iter().any(|x| x.name == name && !x.is_static)
+        {
+            continue;
+        }
+        match sigs.ret(&c.name, name) {
+            RetMode::Borrow(srcs) => {
+                any = true;
+                for o in srcs {
+                    if !set.contains(&o) {
+                        set.push(o);
+                    }
+                }
+            }
+            RetMode::Owned => return RetMode::Owned,
+        }
     }
-    let field = match m.body.as_slice() {
-        [Stmt::Return {
-            value: Some(Expr::Field(base, f)),
-            ..
-        }] if matches!(**base, Expr::This) => f.clone(),
-        _ => return false,
+    if any && !set.is_empty() {
+        RetMode::Borrow(set)
+    } else {
+        RetMode::Owned
+    }
+}
+
+/// `return` 表达式的来源集合；`None` 表示 owned（字面量 / 局部变量 / 临时值）。
+fn origins_of_expr(
+    class: Option<&ClassDecl>,
+    self_name: &str,
+    params: &[Param],
+    generics: &HashSet<String>,
+    e: &Expr,
+    sigs: &Sigs,
+) -> Option<Vec<Origin>> {
+    match unparen(e) {
+        Expr::Ident(n) => params
+            .iter()
+            .position(|p| &p.name == n)
+            .and_then(|i| {
+                if borrowable(&params[i].ty) && !contains_generic(&params[i].ty, generics) {
+                    Some(vec![Origin::Param(i)])
+                } else {
+                    None
+                }
+            }),
+        Expr::Field(base, f) => {
+            if matches!(unparen(base), Expr::This) {
+                // 只借出 String 字段（类 / 集合字段仍返回 owned + clone，D4 ③）。
+                let cd = class?;
+                let ok = cd.fields.iter().any(|fd| {
+                    &fd.name == f && fd.ty == Type::String && !is_shared_field(fd)
+                });
+                if ok {
+                    Some(vec![Origin::SelfRef])
+                } else {
+                    None
+                }
+            } else {
+                origins_of_expr(class, self_name, params, generics, base, sigs)
+            }
+        }
+        Expr::Call { recv, name, args } => {
+            let mode = callee_ret(class, self_name, params, recv, name, sigs)?;
+            let RetMode::Borrow(srcs) = mode else {
+                return None;
+            };
+            let mut out: Vec<Origin> = Vec::new();
+            for o in srcs {
+                let sub = match o {
+                    Origin::SelfRef => {
+                        let r = recv.as_ref()?;
+                        origins_of_expr(class, self_name, params, generics, r, sigs)?
+                    }
+                    Origin::Param(j) => {
+                        let a = args.get(j)?;
+                        origins_of_expr(class, self_name, params, generics, a, sigs)?
+                    }
+                };
+                for x in sub {
+                    if !out.contains(&x) {
+                        out.push(x);
+                    }
+                }
+            }
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 解析被调方法的返回模式（只处理能静态确定接收者类型的情形）。
+fn callee_ret(
+    class: Option<&ClassDecl>,
+    self_name: &str,
+    params: &[Param],
+    recv: &Option<Box<Expr>>,
+    name: &str,
+    sigs: &Sigs,
+) -> Option<RetMode> {
+    let ty = match recv {
+        None => Some(self_name.to_string()),
+        Some(r) => match unparen(r) {
+            Expr::This => Some(self_name.to_string()),
+            Expr::Ident(n) if !params.iter().any(|p| &p.name == n) => Some(n.clone()),
+            _ => static_type_of(class, params, r).and_then(|t| ty_name(&t)),
+        },
     };
-    c.fields.iter().any(|fd| {
-        fd.name == field && fd.ty == Type::String && !is_shared_field(fd)
-    })
+    if let Some(t) = &ty {
+        if let Some(s) = sigs.get(t, name) {
+            return Some(s.ret.clone());
+        }
+    }
+    None
+}
+
+/// 表达式的声明类型（形参 / `this` / `this.字段` / 形参字段）。
+fn static_type_of(class: Option<&ClassDecl>, params: &[Param], e: &Expr) -> Option<Type> {
+    match unparen(e) {
+        Expr::Ident(n) => params
+            .iter()
+            .find(|p| &p.name == n)
+            .map(|p| p.ty.clone()),
+        Expr::This => class.map(|c| Type::Named(c.name.clone())),
+        Expr::Field(base, f) => {
+            if matches!(unparen(base), Expr::This) {
+                class.and_then(|c| {
+                    c.fields
+                        .iter()
+                        .find(|x| &x.name == f)
+                        .map(|x| x.ty.clone())
+                })
+            } else {
+                // 形参字段：只有拿到类声明才能继续，先返回 None（调用链来源推断会降级 owned）。
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 能否安全地借出（Copy 标量 / 泛型 / `T?` / 接口 / 枚举都不借）。
+fn borrowable(ty: &Type) -> bool {
+    match ty {
+        Type::String => true,
+        Type::List(_) | Type::Array(_) | Type::Map(..) | Type::Set(_) => true,
+        Type::Named(_) => true,
+        _ => false,
+    }
+}
+
+/// 借用返回来源合法性校验；不合法 → `JR3011`。
+fn validate_ret(prog: &Program, c: &ClassDecl, m: &Method, sigs: &Sigs) -> Option<Diag> {
+    let RetMode::Borrow(srcs) = sigs.ret(&c.name, &m.name) else {
+        return None;
+    };
+    if srcs.is_empty() {
+        return None;
+    }
+    if sigs.recv(&c.name, &m.name) != Recv::Ref {
+        return Some(jr3011(m.line, "只有 `&self` 方法才能借出返回值"));
+    }
+    let modes = sigs.params(&c.name, &m.name).unwrap_or_default();
+    let mut kinds: Vec<Type> = Vec::new();
+    for o in &srcs {
+        match o {
+            Origin::SelfRef => kinds.push(Type::String),
+            Origin::Param(i) => {
+                let Some(p) = m.params.get(*i) else {
+                    return None;
+                };
+                let mode = modes.get(*i).copied().unwrap_or(PMode::Value);
+                if mode != PMode::Ref {
+                    return Some(jr3011(
+                        m.line,
+                        format!("形参 `{}` 按值或可变借用使用，无法借出", p.name),
+                    ));
+                }
+                if !borrowable(&p.ty) {
+                    return Some(jr3011(
+                        m.line,
+                        format!("形参 `{}` 的类型 `{:?}` 不支持借用返回", p.name, p.ty),
+                    ));
+                }
+                if !type_is_class(prog, &p.ty) {
+                    return Some(jr3011(
+                        m.line,
+                        format!("形参 `{}` 不是普通类，无法借出", p.name),
+                    ));
+                }
+                kinds.push(p.ty.clone());
+            }
+        }
+    }
+    if kinds.windows(2).any(|w| w[0] != w[1]) {
+        return Some(jr3011(m.line, "多个返回来源的类型不一致"));
+    }
+    None
+}
+
+/// 普通类（非接口 / 非枚举 / 非泛型）：`Borrow` 返回可以安全落地为 `.clone()`。
+fn type_is_class(prog: &Program, ty: &Type) -> bool {
+    match ty {
+        Type::Named(n) => prog.classes.iter().any(|c| &c.name == n),
+        _ => true,
+    }
+}
+
+fn jr3011(line: usize, why: impl Into<String>) -> Diag {
+    Diag::error_code(line, "JR3011", format!("借用返回的来源无法统一：{}", why.into()))
+        .with_hint("改成返回 owned（显式 `.clone()` / `.to_string()`），或拆成多个方法；也可以让形参保持只读借用。")
 }
 
 /// 接口方法的形参三态（供实现类求并集）。
@@ -409,7 +724,6 @@ fn infer_param_modes(
         types: params.iter().map(|p| p.ty.clone()).collect(),
         value: vec![false; n],
         mutref: vec![false; n],
-        generics,
         prog,
         class,
         self_name,
@@ -452,7 +766,6 @@ struct PUsage<'a> {
     types: Vec<Type>,
     value: Vec<bool>,
     mutref: Vec<bool>,
-    generics: &'a HashSet<String>,
     prog: &'a Program,
     class: Option<&'a ClassDecl>,
     self_name: &'a str,
@@ -508,11 +821,8 @@ impl<'a> PUsage<'a> {
                 self.expr(value, in_spawn);
             }
             Stmt::Return { value: Some(e), .. } => {
-                if let Expr::Ident(n) = unparen(e) {
-                    if let Some(i) = self.idx(n) {
-                        self.mark(i, PMode::Value);
-                    }
-                }
+                // B2：`return p` 不再直接判成 owned —— 先留给返回值来源推断去借出；
+                // 只有显式 `move p` 才是所有权移交。
                 self.expr(e, in_spawn);
             }
             Stmt::Expr { expr, .. } => self.expr(expr, in_spawn),

@@ -1,0 +1,30 @@
+public class Holder {
+    private String v;
+
+    public Holder(String v) {
+        this.v = v;
+    }
+
+    public void set(String v) {
+        this.v = v;
+    }
+
+    public String peek() {
+        return this.v;
+    }
+}
+
+public class Mix {
+    public String borrowMut(Holder h) {
+        h.set("x");
+        return h.peek();
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Mix m = new Mix();
+        Holder h = new Holder("a");
+        println(m.borrowMut(h));
+    }
+}

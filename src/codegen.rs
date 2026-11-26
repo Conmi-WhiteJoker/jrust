@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::{self, PMode, Recv, RetMode, Sigs};
+use crate::analysis::{self, Origin, PMode, Recv, RetMode, Sigs};
 use crate::ast::*;
 use crate::diag::Diag;
 
@@ -101,6 +101,39 @@ impl Env {
 /// 整个程序共用一个错误枚举：单文件模式下所有 `throws` 方法都返回
 /// `Result<T, JrustError>`，跨类 `?` 不需要额外的 `From` 转换。
 const ERROR_ENUM: &str = "JrustError";
+
+/// 借用返回的渲染信息（见 `Codegen::ret_sig`）。
+#[derive(Default)]
+struct RetSig {
+    borrow: bool,
+    /// `&` 后面的类型（`str` / `[T]` / `C` …）。
+    inner: String,
+    /// `Some("'a")` 表示需要显式生命周期。
+    lt: Option<String>,
+    /// 接收者是否要写成 `&'a self`。
+    self_ann: bool,
+    /// 需要写成 `&'a T` 的形参下标。
+    param_ann: HashSet<usize>,
+}
+
+impl RetSig {
+    fn ret_type(&self) -> String {
+        match &self.lt {
+            Some(l) => format!(" -> &{} {}", l, self.inner),
+            None => format!(" -> &{}", self.inner),
+        }
+    }
+
+    /// `<'a, T: Clone>`（`'a` 必须排在最前）。
+    fn generic_decl(&self, type_params: &[TypeParam]) -> String {
+        let base = impl_param_decl(type_params);
+        match &self.lt {
+            Some(l) if base.is_empty() => format!("<{}>", l),
+            Some(l) => format!("<{}, {}", l, &base[1..]),
+            None => base,
+        }
+    }
+}
 
 struct Codegen<'a> {
     prog: &'a Program,
@@ -545,26 +578,26 @@ impl<'a> Codegen<'a> {
         if let Some(r) = recv.as_deref() {
             let (c, _) = self.infer_type(r, env).and_then(|t| self.type_binding(&t))?;
             let s = self.sigs.get(&c, name)?;
-            Some((s.params.clone(), s.ret))
+            Some((s.params.clone(), s.ret.clone()))
         } else {
             let c = env.self_class.clone()?;
             if let Some(s) = self.sigs.get(&c, name) {
-                return Some((s.params.clone(), s.ret));
+                return Some((s.params.clone(), s.ret.clone()));
             }
             self.prog
                 .interfaces
                 .iter()
                 .find_map(|i| self.sigs.get(&i.name, name))
-                .map(|s| (s.params.clone(), s.ret))
+                .map(|s| (s.params.clone(), s.ret.clone()))
         }
     }
 
-    /// 表达式是否是「借出 `this` 字段」的 getter 调用（结果为 `&str`）。
+    /// 表达式是否是「借出字段 / 形参」的调用（结果为 `&T`）。
     fn call_returns_str_ref(&self, e: &Expr, env: &Env) -> bool {
         match strip_parens_expr(e) {
             Expr::Call { recv, name, .. } => self
                 .call_sig(recv, name, env)
-                .map_or(false, |(_, r)| r == RetMode::SelfStrRef),
+                .map_or(false, |(_, r)| r.is_borrow()),
             _ => false,
         }
     }
@@ -824,6 +857,91 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// 借用返回（`-> &T`）里 `&` 后面那截类型。
+    fn borrow_inner(&self, ty: &Type) -> String {
+        match ty {
+            Type::String => "str".to_string(),
+            Type::List(inner) | Type::Array(inner) => format!("[{}]", self.rust_type(inner)),
+            Type::Map(k, v) => format!(
+                "HashMap<{}, {}>",
+                self.rust_type(k),
+                self.rust_type(v)
+            ),
+            Type::Set(inner) => format!("HashSet<{}>", self.rust_type(inner)),
+            Type::Named(n) if self.ifaces.contains(n) => format!("dyn {}", n),
+            other => self.rust_type(other),
+        }
+    }
+
+    /// 带生命周期的借用形参：`&'a str`。
+    fn param_type_lt(&self, mode: PMode, ty: &Type, lt: Option<&str>) -> String {
+        match (mode, lt) {
+            (PMode::Ref, Some(l)) => format!("&{} {}", l, self.borrow_inner(ty)),
+            _ => self.param_type(mode, ty),
+        }
+    }
+
+    /// 返回值签名（B2）：是否借出、`&` 后的类型、是否需要显式 `'a`、哪些输入标注 `'a`。
+    fn ret_sig(
+        &self,
+        ty: &str,
+        name: &str,
+        params: &[Param],
+        modes: &[PMode],
+        recv_mut: bool,
+    ) -> RetSig {
+        let RetMode::Borrow(srcs) = self.sigs.ret(ty, name) else {
+            return RetSig::default();
+        };
+        let inner = srcs
+            .iter()
+            .find_map(|o| match o {
+                Origin::SelfRef => Some("str".to_string()),
+                Origin::Param(i) => params.get(*i).map(|p| self.borrow_inner(&p.ty)),
+            })
+            .unwrap_or_else(|| "str".to_string());
+
+        // 借用输入 = `&self` / `&mut self` + 所有非 Value 形参（含 `&mut`）。
+        let self_input = true;
+        let ref_params: Vec<usize> = (0..params.len())
+            .filter(|i| {
+                let mode = self.effective_mode(
+                    modes.get(*i).copied().unwrap_or(PMode::Value),
+                    &params[*i].ty,
+                );
+                !mode.is_value()
+            })
+            .collect();
+        let inputs = ref_params.len() + usize::from(self_input);
+
+        // 生命周期省略：唯一的借用输入恰好就是唯一的来源。
+        let elide = inputs == 1
+            && srcs.len() == 1
+            && match srcs[0] {
+                Origin::SelfRef => self_input && !recv_mut,
+                Origin::Param(i) => !self_input && ref_params == vec![i],
+            };
+        let lt = if elide { None } else { Some("'a".to_string()) };
+        let self_ann = !elide && srcs.contains(&Origin::SelfRef);
+        let param_ann: HashSet<usize> = if elide {
+            HashSet::new()
+        } else {
+            srcs.iter()
+                .filter_map(|o| match o {
+                    Origin::Param(i) => Some(*i),
+                    Origin::SelfRef => None,
+                })
+                .collect()
+        };
+        RetSig {
+            borrow: true,
+            inner,
+            lt,
+            self_ann,
+            param_ann,
+        }
+    }
+
     // ---------- 顶层 ----------
 
     fn run(&mut self, src_name: &str) {
@@ -930,10 +1048,11 @@ impl<'a> Codegen<'a> {
             let recv_mut = self.sigs.recv(&iface.name, &m.name) == Recv::Mut;
             let mutated = m.body.as_ref().map(|b| self.collect_mutated_with_sigs(b));
             let modes = self.param_modes(&iface.name, &m.name);
-            let mut ps = vec![if recv_mut {
-                "&mut self".to_string()
-            } else {
-                "&self".to_string()
+            let rs = self.ret_sig(&iface.name, &m.name, &m.params, &modes, recv_mut);
+            let mut ps = vec![match (recv_mut, rs.self_ann) {
+                (true, _) => "&mut self".to_string(),
+                (false, true) => "&'a self".to_string(),
+                (false, false) => "&self".to_string(),
             }];
             for (i, p) in m.params.iter().enumerate() {
                 // 只有默认方法才在形参上写 `mut`；纯声明不涉及方法体。
@@ -944,16 +1063,21 @@ impl<'a> Codegen<'a> {
                 };
                 let raw = modes.get(i).copied().unwrap_or(PMode::Value);
                 let mode = self.effective_mode(raw, &p.ty);
+                let lt = if rs.param_ann.contains(&i) {
+                    rs.lt.as_deref()
+                } else {
+                    None
+                };
                 ps.push(format!(
                     "{}{}: {}",
                     mut_kw,
                     p.name,
-                    self.param_type(mode, &p.ty)
+                    self.param_type_lt(mode, &p.ty, lt)
                 ));
             }
-            let ret_borrow = self.sigs.ret(&iface.name, &m.name) == RetMode::SelfStrRef;
+            let ret_borrow = rs.borrow;
             let ret = if ret_borrow {
-                " -> &str".to_string()
+                rs.ret_type()
             } else if m.ret == Type::Void {
                 String::new()
             } else {
@@ -962,7 +1086,7 @@ impl<'a> Codegen<'a> {
             let sig = format!(
                 "fn {}{}({}){}",
                 m.name,
-                impl_param_decl(&m.type_params),
+                rs.generic_decl(&m.type_params),
                 ps.join(", "),
                 ret
             );
@@ -985,6 +1109,7 @@ impl<'a> Codegen<'a> {
                     }
                     env.mutated = mutated.clone().unwrap_or_default();
                     env.self_class = Some(iface.name.clone());
+                    env.ret_borrow = ret_borrow;
                     let prev = self.in_method;
                     self.in_method = !m.is_static;
                     self.gen_stmts(body, &mut env);
@@ -1556,28 +1681,34 @@ impl<'a> Codegen<'a> {
         let mutated = self.collect_mutated_with_sigs(&m.body);
         let recv_mut = self.sigs.recv(class_name, &m.name) == Recv::Mut;
         let modes = self.param_modes(class_name, &m.name);
+        let rs = self.ret_sig(class_name, &m.name, &m.params, &modes, recv_mut);
         let mut ps = Vec::new();
         if !m.is_static {
-            ps.push(if recv_mut {
-                "&mut self".to_string()
-            } else {
-                "&self".to_string()
+            ps.push(match (recv_mut, rs.self_ann) {
+                (true, _) => "&mut self".to_string(),
+                (false, true) => "&'a self".to_string(),
+                (false, false) => "&self".to_string(),
             });
         }
         for (i, p) in m.params.iter().enumerate() {
             let raw = modes.get(i).copied().unwrap_or(PMode::Value);
             let mode = self.effective_mode(raw, &p.ty);
             let mut_kw = if mutated.contains(&p.name) { "mut " } else { "" };
+            let lt = if rs.param_ann.contains(&i) {
+                rs.lt.as_deref()
+            } else {
+                None
+            };
             ps.push(format!(
                 "{}{}: {}",
                 mut_kw,
                 p.name,
-                self.param_type(mode, &p.ty)
+                self.param_type_lt(mode, &p.ty, lt)
             ));
         }
-        let ret_borrow = self.sigs.ret(class_name, &m.name) == RetMode::SelfStrRef;
+        let ret_borrow = rs.borrow;
         let ret = if ret_borrow {
-            " -> &str".to_string()
+            rs.ret_type()
         } else if m.ret == Type::Void {
             if throws {
                 format!(" -> Result<(), {}>", ERROR_ENUM)
@@ -1602,7 +1733,7 @@ impl<'a> Codegen<'a> {
             vis,
             if m.is_async { "async " } else { "" },
             m.name,
-            impl_param_decl(&m.type_params),
+            rs.generic_decl(&m.type_params),
             ps.join(", "),
             ret
         ));
@@ -1795,14 +1926,19 @@ impl<'a> Codegen<'a> {
                 match value {
                     Some(e) => {
                         let ret = env.ret.clone();
-                        // 返回 `this` 的字段时从 `&self` 搬不走，必须复制；
-                        // 但「借出 String 字段」的方法（`-> &str`）保持借用本身。
-                        let copy = self.is_self_field(e, env) && !env.ret_borrow;
-                        let mut v = self.gen_assigned_value(e, &ret, env, copy, None);
-                        if env.ret_borrow && self.is_self_field(e, env) {
-                            // `-> &str`：`return self.f;` 要显式取借用。
-                            v = format!("&{}", v);
-                        }
+                        let v = if env.ret_borrow {
+                            // `-> &T`：来源本身就是引用（形参 / 调用结果），字段访问才补 `&`。
+                            let raw = self.gen_expr(e, env, None);
+                            if matches!(strip_parens_expr(e), Expr::Field(..)) {
+                                format!("&{}", raw)
+                            } else {
+                                raw
+                            }
+                        } else {
+                            // 返回 `this` 的字段时从 `&self` 搬不走，必须复制。
+                            let copy = self.is_self_field(e, env);
+                            self.gen_assigned_value(e, &ret, env, copy, None)
+                        };
                         if env.in_throws {
                             self.emit(&format!("return Ok({});", v));
                         } else {
@@ -3067,11 +3203,13 @@ impl<'a> Codegen<'a> {
                 return format!("({}) as i64", call);
             }
         }
-        // 借用返回（`-> &str`）落到 owned 上下文时补 `.to_string()`。
-        if matches!(expect, Some(Type::String))
-            && sig.map_or(false, |s| s.1 == RetMode::SelfStrRef)
-        {
-            return format!("{}.to_string()", call);
+        // 借用返回（`-> &T`）落到 owned 上下文时做落地转换。
+        if let Some(exp) = expect {
+            if !matches!(exp, Type::Void)
+                && sig.as_ref().map_or(false, |s| s.1.is_borrow())
+            {
+                return self.owned_from_borrow(call, exp);
+            }
         }
         call
     }
