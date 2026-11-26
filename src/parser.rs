@@ -454,13 +454,24 @@ impl Parser {
         };
 
         let mut implements = Vec::new();
+        let mut is_exception = false;
         if self.eat_kw(Kw::Extends) {
-            self.diags.push(
-                Diag::error(line, "jrust 不支持类继承（extends）").with_hint(
-                    "Rust 没有继承：共享行为抽成 interface（→ trait），共享数据放进字段，组合优于继承。",
-                ),
-            );
-            self.expect_ident();
+            // JR-C6：只允许 `extends Exception` / `extends RuntimeException`（自定义异常），
+            // 其余父类仍按「Rust 没有继承」报错。
+            let mut segs = vec![self.expect_ident()];
+            while self.eat_punct(".") {
+                segs.push(self.expect_ident());
+            }
+            let base = segs.last().cloned().unwrap_or_default();
+            if base == "Exception" || base == "RuntimeException" {
+                is_exception = true;
+            } else {
+                self.diags.push(
+                    Diag::error(line, "jrust 不支持类继承（extends）").with_hint(
+                        "Rust 没有继承：共享行为抽成 interface（→ trait），共享数据放进字段，组合优于继承。唯一例外是 `extends Exception`（自定义异常）。",
+                    ),
+                );
+            }
             self.skip_generic_args();
         }
         if self.eat_kw(Kw::Implements) {
@@ -491,6 +502,7 @@ impl Parser {
             name: name.clone(),
             attrs,
             docs,
+            is_exception,
             type_params,
             implements,
             fields: Vec::new(),

@@ -1,0 +1,14 @@
+public class Checker {
+    public static void check(int n) {
+        if (n < 0) {
+            throw new IllegalArgumentException("negative: " + n);
+        }
+        System.out.println("ok");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Checker.check(1);
+    }
+}

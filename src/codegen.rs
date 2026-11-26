@@ -648,7 +648,9 @@ impl<'a> Codegen<'a> {
         }
         for class in &prog.classes {
             let has_main = class.methods.iter().any(|m| m.is_static && m.name == "main");
-            if !has_main {
+            if class.is_exception {
+                self.gen_exception(class);
+            } else if !has_main {
                 self.gen_class(class);
             }
         }
@@ -869,8 +871,8 @@ impl<'a> Codegen<'a> {
         self.emit(&format!("impl std::error::Error for {} {{}}", ERROR_ENUM));
         self.blank();
 
-        for name in types {
-            let Some(src) = std_error_source(&name) else {
+        for name in &types {
+            let Some(src) = std_error_source(name) else {
                 continue;
             };
             self.emit(&format!("impl From<{}> for {} {{", src, ERROR_ENUM));
@@ -883,6 +885,66 @@ impl<'a> Codegen<'a> {
             self.emit("}");
             self.blank();
         }
+        // JR-C6：自定义异常类 → `From<X> for JrustError`，`?` 可直接传播。
+        for class in &self.prog.classes {
+            if class.is_exception && types.contains(&class.name) {
+                self.emit(&format!(
+                    "impl From<{}> for {} {{",
+                    class.name, ERROR_ENUM
+                ));
+                self.indent += 1;
+                self.emit(&format!(
+                    "fn from(e: {}) -> Self {{ {}::{}(e.message) }}",
+                    class.name, ERROR_ENUM, class.name
+                ));
+                self.indent -= 1;
+                self.emit("}");
+                self.blank();
+            }
+        }
+    }
+
+    /// 自定义异常类（JR-C6）：`class X extends Exception` → `struct X` + `Display` + `Error`。
+    fn gen_exception(&mut self, class: &ClassDecl) {
+        self.marker(class.line);
+        self.emit_docs(&class.docs);
+        for l in self.attr_lines(&class.attrs) {
+            self.emit(&l);
+        }
+        self.cur_line = class.line;
+        self.emit("#[derive(Debug, Clone)]");
+        self.emit(&format!("pub struct {} {{", class.name));
+        self.indent += 1;
+        self.emit("pub message: String,");
+        self.indent -= 1;
+        self.emit("}");
+        self.blank();
+
+        self.emit(&format!("impl {} {{", class.name));
+        self.indent += 1;
+        self.emit("pub fn new(message: impl Into<String>) -> Self {");
+        self.indent += 1;
+        self.emit("Self { message: message.into() }");
+        self.indent -= 1;
+        self.emit("}");
+        self.indent -= 1;
+        self.emit("}");
+        self.blank();
+
+        self.emit(&format!("impl std::fmt::Display for {} {{", class.name));
+        self.indent += 1;
+        self.emit("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+        self.indent += 1;
+        self.emit(&format!(
+            "write!(f, \"{}: {{}}\", self.message)",
+            class.name
+        ));
+        self.indent -= 1;
+        self.emit("}");
+        self.indent -= 1;
+        self.emit("}");
+        self.emit(&format!("impl std::error::Error for {} {{}}", class.name));
+        self.blank();
     }
 
     /// `static final` 字段 → 模块级 `pub const`（JR-D8）。
@@ -1607,6 +1669,27 @@ impl<'a> Codegen<'a> {
             Stmt::Throw { expr, line } => {
                 self.cur_line = *line;
                 self.marker(*line);
+                // JR-C6：`IllegalArgumentException` 属于编程错误，Rust 里用 panic! 表达，
+                // 不需要 `throws`，也不进入错误枚举。
+                if let Expr::New { class, args, .. } = expr {
+                    if simple_type_name(class) == "IllegalArgumentException" {
+                        let msg = match args.len() {
+                            0 => "\"\"".to_string(),
+                            1 => self.gen_expr(&args[0], env, Some(&Type::String)),
+                            _ => {
+                                self.err_code(
+                                    "JR3021",
+                                    "`throw new IllegalArgumentException` 只支持 0 或 1 个参数",
+                                    "把补充信息拼进同一个字符串。",
+                                );
+                                "\"\"".to_string()
+                            }
+                        };
+                        self.emit("// jrust 提示: IllegalArgumentException 是编程错误，Rust 里用 panic! 表达");
+                        self.emit(&format!("panic!(\"{{}}\", {});", msg));
+                        return;
+                    }
+                }
                 if !env.in_throws {
                     self.err_code(
                         "JR3021",

@@ -142,6 +142,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `break;` / `continue;` | `break;` / `continue;` | 只支持无标签形式；`outer:` / `break outer;` / `continue outer;` 报 `JR2004` | [负向用例](tests/conformance/L1/neg_labeled.jrust) |
 | `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
 | `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
+| `class X extends Exception` / `throw new IllegalArgumentException("…")` | `struct X` + `impl Error`；`panic!` | 自定义异常自动生成 `Display` / `Error` / `From<X> for JrustError`；`IllegalArgumentException` 视为编程错误直接 panic | [自定义异常](tests/conformance/L1/ok_custom_exception.jrust) · [IAE](tests/conformance/L1/ok_illegal_arg.jrust) |
 | `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort.jrust) |
 | `String s = "n=" + n;` | `let s: String = format!("n={}", n);` | 任意位置的字符串 `+` 链 → `format!`；纯字面量折叠成 `"ab".to_string()` | [L1 用例](tests/conformance/L1/ok_concat.jrust) |

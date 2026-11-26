@@ -237,10 +237,15 @@ run_ok ok_docs
 run_ok ok_set
 run_ok ok_for_mutable
 run_ok ok_iface_extends
+run_ok ok_illegal_arg
+run_ok ok_custom_exception
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'
 run_build_has ok_async_main 'async fn main'
+run_build_has ok_illegal_arg 'panic!'
+run_build_has ok_custom_exception 'pub struct AppError'
+run_build_has ok_custom_exception 'impl std::error::Error for AppError'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"

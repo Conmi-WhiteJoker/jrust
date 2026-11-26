@@ -1,0 +1,17 @@
+public class AppError extends Exception {
+}
+
+public class Runner {
+    public static void run(int n) throws AppError {
+        if (n < 0) {
+            throw new AppError("bad " + n);
+        }
+        System.out.println("ok");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) throws AppError {
+        Runner.run(1)?;
+    }
+}

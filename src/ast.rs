@@ -133,6 +133,8 @@ pub struct ClassDecl {
     pub name: String,
     pub attrs: Vec<Attr>,
     pub docs: Vec<String>,
+    /// `class X extends Exception`：自定义异常类（JR-C6），生成 `struct X` + `impl Error`。
+    pub is_exception: bool,
     /// 类级类型参数：`class Box<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     /// `implements A, B<Integer>`：`Named` 或 `Generic`。
