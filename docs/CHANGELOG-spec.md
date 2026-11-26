@@ -218,3 +218,29 @@
   结构树说明改为「全部目录式，runner 仍兼容扁平历史写法」。
 - 生成产物 `main.rs` 就近落在各用例目录，被 `.gitignore` 的 `/tests/conformance/**/*.rs` 覆盖。
 - 验证：`tests/l1_cases.sh` **120 通过 0 失败**。
+
+## v1.22 — 2026-11-26
+
+### 修复（P1）
+
+- **`-D warnings` 下产物编不过**：`raw` 外层的来源映射括号会触发 `unused_parens`，
+  生成头的 `allow` 只有 4 项。补上 `unused_parens`（`src/codegen.rs`），并新增
+  `run_strict_warnings` 用例（对 `ok_raw` 产物跑 `rustc -D warnings`，变异验证过灵敏度）。
+- **`verify <目录>` 丢 `[[bin]]`**：白名单重建 manifest 时把原 `[[bin]]` 全丢、统一改名
+  `jrust-verify-tree`。现在把 `path` 能映射到待验目录内、且确实是 jrust 产物的 bin 按原名保留；
+  手写 `.rs` / 目录外目标跳过（它们在临时工程里无法重建）。
+- **lib-only 多文件工程不能验**：`plan_tree` 在「没有含 main 的根」时直接报错。现在按 lib crate
+  处理（根产物 `lib.rs`，顶层包 `pub mod` 自动写入），与单文件 `verify --crate-type lib` 对齐；
+  `jrust build <目录>` 同样受益。新增 `run_verify_tree_lib`（正向 + 负向映射到 `.jrust` 行）。
+
+### 澄清（不是 bug）
+
+- **「多行 raw 破坏 rustfmt --check」不成立**：复核发现产物本来就不做 rustfmt 归一化
+  （13 个例程里 4 个因长行/结构体字面量本来就不 fmt-clean），多行 raw 的缩进与生成嵌套
+  1:1 对应，`rustfmt --check` 实测通过。因此不改缩进（改了反而会破坏多行字符串字面量），
+  而是修正文档口径：SPEC **JR-G9** 由「产物必须通过 rustfmt --check」改为
+  「不追求整份 fmt-clean，但必须能编译、且在 -D warnings 下干净」。
+
+### 验收
+
+`./verify.sh` 全绿：L1 **122 通过 0 失败**，新增 `vtree_lib` / `strict_warnings` 两项。

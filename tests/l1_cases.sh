@@ -626,6 +626,80 @@ run_verify_tree_manifest() {
     pass=$((pass + 1))
 }
 
+# L2 续：无 main 的多文件工程按 lib crate 校验（此前报「没有含 main 的 crate 根」，与
+# 单文件模式支持 `--crate-type lib` 的行为不一致）。负向用例证明它真的编了 lib 而不是空跑。
+run_verify_tree_lib() {
+    local work="$TMP/vtree_lib"
+    rm -rf "$work"
+    mkdir -p "$work"
+    cat > "$work/Cargo.toml" <<'EOF'
+[package]
+name = "vtree-lib"
+version = "0.1.0"
+edition = "2021"
+EOF
+    cat > "$work/shape.jrust" <<'EOF'
+package shape;
+
+class Point {
+    public int x;
+    public Point(int x) { this.x = x; }
+}
+EOF
+    if ! $JRUST verify "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_lib：lib-only 工程本应通过"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    # 负向：raw 里调用不存在的方法，错误必须映射回 shape.jrust 的行。
+    cat > "$work/shape.jrust" <<'EOF'
+package shape;
+
+class Point {
+    public int x;
+    public Point(int x) { this.x = x; }
+    public int bad() {
+        return raw { self.nope() };
+    }
+}
+EOF
+    if $JRUST verify "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_lib_bad：本应报错却成功了（lib 没真正编译？）"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -qE 'shape\.jrust:[0-9]+ - rustc error\[E[0-9]+\]' "$TMP/out"; then
+        echo "FAIL vtree_lib_bad：错误没有映射回 shape.jrust 行"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS vtree_lib"
+    pass=$((pass + 1))
+}
+
+# 产物开 `-D warnings` 也必须干净：raw 外层括号会触发 unused_parens，
+# 生成头的 allow 列表必须覆盖它（此前只有 4 项，用户开 -D warnings 就编不过）。
+run_strict_warnings() {
+    local base=ok_raw
+    case_paths "$base"
+    if ! $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
+        echo "FAIL strict_warnings：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! rustc --edition 2021 -D warnings "$CASE_RS" -o "$TMP/strict" >"$TMP/out" 2>&1; then
+        echo "FAIL strict_warnings：产物在 -D warnings 下编译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS strict_warnings"
+    pass=$((pass + 1))
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -761,6 +835,8 @@ run_l2_missing_dep
 run_verify_tree
 run_verify_tree_bad
 run_verify_tree_manifest
+run_verify_tree_lib
+run_strict_warnings
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

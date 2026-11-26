@@ -51,7 +51,8 @@ cargo build
 # 转译 + rustc 编译校验，rustc 报错映射回 .jrust 行（不带参数时跑一致性套件）
 ./target/debug/jrust verify examples/HelloWorld/main.jrust
 
-# 多文件工程：按整 crate 走 cargo build（依赖以最近的 Cargo.toml 为准，有 Cargo.lock 就复用）
+# 多文件工程：按整 crate 走 cargo build（依赖以最近的 Cargo.toml 为准，有 Cargo.lock 就复用；
+# 没有 main 的工程按 lib crate 校验，[[bin]] 指向 jrust 产物的会按原名保留）
 ./target/debug/jrust verify tests/l2/src
 
 # 格式化 .jrust（4 空格缩进，raw 块原样保留）

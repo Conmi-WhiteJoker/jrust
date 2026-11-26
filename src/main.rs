@@ -285,7 +285,12 @@ fn strip_ansi(s: &str) -> String {
 /// `[workspace]` + members、crate 内 `path` 依赖（相对路径在临时目录下不存在）。
 /// 因此这里只保留 `[package]` 的 name/version/edition 与依赖段，其余（含 `[workspace]`、
 /// target 段、features、profile）全部丢弃；确实搬不走的情况给出明确诊断。
-fn build_verify_manifest(text: &str, root_out: &Path) -> Result<String, String> {
+fn build_verify_manifest(
+    text: &str,
+    manifest_dir: &Path,
+    dir: &Path,
+    plan: &TreePlan,
+) -> Result<String, String> {
     // 按 section 切块：块名 + 原始行。
     let mut blocks: Vec<(String, Vec<String>)> = vec![(String::new(), Vec::new())];
     for raw in text.lines() {
@@ -302,6 +307,8 @@ fn build_verify_manifest(text: &str, root_out: &Path) -> Result<String, String> 
     let mut version: Option<String> = None;
     let mut edition: Option<String> = None;
     let mut dep_blocks: Vec<(String, Vec<String>)> = Vec::new();
+    // `[[bin]]` 原样保留（重定位到待验目录后），否则多 bin 工程只会验到 crate 根那一个。
+    let mut bin_blocks: Vec<(Option<String>, String)> = Vec::new();
 
     for (section, lines) in &blocks {
         match section.as_str() {
@@ -366,6 +373,24 @@ fn build_verify_manifest(text: &str, root_out: &Path) -> Result<String, String> 
                 }
                 dep_blocks.push((section.clone(), lines.clone()));
             }
+            "bin" => {
+                let mut bin_name: Option<String> = None;
+                let mut bin_path: Option<String> = None;
+                for l in lines {
+                    let t = l.trim();
+                    if let Some((k, v)) = t.split_once('=') {
+                        let v = v.trim().trim_matches('"').to_string();
+                        match k.trim() {
+                            "name" => bin_name = Some(v),
+                            "path" => bin_path = Some(v),
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(p) = bin_path {
+                    bin_blocks.push((bin_name, p));
+                }
+            }
             // `[workspace]` 及一切其它段：丢弃 —— 临时工程是独立 crate，不是 workspace 成员。
             _ => {}
         }
@@ -387,10 +412,35 @@ fn build_verify_manifest(text: &str, root_out: &Path) -> Result<String, String> 
             }
         }
     }
-    out.push_str(&format!(
-        "\n[[bin]]\nname = \"jrust-verify-tree\"\npath = \"{}\"\n",
-        root_out.to_string_lossy().replace('\\', "/")
-    ));
+    // 原 [[bin]] 的 path 相对 manifest 目录；映射到待验目录内、且确实是 jrust 产物的才保留
+    // （手写 .rs、待验目录之外的目标都无法在临时工程里重建，跳过）。
+    let mut bins: Vec<(String, String)> = Vec::new();
+    for (name, path) in bin_blocks {
+        let rel = match manifest_dir.join(&path).strip_prefix(dir) {
+            Ok(r) => r.to_path_buf(),
+            Err(_) => continue,
+        };
+        if !plan.files.contains_key(&rel) {
+            continue;
+        }
+        let name = name.unwrap_or_else(|| {
+            rel.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "bin".to_string())
+        });
+        bins.push((name, rel.to_string_lossy().replace('\\', "/")));
+    }
+    let root = plan.root_out.to_string_lossy().replace('\\', "/");
+    if plan.lib_mode {
+        out.push_str(&format!("\n[lib]\npath = \"{}\"\n", root));
+    } else {
+        if !bins.iter().any(|(_, p)| p == &root) {
+            bins.push(("jrust-verify-tree".to_string(), root));
+        }
+        for (name, path) in bins {
+            out.push_str(&format!("\n[[bin]]\nname = \"{}\"\npath = \"{}\"\n", name, path));
+        }
+    }
     Ok(out)
 }
 
@@ -616,6 +666,8 @@ fn insert_mod_block(code: &mut String, block: &str) {
 struct TreePlan {
     files: BTreeMap<PathBuf, String>,
     root_out: PathBuf,
+    /// 没有含 `main` 的根，按 lib crate 处理（根产物 `lib.rs`）。
+    lib_mode: bool,
 }
 
 /// 多文件模式构建（JR-S4/M3）：
@@ -760,15 +812,16 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         .filter(|(_, u)| u.has_main)
         .map(|(i, _)| i)
         .collect();
-    if roots.is_empty() {
-        eprintln!("多文件项目里没有含 main 的 crate 根文件");
-        return None;
-    }
     if roots.len() > 1 {
         eprintln!("多文件项目里只能有一个含 main 的 crate 根文件");
         return None;
     }
-    let root_out = units[roots[0]].out_rel.clone();
+    // 没有 main：按 lib crate 处理，根产物为 `lib.rs`（与单文件 `verify --crate-type lib` 对齐）。
+    // 顶层包的 `pub mod` 声明由下面的 children 机制写进根产物。
+    let (root_out, lib_mode) = match roots.first() {
+        Some(i) => (units[*i].out_rel.clone(), false),
+        None => (PathBuf::from("lib.rs"), true),
+    };
 
     // JR-M4：工程内所有 package 的顶层段都是本地模块，其余 import 按外部 crate 校验。
     let local_roots: HashSet<String> = units
@@ -891,6 +944,7 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
     Some(TreePlan {
         files: files_out,
         root_out,
+        lib_mode,
     })
 }
 
@@ -1288,11 +1342,12 @@ fn verify_tree(dir: &Path) -> bool {
         }
     }
     let manifest_text = std::fs::read_to_string(&manifest).unwrap_or_default();
-    // 白名单重建：只保留 package 元信息与依赖段（见 build_verify_manifest 的说明）。
-    let bin_manifest = match build_verify_manifest(&manifest_text, &plan.root_out) {
+    let manifest_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    // 白名单重建：只保留 package 元信息、依赖段与可达的 [[bin]]/[lib]（见 build_verify_manifest）。
+    let bin_manifest = match build_verify_manifest(&manifest_text, manifest_dir, dir, &plan) {
         Ok(m) => m,
         Err(msg) => {
-            eprintln!("{}/Cargo.toml: {}", manifest.parent().unwrap_or(&manifest).display(), msg);
+            eprintln!("{}/Cargo.toml: {}", manifest_dir.display(), msg);
             cleanup();
             return false;
         }

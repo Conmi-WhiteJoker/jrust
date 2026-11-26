@@ -1009,7 +1009,9 @@ impl<'a> Codegen<'a> {
             src_name
         ));
         self.emit("// 每段代码前的 `// jrust:L<行号>` 指向 .jrust 源码行。");
-        self.emit("#![allow(dead_code, unused_variables, unused_mut, unused_imports)]");
+        self.emit(
+            "#![allow(dead_code, unused_variables, unused_mut, unused_imports, unused_parens)]",
+        );
         // `java.*` 的 import 只需让 jrust 认识类型名，不生成代码；
         // 其余路径当作 Rust 的 use 原样输出（圆点转 `::`），例如 import std.vec.Vec;
         let imports = self.prog.imports.clone();
@@ -2696,7 +2698,8 @@ impl<'a> Codegen<'a> {
             Expr::Raw { code, line } => {
                 // 表达式位置：保留源映射标记（JR-X1）。
                 //
-                // 单行：`(/* jrust:L */ x)` —— 稳定过 `rustfmt --check`（JR-G9）。
+                // 单行：`(/* jrust:L */ x)` —— 保持单行，便于与源码对拍。
+                // （产物不做 rustfmt 归一化，不承诺整份文件 `rustfmt --check` 通过，见 SPEC §15。）
                 // 多行：必须保留块表达式外壳 `{ … }`。多行 raw 体内常有 `let` 等语句，
                 // `(/* jrust:L */let x = 1; x)` 不是合法表达式（rustc: expected expression）。
                 let body = code.trim_end();
