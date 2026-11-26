@@ -974,37 +974,37 @@ run_build_lacks ok_spawn_raw '__jr_sp0_s'
 # 缺口 3：外部 crate 构造器的实参按 owned 生成，不做借用推断。
 run_deps_ctor
 
-run_neg neg_try_without_throws JR3018 "给当前方法签名加"
-run_neg neg_switch_int JR3019 "int / String"
-run_neg neg_switch_incomplete JR3019 "补上缺少的 case"
-run_neg neg_fallthrough JR3020 "给该分支补"
-run_neg neg_throw_without_throws JR3021 "在方法签名后加"
-run_neg neg_throw_undeclared JR3021 "在方法签名里声明"
-run_neg neg_null_assign JR3005 "改用一个非空值"
-run_neg neg_nullable_method JR3006 "先判空再取出来"
-run_neg neg_cfor_step JR2003 "步长不为 1"
-run_neg neg_cfor_dir JR2003 "方向不一致"
-run_neg neg_newarray_type JR3014 "只支持标量 / String"
-run_neg neg_wildcard JR3010 "trait object"
-run_neg neg_mutable_static JR3013 "可变全局"
-run_neg neg_await_sync JR3022 "async"
+run_neg neg_try_without_throws JR3018 "给当前方法签名加" 4
+run_neg neg_switch_int JR3019 "int / String" 4
+run_neg neg_switch_incomplete JR3019 "补上缺少的 case" 9
+run_neg neg_fallthrough JR3020 "给该分支补" 5
+run_neg neg_throw_without_throws JR3021 "在方法签名后加" 3
+run_neg neg_throw_undeclared JR3021 "在方法签名里声明" 3
+run_neg neg_null_assign JR3005 "改用一个非空值" 3
+run_neg neg_nullable_method JR3006 "先判空再取出来" 16
+run_neg neg_cfor_step JR2003 "步长不为 1" 3
+run_neg neg_cfor_dir JR2003 "方向不一致" 3
+run_neg neg_newarray_type JR3014 "只支持标量 / String" 3
+run_neg neg_wildcard JR3010 "trait object" 6
+run_neg neg_mutable_static JR3013 "可变全局" 3
+run_neg neg_await_sync JR3022 "async" 4
 run_neg neg_spawn_this JR3023 "this" 13
-run_neg neg_iface_static_no_body JR3024 "必须有方法体"
-run_neg neg_iter_unknown JR3017 "白名单"
-run_neg neg_sync_target JR3026 "this.f"
-run_neg neg_labeled JR2004 "不支持带标签"
-run_neg neg_raw_nested JR3027 "不能嵌套"
-run_neg neg_mutable_set JR3028 "只适用于 List"
-run_neg neg_return_this JR4003 "静态工厂"
-run_neg neg_conflict JR4001 "所有权已经移走"
-run_neg neg_borrow_field JR3011 "无法统一"
-run_neg neg_override_conflict JR4001 "需要它的所有权"
+run_neg neg_iface_static_no_body JR3024 "必须有方法体" 3
+run_neg neg_iter_unknown JR3017 "白名单" 6
+run_neg neg_sync_target JR3026 "this.f" 5
+run_neg neg_labeled JR2004 "不支持带标签" 4
+run_neg neg_raw_nested JR3027 "不能嵌套" 4
+run_neg neg_mutable_set JR3028 "只适用于 List" 6
+run_neg neg_return_this JR4003 "静态工厂" 11
+run_neg neg_conflict JR4001 "所有权已经移走" 18
+run_neg neg_borrow_field JR3011 "无法统一" 18
+run_neg neg_override_conflict JR4001 "需要它的所有权" 9
 # Stage D：JR4001 的另外五类触发（此前只有「存字段」一类有用例）。
-run_neg neg_override_ref_mutates JR4001 "会修改它"
-run_neg neg_override_scalar JR4001 "按值复制"
-run_neg neg_override_generic JR4001 "泛型类型参数一律按值"
-run_neg neg_override_static JR4001 "静态方法没有"
-run_neg neg_override_iface JR4001 "实现签名冲突"
+run_neg neg_override_ref_mutates JR4001 "会修改它" 3
+run_neg neg_override_scalar JR4001 "按值复制" 3
+run_neg neg_override_generic JR4001 "泛型类型参数一律按值" 9
+run_neg neg_override_static JR4001 "静态方法没有" 3
+run_neg neg_override_iface JR4001 "实现签名冲突" 8
 # parser 层注解错误（无诊断码）：位置、参数、互斥。
 run_neg_plain neg_override_misplaced "只能写在方法形参上" "写在方法签名或接口方法声明的形参前"
 run_neg_plain neg_override_args "不接受参数" "括号里什么都不用填"

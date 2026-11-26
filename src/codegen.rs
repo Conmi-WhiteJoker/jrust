@@ -2411,7 +2411,7 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
-                self.gen_switch(subject, cases, default, env);
+                self.gen_switch(subject, cases, default, *line, env);
             }
         }
     }
@@ -2422,6 +2422,7 @@ impl<'a> Codegen<'a> {
         subject: &Expr,
         cases: &[SwitchCase],
         default: &Option<Vec<Stmt>>,
+        line: usize,
         env: &mut Env,
     ) {
         let sty = self.infer_type(subject, env);
@@ -2576,6 +2577,8 @@ impl<'a> Codegen<'a> {
             missing.clear();
         }
         if !missing.is_empty() {
+            // 报在 `switch` 行本身，而不是最后一个 case 体的末行。
+            self.cur_line = line;
             self.err_code(
                 "JR3019",
                 format!("switch 没有覆盖全部可能值，缺少：{}", missing.join(", ")),
