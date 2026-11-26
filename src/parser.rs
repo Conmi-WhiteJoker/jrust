@@ -330,10 +330,19 @@ impl Parser {
                     let line = self.line();
                     self.bump();
                     let mut path = String::new();
+                    // 路径里出现关键字（如 `package move.thing;`）不能静默跳过：跳过会让
+                    // 路径少一段，产物变成 `crate::::thing::Thing` 这种非法 Rust（JR-L1）。
+                    let mut bad_kw: Option<String> = None;
                     while !self.at_eof() && !self.check_punct(";") {
                         match self.peek().clone() {
                             Tok::Ident(s) => {
                                 path.push_str(&s);
+                                self.bump();
+                            }
+                            Tok::Kw(k) => {
+                                if bad_kw.is_none() {
+                                    bad_kw = Some(kw_text(k).to_string());
+                                }
                                 self.bump();
                             }
                             Tok::Punct(".") => {
@@ -350,6 +359,22 @@ impl Parser {
                         }
                     }
                     self.eat_punct(";");
+                    if let Some(kw) = bad_kw {
+                        self.diags.push(
+                            Diag::error(
+                                line,
+                                format!(
+                                    "`{}` 里的 `{}` 是 jrust / Rust 关键字，不能用作包名或类名",
+                                    if is_package { "package" } else { "import" },
+                                    kw
+                                ),
+                            )
+                            .with_hint(
+                                "换一个不含关键字的目录名 / 类名，例如 `app.thing` 而不是 `move.thing`。",
+                            ),
+                        );
+                        continue;
+                    }
                     if is_package {
                         // 多文件模式（JR-S4/M3）：`package a.b.c;` 声明模块路径。
                         if path.is_empty() {

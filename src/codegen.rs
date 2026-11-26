@@ -22,13 +22,19 @@ pub fn generate(prog: &Program, src_name: &str) -> Result<Generated, Vec<Diag>> 
 /// 多文件模式（Stage C）：`Sigs` 由调用方对**全工程**做一次分析后传入，
 /// 这样跨文件调用也能拿到对方方法的形参三态与返回来源。
 /// `local_roots` 是工程里的顶层模块名：只有命中的 import 才加 `crate::`，其余按外部 crate（JR-M4）。
+///
+/// `types` 是**全工程合并后**的声明集合（`prog` 只含当前文件，决定「输出哪些声明」）。
+/// 类型表必须看全工程：跨文件类不在 `prog` 里，而构造器形参类型、方法返回类型、
+/// enum / interface / Clone 判定全都要读它 —— 只喂 `prog` 会让这些信息在跨文件时全丢
+/// （v1.25 修的就是这一族）。
 pub fn generate_multi_with_sigs(
     prog: &Program,
     src_name: &str,
     local_roots: &HashSet<String>,
     sigs: Sigs,
+    types: &Program,
 ) -> Result<Generated, Vec<Diag>> {
-    let mut g = Codegen::new(prog);
+    let mut g = Codegen::with_types(prog, types);
     g.multi_file = true;
     g.local_roots = local_roots.clone();
     g.sigs = sigs;
@@ -124,10 +130,15 @@ impl RetSig {
 }
 
 struct Codegen<'a> {
+    /// 当前文件：决定产物里输出哪些声明（`run` 只遍历它）。
     prog: &'a Program,
+    /// 全工程声明（含当前文件）：所有**类型查询**都走这张表。
+    /// 单文件模式下 `types == prog`。
+    types: &'a Program,
     out: String,
     indent: usize,
     ifaces: HashSet<String>,
+    iface_decls: HashMap<String, &'a InterfaceDecl>,
     classes: HashMap<String, &'a ClassDecl>,
     enums: HashMap<String, &'a EnumDecl>,
     /// 所有 `throws` 列表里出现过的异常名（去重、保持出现顺序）。
@@ -162,18 +173,27 @@ struct Codegen<'a> {
 
 impl<'a> Codegen<'a> {
     fn new(prog: &'a Program) -> Self {
+        Self::with_types(prog, prog)
+    }
+
+    /// `prog` 决定输出内容，`types` 提供类型查询（多文件模式下是合并后的全工程）。
+    fn with_types(prog: &'a Program, types: &'a Program) -> Self {
         let mut ifaces = HashSet::new();
-        for i in &prog.interfaces {
+        let mut iface_decls = HashMap::new();
+        for i in &types.interfaces {
             ifaces.insert(i.name.clone());
+            iface_decls.insert(i.name.clone(), i);
         }
         let mut classes = HashMap::new();
-        for c in &prog.classes {
+        for c in &types.classes {
             classes.insert(c.name.clone(), c);
         }
         let mut enums = HashMap::new();
-        for e in &prog.enums {
+        for e in &types.enums {
             enums.insert(e.name.clone(), e);
         }
+        // 错误枚举是**按文件生成**的（每个用到 throws 的文件各自产出一个 `JrustError`），
+        // 所以这里必须只看当前文件；用全工程集合会让每个文件都生成一份重复枚举。
         let mut error_types: Vec<String> = Vec::new();
         for c in &prog.classes {
             for m in &c.methods {
@@ -188,16 +208,16 @@ impl<'a> Codegen<'a> {
         // 先假定所有 class / enum 都可 Clone，再按字段类型反复剔除，直到稳定。
         // 起点为「全 true」可以自然处理自引用（List<Node>）而不会递归爆栈。
         let mut cloneable: HashSet<String> = HashSet::new();
-        for c in &prog.classes {
+        for c in &types.classes {
             cloneable.insert(c.name.clone());
         }
-        for e in &prog.enums {
+        for e in &types.enums {
             cloneable.insert(e.name.clone());
         }
         loop {
             let snapshot = cloneable.clone();
             let mut changed = false;
-            for c in &prog.classes {
+            for c in &types.classes {
                 let params: HashSet<String> = c.type_params.iter().map(|p| p.name.clone()).collect();
                 let ok = c
                     .fields
@@ -208,7 +228,7 @@ impl<'a> Codegen<'a> {
                     changed = true;
                 }
             }
-            for e in &prog.enums {
+            for e in &types.enums {
                 let params: HashSet<String> = e.type_params.iter().map(|p| p.name.clone()).collect();
                 let ok = e
                     .variants
@@ -223,7 +243,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut shared_mut = HashMap::new();
-        for c in &prog.classes {
+        for c in &types.classes {
             let s = shared_mut_fields(c, &classes);
             if !s.is_empty() {
                 shared_mut.insert(c.name.clone(), s);
@@ -231,9 +251,11 @@ impl<'a> Codegen<'a> {
         }
         Codegen {
             prog,
+            types,
             out: String::new(),
             indent: 0,
             ifaces,
+            iface_decls,
             classes,
             enums,
             error_types,
@@ -494,13 +516,30 @@ impl<'a> Codegen<'a> {
                 }
                 let s = self.gen_expr(init, env, Some(other));
                 // 借用形参派生出的位置即使目标处不要求复制，也要做落地转换（搬不走）。
-                if copy || self.is_borrowed_place(core, env) {
+                if copy || self.needs_owned_landing(core, env) {
                     self.clone_if_needed(s, other, core, hint_target, env)
                 } else {
                     s
                 }
             }
         }
+    }
+
+    /// 「搬不走的取用」：借用形参派生位置（`&[T]`）与 `list.get(i)`。
+    ///
+    /// `list.get(i)` 生成的是**下标访问**（`v[i]`），它产出的是 `T` 的借用位置；
+    /// 在 owned 上下文（`String s = xs.get(0)`）里直接赋值会 `E0507 cannot move out of index`。
+    /// 放在 `println(...)` 里之所以不炸，是因为 format 参数隐式借用。
+    fn needs_owned_landing(&self, e: &Expr, env: &Env) -> bool {
+        if self.is_borrowed_place(e, env) {
+            return true;
+        }
+        matches!(
+            strip_parens_expr(e),
+            Expr::Call { recv: Some(_), name, .. } if name == "get"
+        ) && self
+            .infer_type(e, env)
+            .map_or(false, |t| !t.is_copy_scalar() && !matches!(t, Type::Void))
     }
 
     /// 变量 / 字段是「持有者」：按值语义需要补 `.clone()`。
@@ -519,7 +558,15 @@ impl<'a> Codegen<'a> {
         if self.is_borrowed_place(core, env) {
             return self.owned_from_borrow(s, ty);
         }
+        // `list.get(i)` → `v[i]`：下标不能搬出 owned 值，按类型做落地转换。
+        // 注意 `.clone()` 比 `.to_string()` 更通用，`owned_from_borrow` 已按类型分流。
         if !is_holder_expr(core) {
+            if matches!(
+                strip_parens_expr(core),
+                Expr::Call { recv: Some(_), name, .. } if name == "get"
+            ) {
+                return self.owned_from_borrow(s, ty);
+            }
             return s;
         }
         if self.is_cloneable_type(ty) {
@@ -580,7 +627,7 @@ impl<'a> Codegen<'a> {
                         );
                     }
                 }
-                if let Some(iface) = self.prog.interfaces.iter().find(|i| i.name == c) {
+                if let Some(iface) = self.iface_decls.get(&c) {
                     if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
                         return Some(m.params.iter().map(|p| subst_type(&p.ty, &map)).collect());
                     }
@@ -612,7 +659,7 @@ impl<'a> Codegen<'a> {
             if let Some(s) = self.sigs.get(&c, name) {
                 return Some((s.params.clone(), s.ret.clone()));
             }
-            self.prog
+            self.types
                 .interfaces
                 .iter()
                 .find_map(|i| self.sigs.get(&i.name, name))
@@ -816,17 +863,17 @@ impl<'a> Codegen<'a> {
             Type::Array(inner) => format!("Vec<{}>", self.rust_type(inner)),
             Type::Named(n) => {
                 if self.ifaces.contains(n) {
-                    format!("Box<dyn {}>", n)
+                    format!("Box<dyn {}>", rust_ident(n))
                 } else {
-                    n.clone()
+                    rust_ident(n)
                 }
             }
             Type::Generic(n, args) => {
                 let inner: Vec<String> = args.iter().map(|a| self.rust_type(a)).collect();
                 if self.ifaces.contains(n) {
-                    format!("Box<dyn {}<{}>>", n, inner.join(", "))
+                    format!("Box<dyn {}<{}>>", rust_ident(n), inner.join(", "))
                 } else {
-                    format!("{}<{}>", n, inner.join(", "))
+                    format!("{}<{}>", rust_ident(n), inner.join(", "))
                 }
             }
             Type::Nullable(inner) => format!("Option<{}>", self.rust_type(inner)),
@@ -1003,15 +1050,52 @@ impl<'a> Codegen<'a> {
 
     // ---------- 顶层 ----------
 
+    /// 类型名撞上「不能用 `r#` 挽救」的关键字时直接报错（JR-L1）。
+    ///
+    /// `r#crate` / `r#Self` / `r#self` / `r#super` 本身非法，所以这几个只能让用户改名；
+    /// 其余关键字由 `rust_ident` 加 `r#` 透明处理，不打扰用户。
+    fn check_type_name_conflicts(&mut self) {
+        let prog = self.prog;
+        let mut bad: Vec<(usize, String)> = Vec::new();
+        for c in &prog.classes {
+            if keyword_conflict(&c.name) {
+                bad.push((c.line, c.name.clone()));
+            }
+        }
+        for i in &prog.interfaces {
+            if keyword_conflict(&i.name) {
+                bad.push((i.line, i.name.clone()));
+            }
+        }
+        for e in &prog.enums {
+            if keyword_conflict(&e.name) {
+                bad.push((e.line, e.name.clone()));
+            }
+        }
+        for (line, name) in bad {
+            self.err_code(
+                "JR3030",
+                format!("`{}` 不能作为类型名：它是 Rust 关键字且无法用 `r#` 转义", name),
+                "改一个名字，例如 `Crate` / `Myself` / `Super`。",
+            );
+            let _ = line;
+        }
+    }
+
     fn run(&mut self, src_name: &str) {
         self.emit(&format!(
             "// 由 jrust 从 {} 生成。请对照 .jrust 源码阅读，不要直接改这个文件。",
             src_name
         ));
         self.emit("// 每段代码前的 `// jrust:L<行号>` 指向 .jrust 源码行。");
+        // `non_snake_case`：jrust 沿用 Java 驼峰命名，生成的 `addTwice` / `getTag` 必然触发；
+        // `unused_assignments`：`T x = a; x = b;` 这种 jrust 写法（先声明后赋值）在产物里
+        // 表现为「赋值后未读」。两者都是**生成形态**带来的噪声，不是用户 bug，必须 allow ——
+        // 否则 JR-G9 的「`-D warnings` 下可编译」对任何驼峰项目都不成立。
         self.emit(
-            "#![allow(dead_code, unused_variables, unused_mut, unused_imports, unused_parens)]",
+            "#![allow(dead_code, unused_variables, unused_mut, unused_imports, unused_parens, non_snake_case, unused_assignments)]",
         );
+        self.check_type_name_conflicts();
         // `java.*` 的 import 只需让 jrust 认识类型名，不生成代码；
         // 其余路径当作 Rust 的 use 原样输出（圆点转 `::`），例如 import std.vec.Vec;
         let imports = self.prog.imports.clone();
@@ -1020,7 +1104,13 @@ impl<'a> Codegen<'a> {
             if imp.starts_with("java.") || !seen.insert(imp.clone()) {
                 continue;
             }
-            let path = imp.replace('.', "::");
+            // 每个段都要按标识符渲染：`import box.thing.Thing` → `use r#box::thing::Thing;`
+            // 否则撞 Rust 关键字会直接生成非法 Rust（JR-L1）。
+            let path = imp
+                .split('.')
+                .map(rust_ident)
+                .collect::<Vec<_>>()
+                .join("::");
             // 多文件模式（JR-S4/M3）：跨模块引用要带上 crate 根，写成 `use crate::a::b::C;`。
             // `std` / `core` / `alloc` 是 Rust 自带的外部 crate，`crate` / `self` / `super`
             // 本身就是根路径，都不加前缀。
@@ -1091,7 +1181,7 @@ impl<'a> Codegen<'a> {
         };
         self.emit(&format!(
             "pub trait {}{}{} {{",
-            iface.name,
+            rust_ident(&iface.name),
             type_param_decl(&iface.type_params),
             supers
         ));
@@ -1267,7 +1357,7 @@ impl<'a> Codegen<'a> {
         }
         self.emit(&format!(
             "pub enum {}{} {{",
-            e.name,
+            rust_ident(&e.name),
             type_param_decl(&e.type_params)
         ));
         self.indent += 1;
@@ -1362,14 +1452,14 @@ impl<'a> Codegen<'a> {
         }
         self.cur_line = class.line;
         self.emit("#[derive(Debug, Clone)]");
-        self.emit(&format!("pub struct {} {{", class.name));
+        self.emit(&format!("pub struct {} {{", rust_ident(&class.name)));
         self.indent += 1;
         self.emit("pub message: String,");
         self.indent -= 1;
         self.emit("}");
         self.blank();
 
-        self.emit(&format!("impl {} {{", class.name));
+        self.emit(&format!("impl {} {{", rust_ident(&class.name)));
         self.indent += 1;
         self.emit("pub fn new(message: impl Into<String>) -> Self {");
         self.indent += 1;
@@ -1502,9 +1592,9 @@ impl<'a> Codegen<'a> {
             self.emit(&d);
         }
         if instance_fields(class).next().is_none() && phantom.is_empty() {
-            self.emit(&format!("pub struct {}{};", class.name, tparams));
+            self.emit(&format!("pub struct {}{};", rust_ident(&class.name), tparams));
         } else {
-            self.emit(&format!("pub struct {}{} {{", class.name, tparams));
+            self.emit(&format!("pub struct {}{} {{", rust_ident(&class.name), tparams));
             self.indent += 1;
             for f in instance_fields(class) {
                 self.marker(f.line);
@@ -1532,7 +1622,8 @@ impl<'a> Codegen<'a> {
         self.blank();
 
         let impl_params = impl_param_decl(&class.type_params);
-        let prog = self.prog;
+        // 接口可能声明在别的文件里，查表要用全工程集合。
+        let prog = self.types;
         // 展开接口继承（JR-D6）：实现子接口时，祖先接口也要生成 impl。
         let mut impl_ifaces: Vec<Type> = Vec::new();
         let mut seen_ifaces: HashSet<String> = HashSet::new();
@@ -1915,7 +2006,10 @@ impl<'a> Codegen<'a> {
                 let mut_kw = if env.mutated.contains(name) { "mut " } else { "" };
                 self.emit(&format!(
                     "let {}{}: {} = {};",
-                    mut_kw, name, ty_str, init_str
+                    mut_kw,
+                    rust_ident(name),
+                    ty_str,
+                    init_str
                 ));
                 env.vars.insert(name.clone(), ty.clone());
             }
@@ -2549,7 +2643,7 @@ impl<'a> Codegen<'a> {
                         "它作为 owned 实参传出去后调用方不再持有；要保留一份就先写 `clone()`，或把被调方法的形参改成只读 / 借用用法。",
                     );
                 }
-                n.clone()
+                rust_ident(n)
             }
             Expr::This(line) => {
                 // 记录首个 `this` 的源码行（而非语句起始行），供 JR3023 精确定位。
@@ -2572,7 +2666,7 @@ impl<'a> Codegen<'a> {
                             .iter()
                             .any(|v| &v.name == name && v.params.is_empty())
                         {
-                            return format!("{}::{}", en, name);
+                            return format!("{}::{}", rust_ident(en), rust_ident(name));
                         }
                     }
                 }
@@ -2865,23 +2959,24 @@ impl<'a> Codegen<'a> {
             let ts: Vec<String> = type_args.iter().map(|t| self.rust_type(t)).collect();
             format!("::<{}>", ts.join(", "))
         };
+        let cname = rust_ident(class);
         let Some((_, _, has_ctor, needs_phantom)) = info else {
-            return format!("{}{}::new({})", class, turbofish, arg_strs.join(", "));
+            return format!("{}{}::new({})", cname, turbofish, arg_strs.join(", "));
         };
         if has_ctor {
-            format!("{}{}::new({})", class, turbofish, arg_strs.join(", "))
+            format!("{}{}::new({})", cname, turbofish, arg_strs.join(", "))
         } else if args.is_empty() {
             if needs_phantom {
-                format!("{} {{ _marker: std::marker::PhantomData }}", class)
+                format!("{} {{ _marker: std::marker::PhantomData }}", cname)
             } else {
-                class.to_string()
+                cname
             }
         } else {
             self.err(
                 format!("类 {} 没有构造器却传入了参数", class),
                 "为它写一个构造器（方法名与类名相同）；Rust 里对应 `impl X { pub fn new(...) -> Self }`。",
             );
-            class.to_string()
+            cname
         }
     }
 
@@ -2951,12 +3046,12 @@ impl<'a> Codegen<'a> {
         if let Some(cd) = self.classes.get(ty) {
             if let Some(m) = cd.methods.iter().find(|m| m.is_static && m.name == name) {
                 return Some((
-                    format!("{}::{}", ty, name),
+                    format!("{}::{}", rust_ident(ty), rust_ident(name)),
                     m.params.iter().map(|p| p.ty.clone()).collect(),
                 ));
             }
         }
-        self.prog
+        self.types
             .interfaces
             .iter()
             .find(|i| i.name == ty)
@@ -3074,9 +3169,9 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 return if vals.is_empty() {
-                    format!("{}::{}", en, name)
+                    format!("{}::{}", rust_ident(en), rust_ident(name))
                 } else {
-                    format!("{}::{}({})", en, name, vals.join(", "))
+                    format!("{}::{}({})", rust_ident(en), rust_ident(name), vals.join(", "))
                 };
             }
         }
@@ -3459,10 +3554,8 @@ impl<'a> Codegen<'a> {
                 let names: Vec<String> = if let Some(cd) = self.classes.get(c) {
                     cd.type_params.iter().map(|p| p.name.clone()).collect()
                 } else {
-                    self.prog
-                        .interfaces
-                        .iter()
-                        .find(|i| &i.name == c)?
+                    self.iface_decls
+                        .get(c)?
                         .type_params
                         .iter()
                         .map(|p| p.name.clone())
@@ -3529,7 +3622,7 @@ impl<'a> Codegen<'a> {
                         }
                     }
                     // 接口静态方法 `Iface.method(..)`（JR-D10）
-                    if let Some(iface) = self.prog.interfaces.iter().find(|i| &i.name == en) {
+                    if let Some(iface) = self.iface_decls.get(en) {
                         if let Some(m) =
                             iface.methods.iter().find(|m| &m.name == name && m.is_static)
                         {
@@ -3549,6 +3642,16 @@ impl<'a> Codegen<'a> {
                     return None;
                 }
                 let recv_ty = recv.as_deref().and_then(|r| self.infer_type(r, env));
+                // `list.get(i)` 在产物里是下标访问，类型就是元素类型（→ `v[i]`）。
+                if name.as_str() == "get" {
+                    match &recv_ty {
+                        Some(Type::List(inner) | Type::Array(inner)) => {
+                            return Some((**inner).clone())
+                        }
+                        Some(Type::Map(_, v)) => return Some((**v).clone()),
+                        _ => {}
+                    }
+                }
                 if let Some(Type::Map(_, v)) = &recv_ty {
                     if name.as_str() == "getOrNull" {
                         return Some(Type::Nullable(v.clone()));
@@ -3563,7 +3666,7 @@ impl<'a> Codegen<'a> {
                                 return Some(subst_type(&m.ret, &map));
                             }
                         }
-                        if let Some(iface) = self.prog.interfaces.iter().find(|i| i.name == c) {
+                        if let Some(iface) = self.iface_decls.get(&c) {
                             if let Some(m) = iface.methods.iter().find(|m| m.name == *name) {
                                 return Some(subst_type(&m.ret, &map));
                             }
@@ -3753,6 +3856,43 @@ fn type_cloneable(ty: &Type, named: &HashSet<String>, params: &HashSet<String>) 
 /// `java.io.IOException` → `IOException`
 fn simple_type_name(name: &str) -> String {
     name.rsplit('.').next().unwrap_or(name).to_string()
+}
+
+/// Rust 2018+ 的关键字里，能靠 `r#` 恢复成标识符的那些（SPEC JR-L1）。
+///
+/// 不含 `crate` / `self` / `Self` / `super` / `_`：这几个**不能**写 `r#`，
+/// 撞上只能报诊断让用户改名。`dyn` 在 2015 是弱关键字、2018 起是关键字，这里按 2018 处理。
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "dyn", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "static", "struct", "trait", "true", "type", "unsafe", "use", "where", "while", "async",
+    "await", "box", "do", "final", "macro", "override", "priv", "try", "typeof", "unsized",
+    "virtual", "yield",
+];
+
+/// 不能用 `r#` 挽救的关键字（写 `r#crate` 本身非法）。
+const RUST_KEYWORDS_NO_RAW: &[&str] = &["crate", "self", "Self", "super", "_"];
+
+/// 把 jrust 标识符渲染成合法的 Rust 标识符：撞关键字时加 `r#`（JR-L1）。
+///
+/// 只处理**标识符位置**（类型名 / 模块名 / 变量名 / 方法名）。`r#` 不能用于
+/// `crate` / `self` / `Self` / `super`，那几个由调用方用 `keyword_conflict()` 报诊断。
+pub fn rust_ident(name: &str) -> String {
+    if RUST_KEYWORDS.contains(&name) {
+        format!("r#{}", name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// 这个标识符是否「无法用 `r#` 挽救」的 Rust 关键字（`crate` / `self` / `Self` / `super`）。
+fn keyword_conflict(name: &str) -> bool {
+    RUST_KEYWORDS_NO_RAW.contains(&name)
+}
+
+/// `keyword_conflict` 的公开别名：`main.rs` 的 package 校验也要用同一判据。
+pub fn is_keyword_unrecoverable(name: &str) -> bool {
+    keyword_conflict(name)
 }
 
 /// 内置映射类型（不是「外部 crate」）：它们的调用由 `gen_call` 特化处理，

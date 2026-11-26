@@ -283,6 +283,8 @@ tests/          一致性用例（move 边界、解释/编译对拍、L1 语法�
 tests/conformance/L1/  单文件夹具，全部目录式 `<case>/{main.jrust, expected.txt}`
                 （runner 仍兼容扁平 `<case>.jrust` 的历史写法，见 tests/l1_cases.sh 的 case_paths）
 tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
+tests/l2_cross/ 跨文件矩阵：构造器 / 实例方法 / 静态方法 / 可空返回 / enum /
+                接口作类型 / 字符串拼接 × 字面量/变量，双 bin 对拍
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 ```
 

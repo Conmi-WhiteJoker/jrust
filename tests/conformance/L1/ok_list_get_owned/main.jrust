@@ -1,0 +1,27 @@
+import java.util.ArrayList;
+
+// `list.get(i)` 在产物里是下标访问（`v[i]`），它借出的是元素位置。
+// 在 owned 上下文（`String s = xs.get(0)`）里直接赋值会 `E0507 cannot move out of
+// index`；放进 `println(...)` 之所以不炸，是因为 format 参数隐式借用。
+// 本用例把两种上下文都覆盖到，确保 owned 路径会补落地转换。
+public class Main {
+    public static void main(String[] args) {
+        ArrayList<String> xs = new ArrayList<>();
+        xs.add("a");
+        xs.add("b");
+
+        // owned 上下文：必须补 `.clone()` / `.to_string()`
+        String first = xs.get(0);
+        String second = xs.get(1);
+        println(first + "-" + second);
+
+        // 借用上下文：不能多补一次转换
+        println(xs.get(0));
+
+        // Copy 标量不需要落地转换
+        ArrayList<Integer> nums = new ArrayList<>();
+        nums.add(7);
+        int n = nums.get(0);
+        println(n);
+    }
+}

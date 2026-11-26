@@ -253,6 +253,20 @@ fn find_manifest(path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// 从目录向上找最近的 `Cargo.lock`（workspace 成员的 lock 在 workspace 根）。
+fn find_lockfile(dir: &Path) -> Option<PathBuf> {
+    let mut dir = dir.to_path_buf();
+    loop {
+        let candidate = dir.join("Cargo.lock");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// 去掉 ANSI 转义序列（`CARGO_TERM_COLOR=always` 时 cargo/rustc 的输出会带颜色）。
 ///
 /// 子进程已经统一加 `--color never`，这里再兜一层：只要解析的是子进程输出，
@@ -345,32 +359,20 @@ fn build_verify_manifest(
                     }
                 }
             }
-            // 依赖段：`[dependencies]` 与 `[target.'cfg(..)'.dependencies]` 保留，
-            // `[dev-dependencies]` / `[build-dependencies]` 与编译 bin 无关，丢弃。
-            s if s.ends_with("dependencies")
-                && !s.starts_with("dev-")
-                && !s.starts_with("build-") =>
-            {
-                for l in lines {
-                    let t = l.trim();
-                    if t.is_empty() || t.starts_with('#') {
-                        continue;
-                    }
-                    if t.contains("workspace = true") || t.contains("workspace=true") {
+            // 依赖段：与 JR-M4 校验共用 `dep_section_kind` 判定（含 `[dependencies.foo]`
+            // 子表与 `[target.'cfg(..)'.dependencies]`）。`dev-` / `build-` 与编译 bin 无关，丢弃。
+            s if dep_section_kind(s).is_some_and(|k| k.kind == DepKind::Normal) => {
+                // 搬不走的依赖形态用共享解析器判定，口径与 JR-M4 校验完全一致。
+                for d in parse_manifest_deps(&format!("[{}]\n{}", s, lines.join("\n"))) {
+                    if let Some(why) = d.unsupported_reason() {
                         return Err(format!(
-                            "依赖 `{}` 使用 workspace 继承，verify 的临时工程里没有 workspace 根",
-                            t.split('=').next().unwrap_or(t).trim()
-                        ));
-                    }
-                    // 只看第一个 `=` 之后的部分（`mylib = { path = "..." }` 里 path 在内联表里）。
-                    let value = t.split_once('=').map(|(_, v)| v).unwrap_or("");
-                    if value.contains("path =") || value.contains("path=") {
-                        return Err(format!(
-                            "依赖 `{}` 是本地 path 依赖，临时目录里解析不到它（路径相对用户工程）",
-                            t.split('=').next().unwrap_or(t).trim()
+                            "依赖 `{}` {}，verify 的临时工程里无法重建（请改用 `jrust build` + cargo build）",
+                            d.name, why
                         ));
                     }
                 }
+                // 段名与行原样保留：`[dependencies.foo]` 子表重建成同样的子表，
+                // 否则 cargo 会把段里的 version/features 当成 `[package]` 的键。
                 dep_blocks.push((section.clone(), lines.clone()));
             }
             "bin" => {
@@ -457,10 +459,91 @@ fn build_verify_manifest(
     Ok(out)
 }
 
-/// 读取 `Cargo.toml` 里声明的依赖名（`-` 归一成 `_`，与 Rust crate 名一致）。
-fn manifest_deps(manifest: &Path) -> Vec<String> {
-    let text = std::fs::read_to_string(manifest).unwrap_or_default();
-    let mut deps = Vec::new();
+/// `Cargo.toml` 里的一个依赖声明。
+#[derive(Debug, Clone)]
+struct DepDecl {
+    /// crate 名（`-` 归一成 `_`，与 Rust 里 `extern crate` 的名字一致）。
+    name: String,
+    /// 内联值部分（`foo = "1"` / `foo = { path = ".." }` 里 `=` 之后）；子表形式为空。
+    value: String,
+    /// 子表形式（`[dependencies.foo]`）下该依赖自身的配置行。
+    lines: Vec<String>,
+}
+
+impl DepDecl {
+    /// 该依赖是否用了本地 path 或 workspace 继承（`verify` 的临时工程两者都搬不走）。
+    fn unsupported_reason(&self) -> Option<&'static str> {
+        let mut hay = vec![self.value.as_str()];
+        hay.extend(self.lines.iter().map(|s| s.as_str()));
+        for h in hay {
+            if h.contains("workspace = true") || h.contains("workspace=true") {
+                return Some("使用 workspace 继承");
+            }
+            if h.contains("path =") || h.contains("path=") {
+                return Some("是本地 path 依赖");
+            }
+        }
+        None
+    }
+}
+
+/// 段名是不是依赖段，返回依赖类别与子表名（`[dependencies.foo]` 里的 `foo`）。
+///
+/// **唯一的依赖段判定入口**：`build_verify_manifest`（重建临时 manifest）与
+/// `manifest_deps`（JR-M4 校验）都必须走这里，否则会出现「校验说没问题、cargo 说没这个 crate」。
+///
+/// 认这些写法（`target.` 前缀可叠加在任意一种上）：
+/// - `dependencies` / `dev-dependencies` / `build-dependencies`
+/// - `dependencies.foo`（子表形式，crate 名在段名里）
+fn dep_section_kind(section: &str) -> Option<DepSection> {
+    // 去掉 `target.<cfg>.` 前缀：段名形如 `target.'cfg(unix)'.dependencies[.foo]`。
+    let body = match section.strip_prefix("target.") {
+        Some(rest) => match rest.find('.') {
+            Some(i) => &rest[i + 1..],
+            None => return None,
+        },
+        None => section,
+    };
+    let (kind, rest) = if body == "dependencies" {
+        (DepKind::Normal, "")
+    } else if body == "dev-dependencies" {
+        (DepKind::Dev, "")
+    } else if body == "build-dependencies" {
+        (DepKind::Build, "")
+    } else if let Some(r) = body.strip_prefix("dependencies.") {
+        (DepKind::Normal, r)
+    } else if let Some(r) = body.strip_prefix("dev-dependencies.") {
+        (DepKind::Dev, r)
+    } else if let Some(r) = body.strip_prefix("build-dependencies.") {
+        (DepKind::Build, r)
+    } else {
+        return None;
+    };
+    Some(DepSection {
+        kind,
+        subtable: rest.trim().trim_matches('"').trim_matches('\'').to_string(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DepKind {
+    Normal,
+    Dev,
+    Build,
+}
+
+#[derive(Debug, Clone)]
+struct DepSection {
+    kind: DepKind,
+    /// `[dependencies.foo]` 形式时的 crate 名；普通段为空。
+    subtable: String,
+}
+
+/// 解析 `Cargo.toml` 里的全部依赖声明（含 `target.*` 段与 `[dependencies.foo]` 子表形式）。
+///
+/// 这是依赖信息的**唯一解析器**：JR-M4 校验与 `verify <目录>` 的 manifest 重建共用它。
+fn parse_manifest_deps(text: &str) -> Vec<DepDecl> {
+    let mut out: Vec<DepDecl> = Vec::new();
     let mut section = String::new();
     for raw in text.lines() {
         let line = raw.trim();
@@ -468,34 +551,51 @@ fn manifest_deps(manifest: &Path) -> Vec<String> {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            section = line[1..line.len() - 1].trim().to_string();
-            for key in [
-                "dependencies.",
-                "dev-dependencies.",
-                "build-dependencies.",
-            ] {
-                if let Some(rest) = section.strip_prefix(key) {
-                    let name = rest.trim().trim_matches('"').trim_matches('\'');
-                    if !name.is_empty() {
-                        deps.push(name.replace('-', "_"));
-                    }
+            section = line.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+            // `[dependencies.foo]` / `[target.'cfg(unix)'.dependencies.foo]`：crate 名在段名里。
+            if let Some(sec) = dep_section_kind(&section) {
+                if !sec.subtable.is_empty() {
+                    out.push(DepDecl {
+                        name: sec.subtable.replace('-', "_"),
+                        value: String::new(),
+                        lines: Vec::new(),
+                    });
                 }
             }
             continue;
         }
-        if matches!(
-            section.as_str(),
-            "dependencies" | "dev-dependencies" | "build-dependencies"
-        ) {
-            if let Some((k, _)) = line.split_once('=') {
-                let name = k.trim().trim_matches('"').trim_matches('\'');
-                if !name.is_empty() {
-                    deps.push(name.replace('-', "_"));
-                }
+        // `[dependencies]` 段内的 `foo = "1"` 形式。
+        let Some(sec) = dep_section_kind(&section) else {
+            continue;
+        };
+        if !sec.subtable.is_empty() {
+            // 子表段里的行属于该依赖本身（version / features），不是新依赖。
+            if let Some(last) = out.last_mut() {
+                last.lines.push(line.to_string());
+            }
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let name = k.trim().trim_matches('"').trim_matches('\'');
+            if !name.is_empty() {
+                out.push(DepDecl {
+                    name: name.replace('-', "_"),
+                    value: v.trim().to_string(),
+                    lines: Vec::new(),
+                });
             }
         }
     }
-    deps
+    out
+}
+
+/// 读取 `Cargo.toml` 里声明的依赖名（`-` 归一成 `_`，与 Rust crate 名一致）。
+fn manifest_deps(manifest: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(manifest).unwrap_or_default();
+    parse_manifest_deps(&text)
+        .into_iter()
+        .map(|d| d.name)
+        .collect()
 }
 
 /// 源文件是否位于 manifest 同级的 `src/` 目录下（JR-M5 的工程目录约定）。
@@ -638,6 +738,23 @@ fn build_one(path: &Path) -> bool {
     }
 }
 
+/// 把多个文件的声明合并成一份「全工程类型表」（只用于**查询**，不用于输出）。
+///
+/// 与 `analysis::analyze_all` 的合并口径一致：只拼 interfaces / classes / enums，
+/// `package` / `imports` 留空（查询侧不读它们）。
+fn merge_programs<'a, I>(programs: I) -> ast::Program
+where
+    I: IntoIterator<Item = &'a ast::Program>,
+{
+    let mut merged = ast::Program::default();
+    for p in programs {
+        merged.interfaces.extend(p.interfaces.iter().cloned());
+        merged.classes.extend(p.classes.iter().cloned());
+        merged.enums.extend(p.enums.iter().cloned());
+    }
+    merged
+}
+
 /// 递归收集目录下的 `.jrust` 源文件（跳过隐藏目录）。
 fn collect_jrust(dir: &Path, out: &mut Vec<PathBuf>) {
     let rd = match std::fs::read_dir(dir) {
@@ -731,6 +848,8 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
     }
 
     let mut units: Vec<Unit> = Vec::new();
+    // 没有 package 也没有 main 的文件：候选 lib crate 根（最多一个）。
+    let mut no_pkg_roots: Vec<usize> = Vec::new();
     let mut ok = true;
     for f in &files {
         let src = match std::fs::read_to_string(f) {
@@ -763,6 +882,23 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         let out_rel = match &prog.package {
             Some(pkg) => {
                 let segs: Vec<&str> = pkg.split('.').filter(|s| !s.is_empty()).collect();
+                // 包路径的每一段都会成为 Rust 模块名；`crate` / `self` / `Self` / `super`
+                // 无法用 `r#` 挽救，只能报诊断（其余关键字由 codegen 加 `r#`）。
+                if let Some(bad) = segs.iter().find(|s| codegen::is_keyword_unrecoverable(s)) {
+                    print_diags(
+                        f,
+                        &[diag::Diag::error_code(
+                            1,
+                            "JR3030",
+                            format!(
+                                "package 段 `{}` 是 Rust 关键字且无法用 `r#` 转义，不能作为模块名",
+                                bad
+                            ),
+                        )
+                        .with_hint("改一个目录名 / 包名，例如 `crate` → `app`、`super` → `base`。")],
+                    );
+                    ok = false;
+                }
                 if segs.is_empty() || segs.last() != Some(&stem.as_str()) {
                     print_diags(
                         f,
@@ -797,16 +933,9 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
                 ok = false;
             }
         } else if prog.package.is_none() {
-            print_diags(
-                f,
-                &[diag::Diag::error_code(
-                    1,
-                    "JR3029",
-                    "没有 package 声明的文件只能是 crate 根（含 main）",
-                )
-                .with_hint("给这个文件加上 `package a.b;`，或把 main 放到它里面。")],
-            );
-            ok = false;
+            // 无 package 且无 main：在多文件工程里它只能是 lib crate 根。
+            // 这里先放行，等收集完所有文件再判断「是否恰好只有一个这样的文件」。
+            no_pkg_roots.push(units.len());
         }
         units.push(Unit {
             prog,
@@ -829,11 +958,28 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         eprintln!("多文件项目里只能有一个含 main 的 crate 根文件");
         return None;
     }
-    // 没有 main：按 lib crate 处理，根产物为 `lib.rs`（与单文件 `verify --crate-type lib` 对齐）。
-    // 顶层包的 `pub mod` 声明由下面的 children 机制写进根产物。
+    // 没有 main：按 lib crate 处理。根产物优先用「无 package 的根文件」的产物，
+    // 这样用户能在 lib 根里写 `pub struct`；没有这种文件时才自动生成 `lib.rs`
+    // 只放模块声明（与单文件 `verify --crate-type lib` 对齐）。
+    if no_pkg_roots.len() > 1 {
+        eprintln!(
+            "多文件项目里最多只能有一个「没有 package 声明」的 crate 根文件（当前 {} 个）：{}",
+            no_pkg_roots.len(),
+            no_pkg_roots
+                .iter()
+                .map(|i| units[*i].src_name.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return None;
+    }
     let (root_out, lib_mode) = match roots.first() {
         Some(i) => (units[*i].out_rel.clone(), false),
-        None => (PathBuf::from("lib.rs"), true),
+        None => match no_pkg_roots.first() {
+            // 无 main 但有一个无 package 的根文件：它自己就是 lib 根。
+            Some(i) => (units[*i].out_rel.clone(), true),
+            None => (PathBuf::from("lib.rs"), true),
+        },
     };
 
     // JR-M4：工程内所有 package 的顶层段都是本地模块，其余 import 按外部 crate 校验。
@@ -866,6 +1012,9 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         return None;
     }
     let global_sigs = analysis::analyze_all(units.iter().map(|u| &u.prog));
+    // 类型表要看全工程：跨文件类不在当前文件的 `prog` 里，而构造器形参类型 /
+    // 方法返回类型 / enum / interface / Clone 判定都要读它（v1.25）。
+    let global_types = merge_programs(units.iter().map(|u| &u.prog));
 
     let mut files_out: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut sources: BTreeMap<Vec<String>, PathBuf> = BTreeMap::new();
@@ -875,6 +1024,7 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
             &u.src_name,
             &local_roots,
             global_sigs.clone(),
+            &global_types,
         ) {
             Ok(gen) => {
                 print_warnings(Path::new(&u.src_name), &gen.warnings);
@@ -928,7 +1078,8 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         };
         let mut block = String::new();
         for kid in kids {
-            let line = format!("pub mod {};", kid);
+            // 模块名撞 Rust 关键字时写 `pub mod r#box;`（cargo 仍按 `box.rs` 找文件，实测可行）。
+            let line = format!("pub mod {};", codegen::rust_ident(kid));
             let exists = files_out
                 .get(&target)
                 .map(|c| c.lines().any(|l| l.trim() == line))
@@ -1222,6 +1373,20 @@ fn verify_one(path: &Path) -> bool {
             return false;
         }
     };
+    // 多文件工程里单个文件不是自足编译单元：它的 `import app.Util` 需要同工程的其他
+    // 产物。这里给出明确提示，而不是让用户对着 `cannot find module or crate app` 猜。
+    if let Some(dir) = path.parent() {
+        let mut siblings: Vec<PathBuf> = Vec::new();
+        collect_jrust(dir, &mut siblings);
+        if siblings.len() > 1 {
+            eprintln!(
+                "提示: {} 所在目录还有 {} 个其他 .jrust 文件；多文件工程请用 `jrust verify {}`（目录模式），单文件校验看不到同工程的模块。",
+                path.display(),
+                siblings.len() - 1,
+                dir.display()
+            );
+        }
+    }
     let prog = match parser::parse_file(&src) {
         Ok(p) => p,
         Err(diags) => {
@@ -1372,10 +1537,12 @@ fn verify_tree(dir: &Path) -> bool {
     }
     // 依赖解析要和用户一致：有 lockfile 就一起带过去，否则 `serde_json = "1"` 之类
     // 会在临时目录里重新解析，可能与用户实际编译的版本不同。
-    if let Some(lock) = manifest.parent().map(|p| p.join("Cargo.lock")) {
-        if lock.is_file() {
-            let _ = std::fs::copy(&lock, work.join("Cargo.lock"));
-        }
+    //
+    // workspace 成员的 lockfile 在**根**目录（成员目录下通常没有），所以要沿目录
+    // 向上找第一个存在的 `Cargo.lock`；只查 `manifest.parent()` 会让成员工程拿不到
+    // 用户实际用的版本（SPEC 说的「以原 Cargo.lock 为准」在成员场景下就不成立）。
+    if let Some(lock) = find_lockfile(manifest.parent().unwrap_or_else(|| Path::new("."))) {
+        let _ = std::fs::copy(&lock, work.join("Cargo.lock"));
     }
 
     let run_cargo = |offline: bool| {
@@ -1422,6 +1589,8 @@ fn verify_tree(dir: &Path) -> bool {
     // rustc 报错里的路径是临时目录下的生成文件；映射回原 .jrust 需要产物文本。
     let stderr = String::from_utf8_lossy(&out.stderr);
     let mut reported = 0;
+    // 同一条错误可能在同一行出现多次（不同列位），按 (行, 消息) 去重，避免刷屏。
+    let mut seen_errs: HashSet<(String, usize, String)> = HashSet::new();
     for (gen_file, gen_line, msg) in scan_rustc_errors_multi(&stderr) {
         let rel = gen_file
             .strip_prefix(work.to_string_lossy().as_ref())
@@ -1435,7 +1604,21 @@ fn verify_tree(dir: &Path) -> bool {
         let (jline, off) = map_to_jrust(&code, gen_line);
         // 生成文件与原 .jrust 同名同目录（`main.rs` ↔ `main.jrust`），报源码侧路径更好读。
         let jpath = dir.join(rel).with_extension("jrust");
-        eprintln!("错误: {}:{} - rustc {}", jpath.display(), jline, msg);
+        if !seen_errs.insert((jpath.display().to_string(), jline, msg.clone())) {
+            continue;
+        }
+        // 定位不到源行（生成代码开头没有 `// jrust:L` 标记，如 import 行）时说明清楚，
+        // 不要只报一个 `:0`。
+        if jline == 0 {
+            eprintln!(
+                "错误: {} - rustc {}（生成代码第 {} 行，位于文件头部的 import / 属性区，无源行映射）",
+                jpath.display(),
+                msg,
+                gen_line
+            );
+        } else {
+            eprintln!("错误: {}:{} - rustc {}", jpath.display(), jline, msg);
+        }
         if off > 0 {
             eprintln!(
                 "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",

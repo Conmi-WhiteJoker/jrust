@@ -1,0 +1,47 @@
+import app.model.Color;
+import app.model.Point;
+import app.model.Shape;
+
+// L2 跨文件矩阵：每一行都对应一个「类型必须跨文件可见」的维度。
+// 这些用例在 v1.24 全部编译失败 —— 类型表只喂了当前文件，跨文件类查不到。
+public class Main {
+    public static void main(String[] args) {
+        // ① 跨文件构造器 + String 字面量实参（要补 .to_string()）
+        Point p = new Point("api", 3, 4);
+        println(p.name() + ":" + p.sum());
+
+        // ② 跨文件实例方法 + String 字面量实参（Value 模式）
+        p.rename("svc");
+        println(p.name());
+
+        // ③ 跨文件静态方法 + String 字面量实参
+        println(Point.echo("hi"));
+
+        // ④ 跨文件静态工厂（无参）
+        Point o = Point.origin();
+        println(o.sum());
+
+        // ⑤ 跨文件可空返回：不能双重 Option
+        String? nick = o.nickname();
+        if (nick == null) {
+            println("none");
+        }
+        String? nick2 = p.nickname();
+        if (nick2 != null) {
+            String v = nick2;
+            println(v);
+        }
+
+        // ⑥ 跨文件 enum 赋值 + switch
+        Color c = p.tone();
+        switch (c) {
+            case Red: println("red"); break;
+            case Green: println("green"); break;
+            case Blue: println("blue"); break;
+        }
+
+        // ⑦ 跨文件接口作类型（要包 Box<dyn>）+ 字符串拼接
+        Shape s = new Point("boxed", 1, 1);
+        println(s.label() + "!");
+    }
+}

@@ -3,6 +3,7 @@
 /examples/target/
 /tests/spawn_capture/target/
 /tests/l2/target/
+/tests/l2_cross/target/
 
 # 一致性用例转译产物
 /tests/conformance/**/*.rs
@@ -13,3 +14,8 @@
 # L2 的转译产物（源是 src/**/*.jrust；与 examples 不同，这里不跟踪产物）
 /tests/l2/src/**/*.rs
 /tests/l2/Cargo.lock
+
+# L2 跨文件矩阵的转译产物（约定同 tests/l2：产物与 lockfile 不入库）
+/tests/l2_cross/**/*.rs
+!/tests/l2_cross/ref/**/*.rs
+/tests/l2_cross/Cargo.lock

@@ -287,3 +287,46 @@ L1 **122 通过 0 失败**。
 
 `./verify.sh` 七步全绿：cargo test 8 passed、13 例程 cargo build、L1 122 通过 0 失败、
 move 12 项全过、对拍输出一致。
+
+## v1.25 — 2026-11-26
+
+### 修复（L2 残留复核的 P0/P1/P2/P3 全量落地）
+
+- **P0 根因修复：类型表提升到工程级**。`Codegen` 新增 `types` 字段（`with_types`），
+  与 `prog`（决定输出哪些声明）分离；`generate_multi_with_sigs` 增加 `types` 参数，
+  `main.rs` 用新的 `merge_programs` 合并全工程后传入。一次修掉 7 条跨文件缺陷：
+  ① 构造器字面量实参不补 `.to_string()`；② 实例方法 `Value` 形参同样；
+  ③ 静态方法（原本靠多文件启发式侥幸正常，现在两条路径统一）；④ `String + String`
+  不生成 `format!`；⑤ 接口作类型不包 `Box<dyn>`；⑥ enum 误判不可 Clone（误报 JR4002）；
+  ⑦ 可空返回双重 Option。
+- **P1 `list.get` owned 上下文**：`infer_type` 认识 `list.get(i)` 的元素类型；
+  新增 `needs_owned_landing`，`clone_if_needed` 对 `x.get(..)` 补落地转换。
+  此前 `String s = xs.get(0)` → `xs[0]` → `E0507`。
+- **P1 依赖解析统一**：新增 `parse_manifest_deps` / `dep_section_kind` / `DepDecl`，
+  JR-M4 校验与 `verify <目录>` 的 manifest 重建共用同一解析器。修掉
+  `[dependencies.serde_json]` 校验认、重建丢（→「校验通过但 cargo 说没这个 crate」），
+  以及 `[target.'cfg(unix)'.dependencies.foo]` 两边都不认（→ 误报 JR5001）。
+- **P1 关键字转义（JR-L1 落地）**：`rust_ident` 对 41 个 Rust 关键字加 `r#`，
+  覆盖类型名 / 模块段 / 变量名 / import 路径；`crate` / `self` / `Self` / `super`
+  无法转义，报新诊断 **`JR3030`**。parser 里 `package` / `import` 路径遇到关键字
+  不再静默跳过（此前生成 `crate::::thing::Thing`）。
+- **P2 `-D warnings`**：生成头 allow 补 `non_snake_case`（Java 驼峰命名必然触发）与
+  `unused_assignments`（先声明后赋值的生成形态），兑现 JR-G9。
+  `run_strict_warnings` 从 1 个用例扩到 2 个 conformance + 3 个例程。
+- **P2 lib-only 根文件**：无 package 且无 main 的文件现在作为 lib crate 根（可放
+  `pub struct`）；多个这种文件报错。此前 `root_out` 固定成自动生成的 `lib.rs`，
+  用户两条路都堵死。
+- **P2 错误展示**：按 `(路径, 行, 消息)` 去重（同列位重复条目）；映射不到源行时
+  明确说「位于文件头部的 import / 属性区」而不是只报 `:0`；单文件模式误用于多文件
+  工程时提示改用目录模式。
+- **P3 workspace lockfile**：新增 `find_lockfile` 向上查找，workspace 成员的
+  `verify` 也能用根目录的 `Cargo.lock`（此前只查 `manifest.parent()`）。
+
+### 验收
+
+新增夹具 `tests/l2_cross/`（跨文件矩阵：7 个维度 × 字面量/变量，双 bin 与手写
+参考实现对拍）；新增 4 个 L2 用例（`l2_cross` / `l2_ctor` / `l2_null` / `l2_iface`）
++ `vtree_depforms` + 2 个 conformance（`ok_list_get_owned` / `ok_keyword_escape`）。
+L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
+**变异验证**：把类型表退回单文件 → 4 条 L2 用例变红；去掉 `list.get` 落地转换 /
+关键字转义 / warning allow / 依赖段统一 → 对应用例各自变红。

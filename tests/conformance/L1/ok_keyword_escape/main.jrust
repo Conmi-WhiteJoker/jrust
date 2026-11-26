@@ -1,0 +1,10 @@
+// Rust 关键字作为标识符：能靠 `r#` 挽救的必须透明转义（JR-L1），
+// 不能转义的（crate / self / Self / super）由 JR3030 报诊断。
+public class Main {
+    public static void main(String[] args) {
+        int match = 1;
+        int loop = 2;
+        int impl = 3;
+        println(match + loop + impl);
+    }
+}

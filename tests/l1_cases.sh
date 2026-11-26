@@ -535,6 +535,93 @@ run_l2() {
 }
 
 # L2 的负向面：目录工程里的外部 crate 未在 Cargo.toml 声明 → JR5001。
+run_l2_cross() {
+    # 跨文件矩阵：构造器 / 实例方法 / 静态方法 / 可空返回 / enum / 接口作类型 /
+    # 字符串拼接，全部跨文件。v1.24 之前类型表只喂当前文件，这七条全编译失败。
+    local work="$TMP/l2_cross"
+    rm -rf "$work"
+    cp -r tests/l2_cross "$work"
+    rm -rf "$work/target"
+    if ! $JRUST build "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL l2_cross：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! cargo build --quiet --offline --manifest-path "$work/Cargo.toml" >"$TMP/out" 2>&1; then
+        echo "FAIL l2_cross：cargo 编译失败（跨文件类型信息丢失？）"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    "$work/target/debug/generated" >"$TMP/gen_out" 2>&1
+    "$work/target/debug/reference" >"$TMP/ref_out" 2>&1
+    if ! diff -u "$TMP/ref_out" "$TMP/gen_out" >"$TMP/diff"; then
+        echo "FAIL l2_cross：产物与手写参考实现行为不一致"
+        cat "$TMP/diff"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS l2_cross"
+    pass=$((pass + 1))
+}
+
+# 跨文件构造器实参必须补 `.to_string()`（P0 第 1 条）。
+run_l2_cross_ctor() {
+    local work="$TMP/l2_ctor"
+    rm -rf "$work"
+    cp -r tests/l2_cross "$work"
+    rm -rf "$work/target"
+    $JRUST build "$work" >"$TMP/out" 2>&1 || { echo "FAIL l2_ctor：转译失败"; cat "$TMP/out"; fail=$((fail + 1)); return; }
+    if ! grep -q 'Point::new("api".to_string(), 3, 4)' "$work/main.rs"; then
+        echo "FAIL l2_ctor：跨文件构造器实参没有补 .to_string()"
+        grep -n "Point::new" "$work/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'Point::echo("hi".to_string())' "$work/main.rs"; then
+        echo "FAIL l2_ctor：跨文件静态方法实参没有补 .to_string()"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS l2_ctor"
+    pass=$((pass + 1))
+}
+
+# 跨文件可空返回不能包成 Some(...)（P0 第 7 条）。
+run_l2_cross_nullable() {
+    local work="$TMP/l2_null"
+    rm -rf "$work"
+    cp -r tests/l2_cross "$work"
+    rm -rf "$work/target"
+    $JRUST build "$work" >"$TMP/out" 2>&1 || { echo "FAIL l2_null：转译失败"; cat "$TMP/out"; fail=$((fail + 1)); return; }
+    if grep -q 'Some(o.nickname())' "$work/main.rs"; then
+        echo "FAIL l2_null：跨文件可空返回被包成了 Some(...)（双重 Option）"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS l2_null"
+    pass=$((pass + 1))
+}
+
+# 跨文件接口作类型要包 Box<dyn>（P0 第 5 条）。
+run_l2_cross_iface() {
+    local work="$TMP/l2_iface"
+    rm -rf "$work"
+    cp -r tests/l2_cross "$work"
+    rm -rf "$work/target"
+    $JRUST build "$work" >"$TMP/out" 2>&1 || { echo "FAIL l2_iface：转译失败"; cat "$TMP/out"; fail=$((fail + 1)); return; }
+    if ! grep -q 'let s: Box<dyn Shape>' "$work/main.rs"; then
+        echo "FAIL l2_iface：跨文件接口作类型没有包 Box<dyn>"
+        grep -n "Shape" "$work/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS l2_iface"
+    pass=$((pass + 1))
+}
+
+# L2 的负向面：目录工程里的外部 crate 未在 Cargo.toml 声明 → JR5001。
 run_l2_missing_dep() {
     local work="$TMP/l2_nodep"
     rm -rf "$work"
@@ -633,6 +720,79 @@ run_verify_tree_manifest() {
     pass=$((pass + 1))
 }
 
+# 依赖段的三种写法必须被**同一个**解析器识别（v1.24 之前两个函数口径不一致：
+# `[dependencies.serde_json]` 校验认、重建丢 → 「校验通过但 cargo 说没这个 crate」）。
+run_verify_tree_dep_forms() {
+    local work="$TMP/vtree_depforms"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    rm -rf "$work/target" "$work/src/app.rs" "$work/src/main.rs"
+    # 子表形式：`[dependencies.serde_json]` + version 子键。
+    cat > "$work/Cargo.toml" <<'EOF'
+[package]
+name = "l2"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generated"
+path = "src/main.rs"
+
+[dependencies.serde_json]
+version = "1"
+EOF
+    if ! $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_depforms：子表形式 [dependencies.serde_json] 本应通过"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    # target 限定的子表形式也要认（否则误报 JR5001）。
+    cat > "$work/Cargo.toml" <<'EOF'
+[package]
+name = "l2"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generated"
+path = "src/main.rs"
+
+[target.'cfg(unix)'.dependencies.serde_json]
+version = "1"
+EOF
+    if ! $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_depforms：target 子表形式本应通过"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    # 反向：真的没声明时必须报 JR5001（而不是静默走到 cargo）。
+    cat > "$work/Cargo.toml" <<'EOF'
+[package]
+name = "l2"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generated"
+path = "src/main.rs"
+EOF
+    if $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_depforms：缺依赖本应报错"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'JR5001' "$TMP/out"; then
+        echo "FAIL vtree_depforms：缺依赖没有报 JR5001"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS vtree_depforms"
+    pass=$((pass + 1))
+}
+
 # L2 续：无 main 的多文件工程按 lib crate 校验（此前报「没有含 main 的 crate 根」，与
 # 单文件模式支持 `--crate-type lib` 的行为不一致）。负向用例证明它真的编了 lib 而不是空跑。
 run_verify_tree_lib() {
@@ -682,6 +842,21 @@ EOF
         fail=$((fail + 1))
         return
     fi
+    # 正向 2：lib 根文件里可以直接放 `pub struct`（无 package 的根文件就是 lib 根）。
+    # v1.24 之前 root_out 固定成自动生成的 lib.rs，用户文件只能是子模块，
+    # 写 `lib.jrust` 会 `circular modules`、不写 package 会 JR3029 —— 两条路都堵死。
+    rm -f "$work/shape.jrust"
+    cat > "$work/lib.jrust" <<'EOF'
+public class Root {
+    public static int v() { return 1; }
+}
+EOF
+    if ! $JRUST verify "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_lib_root：lib 根文件里放内容本应通过"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
     echo "PASS vtree_lib"
     pass=$((pass + 1))
 }
@@ -689,20 +864,35 @@ EOF
 # 产物开 `-D warnings` 也必须干净：raw 外层括号会触发 unused_parens，
 # 生成头的 allow 列表必须覆盖它（此前只有 4 项，用户开 -D warnings 就编不过）。
 run_strict_warnings() {
-    local base=ok_raw
-    case_paths "$base"
-    if ! $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
-        echo "FAIL strict_warnings：转译失败"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
-    fi
-    if ! rustc --edition 2021 -D warnings "$CASE_RS" -o "$TMP/strict" >"$TMP/out" 2>&1; then
-        echo "FAIL strict_warnings：产物在 -D warnings 下编译失败"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
-    fi
+    # 用带驼峰方法名的用例：`ok_raw` 恰好没有驼峰方法，所以这个坑藏了很久
+    # （`non_snake_case` 在 `-D warnings` 下是错误）。两个用例一起跑，覆盖
+    # 「驼峰命名」与「先声明后赋值」两类生成形态噪声。
+    for base in ok_raw ok_nullable; do
+        case_paths "$base"
+        if ! $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
+            echo "FAIL strict_warnings($base)：转译失败"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+            return
+        fi
+        if ! rustc --edition 2021 -D warnings "$CASE_RS" -o "$TMP/strict" >"$TMP/out" 2>&1; then
+            echo "FAIL strict_warnings($base)：产物在 -D warnings 下编译失败"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+            return
+        fi
+    done
+    # 13 个例程里驼峰最密集的几个：这条断言直接对应 JR-G9 的口径。
+    for name in Nullable SharedState MoveEdges; do
+        local rs="examples/$name/main.rs"
+        [ -f "$rs" ] || continue
+        if ! rustc --edition 2021 -D warnings --crate-type bin "$rs" -o "$TMP/strict" >"$TMP/out" 2>&1; then
+            echo "FAIL strict_warnings(examples/$name)：例程产物在 -D warnings 下编译失败"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+            return
+        fi
+    done
     echo "PASS strict_warnings"
     pass=$((pass + 1))
 }
@@ -736,6 +926,8 @@ run_ok ok_custom_exception
 run_ok ok_mut_receiver
 run_ok ok_borrow_param
 run_ok ok_borrow_string
+run_ok ok_list_get_owned
+run_ok ok_keyword_escape
 run_ok ok_borrow_list
 run_ok ok_getter_ref
 run_ok ok_pick_lifetime
@@ -837,11 +1029,16 @@ run_fmt
 run_spawn_capture
 # SPEC §15 L2：多文件 + 外部 crate，cargo 编译 + 与手写实现行为对拍。
 run_l2
+run_l2_cross
+run_l2_cross_ctor
+run_l2_cross_nullable
+run_l2_cross_iface
 run_l2_missing_dep
 # `jrust verify <目录>` 自身：正向 / 错误映射 / manifest 诊断。
 run_verify_tree
 run_verify_tree_bad
 run_verify_tree_manifest
+run_verify_tree_dep_forms
 run_verify_tree_lib
 run_strict_warnings
 

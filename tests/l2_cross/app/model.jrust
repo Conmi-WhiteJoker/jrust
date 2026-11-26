@@ -1,0 +1,64 @@
+package app.model;
+
+// L2 跨文件矩阵的「类型提供方」：覆盖构造器、实例方法、静态方法、
+// 可空返回、enum、接口实现、字符串拼接七个维度。
+public enum Color { Red, Green, Blue }
+
+public interface Shape {
+    String label();
+}
+
+public class Point implements Shape {
+    private String name;
+    private int x;
+    private int y;
+
+    // 构造器形参含 String：跨文件调用时实参要补 `.to_string()`。
+    public Point(String name, int x, int y) {
+        this.name = name;
+        this.x = x;
+        this.y = y;
+    }
+
+    // 静态工厂：无参，验证跨文件静态调用。
+    public static Point origin() {
+        return new Point("o", 0, 0);
+    }
+
+    // 静态方法带 String 形参：字面量实参要补 `.to_string()`。
+    public static String echo(String s) {
+        return s;
+    }
+
+    // 实例方法带 String 形参（Value 模式）。
+    public void rename(String name) {
+        this.name = name;
+    }
+
+    public String name() {
+        return this.name;
+    }
+
+    public int sum() {
+        return this.x + this.y;
+    }
+
+    // 可空返回：跨文件调用不能包成 `Some(...)`（会双重 Option）。
+    public String? nickname() {
+        if (this.x == 0) {
+            return null;
+        }
+        return this.name;
+    }
+
+    public String label() {
+        return "point:" + this.name;
+    }
+
+    public Color tone() {
+        if (this.x > 0) {
+            return Color.Green;
+        }
+        return Color.Red;
+    }
+}

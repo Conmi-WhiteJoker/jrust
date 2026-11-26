@@ -1,0 +1,14 @@
+[package]
+name = "l2_cross"
+version = "0.1.0"
+edition = "2021"
+
+# L2 跨文件矩阵：`generated` 是 jrust 产物，`reference` 是手写等价实现。
+# 两者 stdout 必须逐字节一致（SPEC §15 L2）。
+[[bin]]
+name = "generated"
+path = "main.rs"
+
+[[bin]]
+name = "reference"
+path = "ref/reference.rs"
