@@ -1,4 +1,4 @@
-// spawn 捕获 this 应报 JR3023（&self 不满足 Send + 'static）。
+// spawn 捕获 this 应报 JR3023（&self 不满足 Send + 'static），且定位到 this 所在行（不是块尾）。
 public class Job {
     private int x;
 
@@ -9,6 +9,7 @@ public class Job {
     public void run() {
         spawn {
             println(this.x);
+            println("done");
         }
     }
 }

@@ -43,6 +43,7 @@ run_neg() {
     local base=$1
     local code=$2
     local pattern=$3
+    local line=${4:-}
     if $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
         echo "FAIL $base：本应报错却成功了"
         fail=$((fail + 1))
@@ -50,6 +51,13 @@ run_neg() {
     fi
     if ! grep -q "error\[$code\]" "$TMP/out"; then
         echo "FAIL $base：缺少诊断码 $code"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    # 可选第 4 参数：断言行号，格式必须是 `:<行> - error[<码>]`。
+    if [ -n "$line" ] && ! grep -q ":$line - error\[$code\]" "$TMP/out"; then
+        echo "FAIL $base：诊断行号不是 $line"
         cat "$TMP/out"
         fail=$((fail + 1))
         return
@@ -427,7 +435,7 @@ run_neg neg_newarray_type JR3014 "只支持标量 / String"
 run_neg neg_wildcard JR3010 "trait object"
 run_neg neg_mutable_static JR3013 "可变全局"
 run_neg neg_await_sync JR3022 "async"
-run_neg neg_spawn_this JR3023 "this"
+run_neg neg_spawn_this JR3023 "this" 11
 run_neg neg_iface_static_no_body JR3024 "必须有方法体"
 run_neg neg_iter_unknown JR3017 "白名单"
 run_neg neg_sync_target JR3026 "this.f"

@@ -142,7 +142,8 @@ struct Codegen<'a> {
     /// 当前方法是否 `async`：`await` 只在其中合法（JR-C10 → JR3022）。
     in_async: bool,
     /// 最近一次生成的表达式是否用到了 `self`（`spawn` 的 Send + 'static 检查用）。
-    saw_this: bool,
+    /// 块内首个 `this` 出现的行：`spawn` 用它把 `JR3023` 定位到真正的 `this` 行。
+    this_line: Option<usize>,
     /// `@shared` 字段里按可变处理的（仍需 `Arc<Mutex<T>>`）：类名 → 字段名（JR-C13）。
     shared_mut: HashMap<String, HashSet<String>>,
     /// 当前作用域里已经持有的共享字段锁：字段名 → guard 变量名（避免二次加锁死锁）。
@@ -242,7 +243,7 @@ impl<'a> Codegen<'a> {
             cloneable,
             generic_params: HashSet::new(),
             in_async: false,
-            saw_this: false,
+            this_line: None,
             shared_mut,
             guarded: HashMap::new(),
             multi_file: false,
@@ -2158,8 +2159,8 @@ impl<'a> Codegen<'a> {
                 }
                 self.spawn_seq += 1;
                 // `spawn` 的闭包按值捕获：`self` 是 `&self`，不满足 'static（JR3023）。
-                let prev_this = self.saw_this;
-                self.saw_this = false;
+                // 记录块内**首个** `this` 出现的行，诊断定位到那里而不是块尾。
+                let prev_this = self.this_line.take();
                 let prev_async = self.in_async;
                 self.in_async = true;
                 self.emit("tokio::spawn(async move {");
@@ -2171,14 +2172,17 @@ impl<'a> Codegen<'a> {
                 self.indent -= 1;
                 self.emit("});");
                 self.in_async = prev_async;
-                let captured_self = self.saw_this;
-                self.saw_this = prev_this;
-                if captured_self {
+                let captured_this = self.this_line.take();
+                self.this_line = prev_this;
+                if let Some(line) = captured_this {
+                    let saved = self.cur_line;
+                    self.cur_line = line;
                     self.err_code(
                         "JR3023",
                         "`spawn` 块捕获了 `this`，它不满足 Send + 'static",
                         "`this` 是 `&self`，不能跨线程持有；先把需要的字段复制到局部变量（标量 / String / Vec 可 clone）再 spawn。",
                     );
+                    self.cur_line = saved;
                 }
             }
             Stmt::Sync { lock, body, line } => {
@@ -2531,7 +2535,10 @@ impl<'a> Codegen<'a> {
                 n.clone()
             }
             Expr::This => {
-                self.saw_this = true;
+                // 只记首个 `this` 行：同一语句里出现多次也定位到该语句。
+                if self.this_line.is_none() {
+                    self.this_line = Some(self.cur_line);
+                }
                 "self".to_string()
             }
             Expr::Field(recv, name) => {

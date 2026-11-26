@@ -100,3 +100,9 @@
 - **F 收尾（清理）**：删除 `JRUST_BORROW=legacy` 过渡开关（`analysis::legacy_mode` 与 `analyze` 里的早退分支），jrust 只保留借用推断这一条路径；SPEC JR-O7 同步去掉「可回退旧行为」的说明。
 - **删除死代码**：`codegen::generate_multi`（Stage C 起由 `generate_multi_with_sigs` 取代）与 `expr_is_str_literal`，`cargo build` 零警告。
 - 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.12 — 2026-11-26
+
+- **修正 `JR3023` 诊断行号**：`Codegen` 的 `saw_this: bool` 改为 `this_line: Option<usize>`，`Expr::This` 首次出现时记录 `cur_line`；`spawn` 生成结束后用该行报错，不再指向块内最后一条语句。例：`spawn { println(this.x); println("done"); }` 现在报 `this` 所在行。
+- 用例：`neg_spawn_this` 增加块尾语句以暴露行号偏差；`tests/l1_cases.sh` 的 `run_neg` 支持可选第 4 参数断言行号（`run_neg ... 11`）。
+- 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
