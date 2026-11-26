@@ -1,0 +1,12 @@
+// parser 层：同一形参上 `@ref` / `@mut` 互斥，只能出现一个。
+public class Util {
+    public void hi(@ref @mut String s) {
+        println(s);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println("x");
+    }
+}

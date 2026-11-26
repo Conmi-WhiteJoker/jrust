@@ -1,0 +1,19 @@
+// Stage D：泛型类型参数一律按值，标借用会给 `&T` 引入额外 trait 上界 → JR4001。
+public class Box<T> {
+    private T v;
+
+    public Box(T v) {
+        this.v = v;
+    }
+
+    public void put(@ref T x) {
+        println("x");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Box<Integer> b = new Box<Integer>(1);
+        b.put(2);
+    }
+}

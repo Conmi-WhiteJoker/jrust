@@ -1,0 +1,19 @@
+// Stage D：接口标 `@ref`、实现要可变 → trait 是 `&[T]`、impl 是 `&mut Vec<T>`，
+// rustc 会报 E0053；在分析阶段拦成 JR4001。
+public interface Sink {
+    void feed(@ref List<Integer> xs);
+}
+
+public class FileSink implements Sink {
+    public void feed(List<Integer> xs) {
+        xs.add(1);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        FileSink f = new FileSink();
+        List<Integer> ys = new ArrayList<>();
+        f.feed(ys);
+    }
+}

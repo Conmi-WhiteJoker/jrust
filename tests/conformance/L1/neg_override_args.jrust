@@ -1,0 +1,12 @@
+// parser 层：`@ref` / `@mut` 不接受括号参数。
+public class Util {
+    public void hi(@mut(1) String s) {
+        println(s);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println("x");
+    }
+}

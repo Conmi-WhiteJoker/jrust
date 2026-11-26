@@ -1,0 +1,14 @@
+// Stage D：`@ref` 只读借用兑现不了写操作 → JR4001。
+public class Util {
+    public void bad(@ref List<Integer> xs) {
+        xs.add(1);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Util u = new Util();
+        List<Integer> ys = new ArrayList<>();
+        u.bad(ys);
+    }
+}

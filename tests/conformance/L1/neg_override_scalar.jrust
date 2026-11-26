@@ -1,0 +1,13 @@
+// Stage D：Copy 标量按值复制即可，借用没有意义 → JR4001。
+public class Util {
+    public void hi(@ref int n) {
+        println(n);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Util u = new Util();
+        u.hi(3);
+    }
+}

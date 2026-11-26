@@ -1,0 +1,11 @@
+// parser 层：`@ref` / `@mut` 只能写在方法形参上，写在类声明前报错。
+@ref
+public class Foo {
+    public int n;
+}
+
+public class Main {
+    public static void main(String[] args) {
+        println("x");
+    }
+}

@@ -72,6 +72,32 @@ run_neg() {
     pass=$((pass + 1))
 }
 
+# parser 层错误（没有诊断码）：必须失败，且输出同时包含消息片段与提示片段。
+run_neg_plain() {
+    local base=$1
+    local pattern=$2
+    local hint=$3
+    if $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL $base：本应报错却成功了"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q -- "$pattern" "$TMP/out"; then
+        echo "FAIL $base：缺少错误信息（$pattern）"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q "提示:" "$TMP/out" || ! grep -q -- "$hint" "$TMP/out"; then
+        echo "FAIL $base：提示行不符合预期（$hint）"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS $base"
+    pass=$((pass + 1))
+}
+
 # 闭包目前没有可表达的函数类型，只校验产物形态。
 run_closure() {
     local base=ok_closure_transpile
@@ -446,6 +472,16 @@ run_neg neg_return_this JR4003 "静态工厂"
 run_neg neg_conflict JR4001 "所有权已经移走"
 run_neg neg_borrow_field JR3011 "无法统一"
 run_neg neg_override_conflict JR4001 "需要它的所有权"
+# Stage D：JR4001 的另外五类触发（此前只有「存字段」一类有用例）。
+run_neg neg_override_ref_mutates JR4001 "会修改它"
+run_neg neg_override_scalar JR4001 "按值复制"
+run_neg neg_override_generic JR4001 "泛型类型参数一律按值"
+run_neg neg_override_static JR4001 "静态方法没有"
+run_neg neg_override_iface JR4001 "实现签名冲突"
+# parser 层注解错误（无诊断码）：位置、参数、互斥。
+run_neg_plain neg_override_misplaced "只能写在方法形参上" "写在方法签名或接口方法声明的形参前"
+run_neg_plain neg_override_args "不接受参数" "括号里什么都不用填"
+run_neg_plain neg_override_both "只能出现一个" "两者互斥"
 
 run_check ok_shared ok
 run_check neg_labeled fail

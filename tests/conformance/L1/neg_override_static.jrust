@@ -1,0 +1,12 @@
+// Stage D：静态方法没有 `self`，形参一律按值，借用注解没有落点 → JR4001。
+public class Util {
+    public static void hi(@ref String s) {
+        println(s);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Util.hi("x");
+    }
+}

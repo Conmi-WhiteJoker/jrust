@@ -113,3 +113,17 @@
 - 用例：`neg_spawn_this` 改为多行实参形态，断言行号为 `this.x` 行。
 - 同步修正：`find_return_this` 的 `Expr::This` 模式改为 `This(_)`，避免 `JR4003` 因行号字段失配而漏报（由 `neg_return_this` 回归捕获）。
 - 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.14 — 2026-11-26
+
+- **补齐 JR4001 / parser 注解错误的 L1 覆盖**：此前 `JR4001` 的六类触发只有「存进字段」一类有用例（`neg_override_conflict`），其余五类与 parser 层的三条注解错误只有实现、没有回归保护。新增 8 个用例：
+  - `neg_override_ref_mutates`（`@ref` 但方法体会修改它）
+  - `neg_override_scalar`（Copy 标量）
+  - `neg_override_generic`（泛型类型参数）
+  - `neg_override_static`（静态方法形参）
+  - `neg_override_iface`（接口声明 `@ref` + 实现需要可变 → trait/impl 签名不一致，原本会漏到 rustc `E0053`）
+  - `neg_override_misplaced` / `neg_override_args` / `neg_override_both`（parser 层：位置、括号参数、两者互斥）
+- 新增 `tests/l1_cases.sh` 的 `run_neg_plain`：parser 层错误没有诊断码，按「错误信息片段 + 提示片段」断言，不套 `error[码]` 格式。
+- **变异验证**：逐条把对应检查改坏（`is_copy_scalar` 短路、注释掉 `check_override_consistency`、放开 `@ref`/`@mut` 互斥判断），确认相应用例会变红，避免写出「永远通过」的假用例；随后完整恢复源码。
+- **SPEC JR-O11 措辞修正**：明确 `@mut String` 在分析阶段就归一成 owned，因此存字段 / 传给 owned 形参 / 被 `spawn` 捕获**都不报** `JR4001`（与 `@mut List<T>` 不同）；六类触发条件单列，并补 parser 层三类直接报错。
+- L1 104 通过 0 失败；`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
