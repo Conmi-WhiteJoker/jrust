@@ -204,6 +204,8 @@ pub struct EnumDecl {
 
 #[derive(Debug, Clone, Default)]
 pub struct Program {
+    /// `package a.b;` 声明的模块路径（多文件模式，JR-S4/M3）；单文件为 `None`。
+    pub package: Option<String>,
     pub imports: Vec<String>,
     pub interfaces: Vec<InterfaceDecl>,
     pub classes: Vec<ClassDecl>,

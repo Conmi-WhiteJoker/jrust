@@ -9,7 +9,17 @@ use crate::ast::*;
 use crate::diag::Diag;
 
 pub fn generate(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
+    generate_opts(prog, src_name, false)
+}
+
+/// 多文件模式（JR-S4/M3）：跨模块的 `import a.b.C;` 需要写成 `use crate::a::b::C;`。
+pub fn generate_multi(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
+    generate_opts(prog, src_name, true)
+}
+
+fn generate_opts(prog: &Program, src_name: &str, multi_file: bool) -> Result<String, Vec<Diag>> {
     let mut g = Codegen::new(prog);
+    g.multi_file = multi_file;
     g.run(src_name);
     if g.diags.is_empty() {
         Ok(g.out)
@@ -68,6 +78,8 @@ struct Codegen<'a> {
     shared_mut: HashMap<String, HashSet<String>>,
     /// 当前作用域里已经持有的共享字段锁：字段名 → guard 变量名（避免二次加锁死锁）。
     guarded: HashMap<String, String>,
+    /// 多文件模式：`import a.b.C;` → `use crate::a::b::C;`（JR-S4/M3）。
+    multi_file: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -156,6 +168,7 @@ impl<'a> Codegen<'a> {
             saw_this: false,
             shared_mut,
             guarded: HashMap::new(),
+            multi_file: false,
         }
     }
 
@@ -572,7 +585,19 @@ impl<'a> Codegen<'a> {
             if imp.starts_with("java.") || !seen.insert(imp.clone()) {
                 continue;
             }
-            self.emit(&format!("use {};", imp.replace('.', "::")));
+            let path = imp.replace('.', "::");
+            // 多文件模式（JR-S4/M3）：跨模块引用要带上 crate 根，写成 `use crate::a::b::C;`。
+            // `std` / `core` / `alloc` 是 Rust 自带的外部 crate，`crate` / `self` / `super`
+            // 本身就是根路径，都不加前缀。
+            let first = imp.split('.').next().unwrap_or("");
+            let path = if self.multi_file
+                && !matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super")
+            {
+                format!("crate::{}", path)
+            } else {
+                path
+            };
+            self.emit(&format!("use {};", path));
         }
         // Map / Set 统一映射到 std；未用到时由 allow(unused_imports) 兜住。
         if !seen.contains("std.collections.HashMap") {
@@ -2354,6 +2379,29 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 return format!("{}({})", path, vals.join(", "));
+            }
+        }
+
+        // 多文件模式（JR-S4/M3）：别的模块里的类 / 枚举在这里看不到签名，
+        // 按 Java 命名习惯把大写开头的接收者当成类型名，生成关联函数调用。
+        if self.multi_file {
+            if let Some(Expr::Ident(cn)) = recv.as_deref() {
+                let type_like = cn.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    && !env.vars.contains_key(cn);
+                if type_like {
+                    let vals: Vec<String> = args
+                        .iter()
+                        .map(|a| match a {
+                            // 跨模块看不到形参类型；jrust 里的字符串参数只会是 String。
+                            Expr::Str(_) => self.gen_expr(a, env, Some(&Type::String)),
+                            _ => self.gen_expr(a, env, None),
+                        })
+                        .collect();
+                    if vals.is_empty() {
+                        return format!("{}::{}", cn, name);
+                    }
+                    return format!("{}::{}({})", cn, name, vals.join(", "));
+                }
             }
         }
 

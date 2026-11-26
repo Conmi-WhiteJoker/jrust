@@ -127,6 +127,68 @@ run_check() {
 }
 
 
+# 多文件模式（JR-S4/M3）：package → 模块树、crate 根、crate:: 前缀的 use。
+run_multifile() {
+    local work="$TMP/multifile"
+    rm -rf "$work"
+    cp -r tests/multifile "$work"
+    if ! $JRUST build "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL multifile：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if [ ! -f "$work/app/greet.rs" ] || [ ! -f "$work/app/mod.rs" ]; then
+        echo "FAIL multifile：缺少 app/greet.rs 或 app/mod.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'use crate::app::greet::Greeter;' "$work/main.rs"; then
+        echo "FAIL multifile：main.rs 的 use 缺少 crate:: 前缀"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'pub mod app;' "$work/main.rs" || ! grep -q 'pub mod greet;' "$work/app/mod.rs"; then
+        echo "FAIL multifile：模块声明缺失"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! rustc --edition 2021 -A warnings "$work/main.rs" -o "$TMP/mf" 2>"$TMP/err"; then
+        echo "FAIL multifile：生成的 Rust 编译失败"
+        cat "$TMP/err"
+        fail=$((fail + 1))
+        return
+    fi
+    "$TMP/mf" >"$TMP/out"
+    if [ "$(cat "$TMP/out")" = "Hello, jrust" ]; then
+        echo "PASS multifile"
+        pass=$((pass + 1))
+    else
+        echo "FAIL multifile：输出是 $(cat "$TMP/out")"
+        fail=$((fail + 1))
+    fi
+}
+
+# 含 main 的文件声明 package → JR3029，提示必须是 crate 根。
+run_multifile_neg() {
+    local work="$TMP/multifile_bad"
+    rm -rf "$work"
+    cp -r tests/multifile_bad "$work"
+    if $JRUST build "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL multifile_bad：本应报错却成功了"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q 'error\[JR3029\]' "$TMP/out" && grep -q 'crate 根' "$TMP/out"; then
+        echo "PASS multifile_bad"
+        pass=$((pass + 1))
+    else
+        echo "FAIL multifile_bad：缺少 JR3029 / crate 根提示"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -179,6 +241,8 @@ run_neg neg_mutable_set JR3028 "只适用于 List"
 
 run_check ok_shared ok
 run_check neg_labeled fail
+run_multifile
+run_multifile_neg
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

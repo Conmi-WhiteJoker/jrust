@@ -33,6 +33,9 @@ cargo build
 # 转译（输出到同目录的 .rs）
 ./target/debug/jrust build examples/HelloWorld.jrust
 
+# 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
+./target/debug/jrust build tests/multifile
+
 # 端到端验证：转译 examples/*.jrust，再用 cargo 编译产物
 ./verify.sh
 
@@ -52,6 +55,17 @@ cargo build
 ## 解释执行与调试（方案 C）
 
 `jrust check <文件>` 只做词法 / 语法 / 代码生成检查并打印诊断，**不写** `.rs`，适合接到编辑器保存钩子或 CI 的 lint 步骤。
+
+### 多文件工程（`package`）
+
+`jrust build <目录>` 会递归收集目录下的 `*.jrust`，按 `package` 生成 Rust 模块树：
+
+- `package app.greet;` → `app/greet.rs`（package 最后一段必须等于文件名）；
+- 含 `main` 的文件是 crate 根，**不能**声明 `package`；其他文件必须有 `package`；
+- 每层父模块自动补 `pub mod 子模块;`：父模块有源文件就写进它的产物，否则生成 `app/mod.rs`；
+- 跨模块的 `import app.greet.Greeter;` 转成 `use crate::app::greet::Greeter;`。
+
+布局不合规（`JR3029`）会直接报错并给出改法；例子见 `tests/multifile/`。
 
 除了「转译成 `.rs`」，jrust 还内置了一个树遍历解释器，直接执行 AST：
 

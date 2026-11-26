@@ -327,12 +327,24 @@ impl Parser {
                     }
                     self.eat_punct(";");
                     if is_package {
-                        self.diags.push(
-                            Diag::error(line, "jrust 不需要 package 声明").with_hint(
-                                "Rust 里一个 crate 就是一个包；模块用 `mod` 组织，跨包依赖写在 Cargo.toml。",
-                            ),
-                        );
-                    } else {
+                        // 多文件模式（JR-S4/M3）：`package a.b.c;` 声明模块路径。
+                        if path.is_empty() {
+                            self.diags.push(
+                                Diag::error(line, "package 后面需要模块路径，例如 `package app.greet;`")
+                                    .with_hint(
+                                        "模块路径决定产物目录：`package app.greet;` → `app/greet.rs`。",
+                                    ),
+                            );
+                        } else if prog.package.is_some() {
+                            self.diags.push(
+                                Diag::error(line, "一个文件只能有一个 package 声明").with_hint(
+                                    "把多个 package 语句合并成一个；一个 .jrust 只对应一个模块。",
+                                ),
+                            );
+                        } else {
+                            prog.package = Some(path);
+                        }
+                    } else if !path.is_empty() {
                         prog.imports.push(path);
                     }
                 }
