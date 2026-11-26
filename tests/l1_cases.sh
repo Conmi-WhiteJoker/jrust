@@ -102,6 +102,31 @@ run_build_has() {
     fi
 }
 
+# `jrust check`：只做检查、不写产物；ok 期望退出 0，fail 期望非 0。
+run_check() {
+    local base=$1
+    local expect=$2
+    if [ "$expect" = ok ]; then
+        if $JRUST check "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+            echo "PASS check:$base"
+            pass=$((pass + 1))
+        else
+            echo "FAIL check:$base：本应通过"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+        fi
+    else
+        if $JRUST check "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+            echo "FAIL check:$base：本应报错"
+            fail=$((fail + 1))
+        else
+            echo "PASS check:$base"
+            pass=$((pass + 1))
+        fi
+    fi
+}
+
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -151,6 +176,9 @@ run_neg neg_sync_target JR3026 "this.f"
 run_neg neg_labeled JR2004 "不支持带标签"
 run_neg neg_raw_nested JR3027 "不能嵌套"
 run_neg neg_mutable_set JR3028 "只适用于 List"
+
+run_check ok_shared ok
+run_check neg_labeled fail
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

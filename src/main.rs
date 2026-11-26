@@ -32,6 +32,19 @@ fn main() -> ExitCode {
             }
             exit_code(all_ok)
         }
+        "check" => {
+            if args.len() < 3 {
+                print_usage();
+                return ExitCode::FAILURE;
+            }
+            let mut all_ok = true;
+            for f in &args[2..] {
+                if !check_one(Path::new(f)) {
+                    all_ok = false;
+                }
+            }
+            exit_code(all_ok)
+        }
         "run" => {
             if args.len() < 3 {
                 print_usage();
@@ -91,6 +104,7 @@ fn print_usage() {
 用法:
   jrust new <目录>                         新建项目（main.jrust + main.rs + Cargo.toml，可直接 cargo run）
   jrust build <文件.jrust> [更多文件...]   转译成同名 .rs
+  jrust check <文件.jrust> [更多文件...]   只做词法/语法/代码生成检查，不写文件
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
   jrust dap                                以 DAP 适配器方式运行（供 IDE 连接）
@@ -193,6 +207,33 @@ fn build_one(path: &Path) -> bool {
                 return false;
             }
             println!("已生成 {}", out.display());
+            true
+        }
+        Err(diags) => {
+            print_diags(path, &diags);
+            false
+        }
+    }
+}
+
+fn check_one(path: &Path) -> bool {
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("无法读取 {}: {}", path.display(), e);
+            return false;
+        }
+    };
+    let prog = match parser::parse_file(&src) {
+        Ok(p) => p,
+        Err(diags) => {
+            print_diags(path, &diags);
+            return false;
+        }
+    };
+    match codegen::generate(&prog, &path.display().to_string()) {
+        Ok(_) => {
+            println!("检查通过 {}", path.display());
             true
         }
         Err(diags) => {
