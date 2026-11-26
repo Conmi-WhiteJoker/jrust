@@ -617,6 +617,7 @@ run_ok ok_attrs
 run_ok ok_assert
 run_ok ok_async
 run_ok ok_raw
+run_ok ok_raw_multiline
 run_ok ok_iface_default
 run_ok ok_iter_chain
 run_ok ok_shared

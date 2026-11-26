@@ -182,3 +182,16 @@
 - README：全部示例链接同步到 `examples/<Name>/main.jrust`，结构树与目录说明更新。
 - 验证：`verify.sh` 全绿（L1 119 通过 0 失败）；`jrust verify examples/HelloWorld`、
   `cargo run -p helloworld`、`cargo run -p asyncmain` 三个入口逐一实测。
+
+## v1.19 — 2026-11-26
+
+- **修复回归：表达式位置的多行 `raw` 生成非法 Rust**。v1.16 为过 `rustfmt --check` 把
+  `Expr::Raw` 从 `({ /* jrust:L */ body })` 改成 `(/* jrust:L */ body)`，块表达式外壳被丢；
+  单行没问题，但多行 raw（体内含 `let` 等语句）会生成 `let y: i32 = (…let x = 1; x);`，
+  rustc 报 `expected expression, found let statement`（旧形态可编）。
+  现在：单行保持 `(/* jrust:L */ expr)`；多行回退块形态 `(/* jrust:L */{ body })`，
+  体内语句按源缩进原样保留，收尾 `}` 对齐当前缩进。
+- 补用例 `tests/conformance/L1/ok_raw_multiline.jrust`（+ `.expected`）：覆盖方法内多行 raw、
+  `String` 返回值的多行 raw、`if` 内更深嵌套三处；用未修复的二进制复跑会失败（真实回归钉）。
+- README `raw` 行补充形态说明；SPEC §15 L1 计数 119 → 120。
+- 验证：`verify.sh` 全绿（L1 **120 通过 0 失败**，`fmt` 仍通过）。

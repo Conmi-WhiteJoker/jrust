@@ -1,0 +1,28 @@
+// 表达式位置的多行 raw：体内含语句，必须生成块表达式外壳 `{ … }`。
+// 回归点：v1.16 把形态改成 `(/* jrust:L */ … )` 后，多行 raw 会生成
+// `let y: i32 = (…let mut acc = 1; acc);` —— rustc 报 expected expression。
+public class Main {
+    public static void main(String[] args) {
+        int y = raw {
+            let mut acc = 1;
+            acc += 2;
+            acc
+        };
+        System.out.println("多行 raw 表达式: " + y);
+
+        String s = raw {
+            let a = String::from("multi");
+            let b = format!("-{}", 42);
+            a + &b
+        };
+        System.out.println(s);
+
+        if (y > 0) {
+            int nested = raw {
+                let base = 10;
+                base * 2
+            };
+            System.out.println("嵌套: " + nested);
+        }
+    }
+}

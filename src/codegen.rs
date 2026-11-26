@@ -2696,11 +2696,16 @@ impl<'a> Codegen<'a> {
             Expr::Raw { code, line } => {
                 // 表达式位置：保留源映射标记（JR-X1）。
                 //
-                // 形态选择过三种，只有当前这种能过 `rustfmt --check`（JR-G9）：
-                //   `({ /* jrust:L */ x })` → rustfmt 会拆成多行（括号内是块表达式）；
-                //   `(/* jrust:L */ x)`      → 稳定，单行多行都保持原样。
-                // 多行 raw 本身就以 `{` 开头时，`(/* … */{ … })` 同样稳定。
-                format!("(/* jrust:L{} */{})", line, code.trim())
+                // 单行：`(/* jrust:L */ x)` —— 稳定过 `rustfmt --check`（JR-G9）。
+                // 多行：必须保留块表达式外壳 `{ … }`。多行 raw 体内常有 `let` 等语句，
+                // `(/* jrust:L */let x = 1; x)` 不是合法表达式（rustc: expected expression）。
+                let body = code.trim_end();
+                if body.contains('\n') {
+                    let pad = " ".repeat(self.indent * 4);
+                    format!("(/* jrust:L{} */{{{}\n{}}})", line, body, pad)
+                } else {
+                    format!("(/* jrust:L{} */{})", line, body.trim())
+                }
             }
             Expr::Try(inner) => {
                 if !env.in_throws {
