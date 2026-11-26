@@ -208,3 +208,13 @@
 - 生成的 `.rs` 仍就近落在用例旁边（已 gitignore），与 examples 一致，产物可对照。
 - README 结构树补布局说明，`raw` 行的多行用例链接同步。
 - 验证：`tests/l1_cases.sh` **120 通过 0 失败**（目录式与扁平式共存）。
+
+## v1.21 — 2026-11-26
+
+- **conformance/L1 全量目录化**：79 个用例统一为 `<case>/{main.jrust, expected.txt}`
+  （负向用例只有 `main.jrust`）；78 次 `git mv` + 34 个 expected 改名，git 全部记为 rename，历史不丢。
+- `run_verify` 也改走 `case_paths()` —— 此前是全脚本最后一处硬编码 `$DIR/$base.jrust`。
+- README 32 处用例链接批量更新为 `tests/conformance/L1/<case>/main.jrust`；
+  结构树说明改为「全部目录式，runner 仍兼容扁平历史写法」。
+- 生成产物 `main.rs` 就近落在各用例目录，被 `.gitignore` 的 `/tests/conformance/**/*.rs` 覆盖。
+- 验证：`tests/l1_cases.sh` **120 通过 0 失败**。

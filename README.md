@@ -118,14 +118,14 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 |---|---|---|---|
 | `public class Foo` | `pub struct Foo` + `impl Foo` | 数据与行为拆成两块 | [ClassInterface](examples/ClassInterface/main.jrust) |
 | `interface Foo` | `pub trait Foo` | | [ClassInterface](examples/ClassInterface/main.jrust) |
-| `interface Foo extends A, B` | `pub trait Foo: A + B` | 实现 `Foo` 的类会自动为 `A`、`B` 也生成 `impl`（祖先接口的 impl 一并补齐） | [L1 用例](tests/conformance/L1/ok_iface_extends.jrust) |
+| `interface Foo extends A, B` | `pub trait Foo: A + B` | 实现 `Foo` 的类会自动为 `A`、`B` 也生成 `impl`（祖先接口的 impl 一并补齐） | [L1 用例](tests/conformance/L1/ok_iface_extends/main.jrust) |
 | `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl | [ClassInterface](examples/ClassInterface/main.jrust) |
-| 方法接收者（自动推断） | `&self` / `&mut self` | 方法体写非 `@shared` 字段 / 调集合可变方法（`add`、`put` 等）/ 调 `&mut self` 方法 → `&mut self`，否则 `&self`；接口与实现取并集；`@shared` 写字段走 `Arc` 锁不产生 `&mut self`；`return this` 报 `JR4003` | [L1 用例](tests/conformance/L1/ok_mut_receiver.jrust) |
-| 方法形参（自动推断） | `&T` / `&mut T` / `T` | 只读 → 借用；改字段 / 调 `&mut self` 方法 / 集合可变方法 → `&mut`；被 `move`、被返回、存进字段、交给 owned 形参、被 `spawn` 捕获 → owned。`String` 只读 → `&str`，`List` 只读 → `&[T]` / 可写 → `&mut Vec<T>`，`Map`/`Set` 同理，接口 → `&dyn I`；泛型参数与 Copy 标量恒按值；构造器形参仍按值 | [L1 用例](tests/conformance/L1/ok_borrow_param.jrust) |
-| 形参借用覆盖（`@ref` / `@mut`） | 固定 `&T` / `&mut T` | 写在形参前，强制覆盖自动推断、不做二次推断，优先于接口并集。与所有权用法共存、`@ref` 但方法体会改它、Copy 标量、泛型参数、静态方法形参、接口与实现签名不一致 → `JR4001`；只能写在方法 / 接口方法的形参上（构造器与枚举载荷不支持） | [ok_override_ref](tests/conformance/L1/ok_override_ref.jrust) · [neg_override_conflict](tests/conformance/L1/neg_override_conflict.jrust) |
-| 借用返回（自动推断） | `-> &str` / `-> &'a str` | 来源 = `return 借用形参` / `return this.f`（非 `@shared` String 字段）/ `return p.f` / `return helper(x)`（沿调用链）；Copy 标量、泛型、`T?`、接口、枚举不借，类与集合字段仍 owned + `.clone()`。唯一来源省略生命周期，多来源统一 `'a`；`&mut` 形参 / 类型不一致 / 形参已按值使用 → `JR3011`。调用点落到 owned 上下文时自动 `to_string` / `to_vec` / `clone` | [getter](tests/conformance/L1/ok_getter_ref.jrust) · [生命周期](tests/conformance/L1/ok_pick_lifetime.jrust) |
-| 调用点实参 | `&x` / `&mut x` / `x` | 按被调形参三态生成：owned 变量裸传（之后不能再用，否则 `JR4001`）、字段 `.clone()`、字面量 `.to_string()`；借用形参和 `&str` 字面量原样传；`&mut` 实参自动把变量补成 `let mut` | [L1 用例](tests/conformance/L1/ok_borrow_list.jrust) |
-| 多文件借用（全局分析） | 跨文件方法的 `&str` / `&self` / `-> &T` | `jrust build <目录>` 对全工程做一次签名分析，跨文件调用也能拿到形参三态与返回来源；外部 crate 的类型没有源码签名时按 `&T` 传参并输出 `warning[JR4101]`（不阻断构建，可用 `@ref`/`@mut` 覆盖） | [multifile](tests/multifile/app/greet.jrust) · [ok_ext_unknown](tests/conformance/L1/ok_ext_unknown.jrust) |
+| 方法接收者（自动推断） | `&self` / `&mut self` | 方法体写非 `@shared` 字段 / 调集合可变方法（`add`、`put` 等）/ 调 `&mut self` 方法 → `&mut self`，否则 `&self`；接口与实现取并集；`@shared` 写字段走 `Arc` 锁不产生 `&mut self`；`return this` 报 `JR4003` | [L1 用例](tests/conformance/L1/ok_mut_receiver/main.jrust) |
+| 方法形参（自动推断） | `&T` / `&mut T` / `T` | 只读 → 借用；改字段 / 调 `&mut self` 方法 / 集合可变方法 → `&mut`；被 `move`、被返回、存进字段、交给 owned 形参、被 `spawn` 捕获 → owned。`String` 只读 → `&str`，`List` 只读 → `&[T]` / 可写 → `&mut Vec<T>`，`Map`/`Set` 同理，接口 → `&dyn I`；泛型参数与 Copy 标量恒按值；构造器形参仍按值 | [L1 用例](tests/conformance/L1/ok_borrow_param/main.jrust) |
+| 形参借用覆盖（`@ref` / `@mut`） | 固定 `&T` / `&mut T` | 写在形参前，强制覆盖自动推断、不做二次推断，优先于接口并集。与所有权用法共存、`@ref` 但方法体会改它、Copy 标量、泛型参数、静态方法形参、接口与实现签名不一致 → `JR4001`；只能写在方法 / 接口方法的形参上（构造器与枚举载荷不支持） | [ok_override_ref](tests/conformance/L1/ok_override_ref/main.jrust) · [neg_override_conflict](tests/conformance/L1/neg_override_conflict/main.jrust) |
+| 借用返回（自动推断） | `-> &str` / `-> &'a str` | 来源 = `return 借用形参` / `return this.f`（非 `@shared` String 字段）/ `return p.f` / `return helper(x)`（沿调用链）；Copy 标量、泛型、`T?`、接口、枚举不借，类与集合字段仍 owned + `.clone()`。唯一来源省略生命周期，多来源统一 `'a`；`&mut` 形参 / 类型不一致 / 形参已按值使用 → `JR3011`。调用点落到 owned 上下文时自动 `to_string` / `to_vec` / `clone` | [getter](tests/conformance/L1/ok_getter_ref/main.jrust) · [生命周期](tests/conformance/L1/ok_pick_lifetime/main.jrust) |
+| 调用点实参 | `&x` / `&mut x` / `x` | 按被调形参三态生成：owned 变量裸传（之后不能再用，否则 `JR4001`）、字段 `.clone()`、字面量 `.to_string()`；借用形参和 `&str` 字面量原样传；`&mut` 实参自动把变量补成 `let mut` | [L1 用例](tests/conformance/L1/ok_borrow_list/main.jrust) |
+| 多文件借用（全局分析） | 跨文件方法的 `&str` / `&self` / `-> &T` | `jrust build <目录>` 对全工程做一次签名分析，跨文件调用也能拿到形参三态与返回来源；外部 crate 的类型没有源码签名时按 `&T` 传参并输出 `warning[JR4101]`（不阻断构建，可用 `@ref`/`@mut` 覆盖） | [multifile](tests/multifile/app/greet.jrust) · [ok_ext_unknown](tests/conformance/L1/ok_ext_unknown/main.jrust) |
 | `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 | [ClassInterface](examples/ClassInterface/main.jrust) |
 | `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | | [RustTypes](examples/RustTypes/main.jrust) |
 | `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 | [RustTypes](examples/RustTypes/main.jrust) |
@@ -133,49 +133,49 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `String` | `String` | 字符串字面量自动补 `.to_string()` | [HelloWorld](examples/HelloWorld/main.jrust) |
 | `List<T>` | `Vec<T>`；`T` 是 interface 时 `Vec<Box<dyn T>>` | | [VecImport](examples/VecImport/main.jrust) |
 | `new ArrayList<>()` | `Vec::new()` | | [VecImport](examples/VecImport/main.jrust) |
-| `int[] a = new int[n]` | `let mut a: Vec<i32> = vec![0; (n) as usize];` | 元素只支持标量 / `String`（默认值 `0` / `0.0` / `false` / `String::new()`）；`a.size()` / `a[i]` / 增强 for 与 `List` 一致；`new Foo[n]` 报 `JR3014` | [L1 用例](tests/conformance/L1/ok_newarray.jrust) |
+| `int[] a = new int[n]` | `let mut a: Vec<i32> = vec![0; (n) as usize];` | 元素只支持标量 / `String`（默认值 `0` / `0.0` / `false` / `String::new()`）；`a.size()` / `a[i]` / 增强 for 与 `List` 一致；`new Foo[n]` 报 `JR3014` | [L1 用例](tests/conformance/L1/ok_newarray/main.jrust) |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport/main.jrust) |
 | `for (T x : list)` | `for x in &list` | 借用而不是移动；可变遍历写 `for (T x : list.mutable())` → `for x in list.iter_mut()`（仅 `List<T>`/`T[]`，`Set` 报 `JR3028`） | [VecImport](examples/VecImport/main.jrust) |
-| `list.stream().map(..).filter(..).collectList()` | `list.iter().cloned().map(..).filter(..).collect::<Vec<_>>()` | 白名单 `stream` / `map` / `filter` / `collectList`，其它方法报 `JR3017`；`cloned()` 保证按值处理元素；`collectList` 元素类型沿用基座集合 | [L1 用例](tests/conformance/L1/ok_iter_chain.jrust) |
-| `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor.jrust) |
+| `list.stream().map(..).filter(..).collectList()` | `list.iter().cloned().map(..).filter(..).collect::<Vec<_>>()` | 白名单 `stream` / `map` / `filter` / `collectList`，其它方法报 `JR3017`；`cloned()` 保证按值处理元素；`collectList` 元素类型沿用基座集合 | [L1 用例](tests/conformance/L1/ok_iter_chain/main.jrust) |
+| `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor/main.jrust) |
 | `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo/main.jrust) |
 | `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo/main.jrust) |
 | `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo/main.jrust) |
 | `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 | [MapDemo](examples/MapDemo/main.jrust) |
 | `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic | [Nullable](examples/Nullable/main.jrust) |
-| `Set<T>` / `HashSet<T>` | `HashSet<T>` | `new HashSet<>()` → `HashSet::new()`；`add`→`insert`、`size`→`len`、`isEmpty`→`is_empty`；`contains` / `remove` 自动取引用（`String` 元素走 `.as_str()`） | [L1 用例](tests/conformance/L1/ok_set.jrust) |
+| `Set<T>` / `HashSet<T>` | `HashSet<T>` | `new HashSet<>()` → `HashSet::new()`；`add`→`insert`、`size`→`len`、`isEmpty`→`is_empty`；`contains` / `remove` 自动取引用（`String` 元素走 `.as_str()`） | [L1 用例](tests/conformance/L1/ok_set/main.jrust) |
 | `T? x` | `Option<T>` | `T? x = null;` → `None`；`T? x = v;` → `Some(v)`；`x == null` / `x != null` → `is_none()` / `is_some()`；对 `T?` 直接调用 `T` 的方法报 `JR3006` | [Nullable](examples/Nullable/main.jrust) |
 | `T v = x;`（`x` 是 `T?`） | `let v: T = x.clone().unwrap();` | 显式解包：`None` 会 panic（等价于 Java 的 NPE）；先用 `if (x != null)` 判空 | [Nullable](examples/Nullable/main.jrust) |
 | `class Box<T> { T value; ... }` | `pub struct Box<T>` + `impl<T: Clone> Box<T>` | 字段未使用的类型参数补 `PhantomData` 占位（`class Tag<T> {}`） | [Generics](examples/Generics/main.jrust) |
 | `new Box<Integer>(v)` / `new Box<>(v)` | `Box::<i32>::new(v)` / `Box::new(v)` | 钻石写法由左侧声明类型推断实参；构造器形参里的 `T` 按实参替换（字符串字面量自动 `.to_string()`） | [Generics](examples/Generics/main.jrust) |
 | `public <T> T id(T x)` | `pub fn id<T: Clone>(x: T) -> T` | 方法级类型参数写在方法名后；v1 统一要求 `T: Clone` | [Generics](examples/Generics/main.jrust) |
-| `interface Mapper<T> { T map(T x); }` | `pub trait Mapper<T> { ... }` | 泛型接口；`class X implements Mapper<Integer>` → `impl Mapper<i32> for X`；接口类型字段/变量包成 `Box<dyn Mapper<i32>>` | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
-| 接口默认方法 / `static` 方法 | trait 默认实现 / 自由函数 `Iface_method(...)` | 带方法体即默认方法（`default` 可省）；`Iface.method()` 调用生成 `Iface_method()`（Rust 不允许 `Trait::f()`，E0790）；`static` 接口方法必须有方法体，否则 `JR3024` | [L1 用例](tests/conformance/L1/ok_iface_default.jrust) |
-| `enum Maybe<T> { Some(T value), None }` | `pub enum Maybe<T> { Some(T), None }` | 泛型枚举；`Maybe.Some("hi")` 按左侧 `Maybe<String>` 替换实参 | [L1 用例](tests/conformance/L1/ok_generic_iface_enum.jrust) |
-| `class Holder<T extends Named & Sizer> { ... }` | `pub struct Holder<T>` + `impl<T: Named + Sizer + Clone> Holder<T>` | 上界按 `&` 拆成 `+`；声明位置不带界，`impl` / 方法位置尾随 `Clone`（值语义需要）；`? extends` / `? super` 报 `JR3010` | [L1 用例](tests/conformance/L1/ok_generic_bounds.jrust) |
-| `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
-| `break;` / `continue;` | `break;` / `continue;` | 只支持无标签形式；`outer:` / `break outer;` / `continue outer;` 报 `JR2004` | [负向用例](tests/conformance/L1/neg_labeled.jrust) |
-| `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch.jrust) |
-| `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws.jrust) |
-| `class X extends Exception` / `throw new IllegalArgumentException("…")` | `struct X` + `impl Error`；`panic!` | 自定义异常自动生成 `Display` / `Error` / `From<X> for JrustError`；`IllegalArgumentException` 视为编程错误直接 panic | [自定义异常](tests/conformance/L1/ok_custom_exception.jrust) · [IAE](tests/conformance/L1/ok_illegal_arg.jrust) |
-| `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile.jrust) |
+| `interface Mapper<T> { T map(T x); }` | `pub trait Mapper<T> { ... }` | 泛型接口；`class X implements Mapper<Integer>` → `impl Mapper<i32> for X`；接口类型字段/变量包成 `Box<dyn Mapper<i32>>` | [L1 用例](tests/conformance/L1/ok_generic_iface_enum/main.jrust) |
+| 接口默认方法 / `static` 方法 | trait 默认实现 / 自由函数 `Iface_method(...)` | 带方法体即默认方法（`default` 可省）；`Iface.method()` 调用生成 `Iface_method()`（Rust 不允许 `Trait::f()`，E0790）；`static` 接口方法必须有方法体，否则 `JR3024` | [L1 用例](tests/conformance/L1/ok_iface_default/main.jrust) |
+| `enum Maybe<T> { Some(T value), None }` | `pub enum Maybe<T> { Some(T), None }` | 泛型枚举；`Maybe.Some("hi")` 按左侧 `Maybe<String>` 替换实参 | [L1 用例](tests/conformance/L1/ok_generic_iface_enum/main.jrust) |
+| `class Holder<T extends Named & Sizer> { ... }` | `pub struct Holder<T>` + `impl<T: Named + Sizer + Clone> Holder<T>` | 上界按 `&` 拆成 `+`；声明位置不带界，`impl` / 方法位置尾随 `Clone`（值语义需要）；`? extends` / `? super` 报 `JR3010` | [L1 用例](tests/conformance/L1/ok_generic_bounds/main.jrust) |
+| `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch/main.jrust) |
+| `break;` / `continue;` | `break;` / `continue;` | 只支持无标签形式；`outer:` / `break outer;` / `continue outer;` 报 `JR2004` | [负向用例](tests/conformance/L1/neg_labeled/main.jrust) |
+| `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch/main.jrust) |
+| `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws/main.jrust) |
+| `class X extends Exception` / `throw new IllegalArgumentException("…")` | `struct X` + `impl Error`；`panic!` | 自定义异常自动生成 `Display` / `Error` / `From<X> for JrustError`；`IllegalArgumentException` 视为编程错误直接 panic | [自定义异常](tests/conformance/L1/ok_custom_exception/main.jrust) · [IAE](tests/conformance/L1/ok_illegal_arg/main.jrust) |
+| `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile/main.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort/main.jrust) |
-| `String s = "n=" + n;` | `let s: String = format!("n={}", n);` | 任意位置的字符串 `+` 链 → `format!`；纯字面量折叠成 `"ab".to_string()` | [L1 用例](tests/conformance/L1/ok_concat.jrust) |
+| `String s = "n=" + n;` | `let s: String = format!("n={}", n);` | 任意位置的字符串 `+` 链 → `format!`；纯字面量折叠成 `"ab".to_string()` | [L1 用例](tests/conformance/L1/ok_concat/main.jrust) |
 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` | `System.out.` 可省略；无参走 `println!()`；多参数时第一个参数当 Rust 格式串，`{}` 按序填入，字面花括号写 `{{` / `}}` | [PrintShort](examples/PrintShort/main.jrust) |
 | `String b = a;` | `let b: String = a.clone();` | 普通赋值 = 按值复制，两个变量各持一份；类与枚举自动 `#[derive(Clone)]`，含 trait 对象等不可克隆字段时报 `JR4002`，改用 `move` | [Ownership](examples/Ownership/main.jrust) |
 | `String b = move a;` | `let b: String = a;` | jrust 扩展：真正的移动，不 `clone`，之后 `a` 不可再用。合法目标：变量、本地变量的字段、方法参数；`this.字段`（`&self` 借用）与下标会报错并给替代写法 | [MoveEdges](examples/MoveEdges/main.jrust) |
-| `panic("msg")` / `assert(cond, "msg")` | `panic!("{}", msg)` / `assert!(cond, "{}", msg)` | 内置函数；`assert` 也接受单参数；其它裸调用报「未知的函数」 | [L1 用例](tests/conformance/L1/ok_assert.jrust) |
-| `Cls.staticMethod(x)` / `Iface.staticMethod(x)` | `Cls::staticMethod(x)` / `Iface_staticMethod(x)` | 类静态方法 → 关联函数；接口静态方法 → 顶层自由函数（Rust 不支持 `Trait::f()`） | [L1 用例](tests/conformance/L1/ok_iface_default.jrust) |
-| `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
-| `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
+| `panic("msg")` / `assert(cond, "msg")` | `panic!("{}", msg)` / `assert!(cond, "{}", msg)` | 内置函数；`assert` 也接受单参数；其它裸调用报「未知的函数」 | [L1 用例](tests/conformance/L1/ok_assert/main.jrust) |
+| `Cls.staticMethod(x)` / `Iface.staticMethod(x)` | `Cls::staticMethod(x)` / `Iface_staticMethod(x)` | 类静态方法 → 关联函数；接口静态方法 → 顶层自由函数（Rust 不支持 `Trait::f()`） | [L1 用例](tests/conformance/L1/ok_iface_default/main.jrust) |
+| `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async/main.jrust) |
+| `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn/main.jrust) |
 | `public static async void main(String[] args)` | `#[tokio::main] async fn main()` | 异步入口需要 tokio 运行时（`examples/AsyncMain/Cargo.toml` 已声明） | [AsyncMain](examples/AsyncMain/main.jrust) |
-| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`）；表达式位置的**多行** raw 会包成块表达式 `{ … }`，体内可写 `let` 等语句 | [L1 用例](tests/conformance/L1/ok_raw.jrust) / [多行表达式](tests/conformance/L1/ok_raw_multiline/main.jrust) |
+| `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`）；表达式位置的**多行** raw 会包成块表达式 `{ … }`，体内可写 `let` 等语句 | [L1 用例](tests/conformance/L1/ok_raw/main.jrust) / [多行表达式](tests/conformance/L1/ok_raw_multiline/main.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport/main.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport/main.jrust) |
 | `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [SharedState](examples/SharedState/main.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface/main.jrust) |
-| `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
-| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 是形参注解（见上表），写在其它的位置报错 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
+| `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const/main.jrust) |
+| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 是形参注解（见上表），写在其它的位置报错 | [L1 用例](tests/conformance/L1/ok_attrs/main.jrust) |
 | `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [SharedState](examples/SharedState/main.jrust) |
 | `synchronized` 方法 / `synchronized (this.f) { ... }` | 方法体开头按字段名排序依次 `lock()` 类内 `@shared` 可变字段；块语句 `let _g = self.f.lock().unwrap();` | 已持锁时复用不重复加锁；锁不是 `@shared` 可变字段报 `JR3026` | [SharedState](examples/SharedState/main.jrust) |
 
@@ -278,8 +278,8 @@ examples/       13 个独立 cargo 工程（examples/Cargo.toml 是 workspace，
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain（唯一带 tokio 依赖）
 tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate）+ verify 脚本
-tests/conformance/L1/  单文件夹具。新用例用目录式 `<case>/{main.jrust, expected.txt}`；
-                存量扁平的 `ok_*.jrust` / `neg_*.jrust` 仍被 runner 兼容（见 tests/l1_cases.sh 的 case_paths）
+tests/conformance/L1/  单文件夹具，全部目录式 `<case>/{main.jrust, expected.txt}`
+                （runner 仍兼容扁平 `<case>.jrust` 的历史写法，见 tests/l1_cases.sh 的 case_paths）
 tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 ```

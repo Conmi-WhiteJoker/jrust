@@ -383,7 +383,8 @@ run_verify() {
     local base=$1
     local expect=$2
     local pattern=${3:-}
-    if $JRUST verify "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+    case_paths "$base"
+    if $JRUST verify "$CASE_SRC" >"$TMP/out" 2>&1; then
         if [ "$expect" = ok ]; then
             echo "PASS verify:$base"
             pass=$((pass + 1))
