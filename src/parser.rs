@@ -2190,8 +2190,9 @@ impl Parser {
                 Expr::Bool(false)
             }
             Tok::Kw(Kw::This) => {
+                let line = self.toks[self.pos].line;
                 self.bump();
-                Expr::This
+                Expr::This(line)
             }
             Tok::Kw(Kw::Null) => {
                 self.bump();

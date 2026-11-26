@@ -553,7 +553,7 @@ fn origins_of_expr(
                 }
             }),
         Expr::Field(base, f) => {
-            if matches!(unparen(base), Expr::This) {
+            if matches!(unparen(base), Expr::This(_)) {
                 // 只借出 String 字段（类 / 集合字段仍返回 owned + clone，D4 ③）。
                 let cd = class?;
                 let ok = cd.fields.iter().any(|fd| {
@@ -613,7 +613,7 @@ fn callee_ret(
     let ty = match recv {
         None => Some(self_name.to_string()),
         Some(r) => match unparen(r) {
-            Expr::This => Some(self_name.to_string()),
+            Expr::This(_) => Some(self_name.to_string()),
             Expr::Ident(n) if !params.iter().any(|p| &p.name == n) => Some(n.clone()),
             _ => static_type_of(class, params, r).and_then(|t| ty_name(&t)),
         },
@@ -633,9 +633,9 @@ fn static_type_of(class: Option<&ClassDecl>, params: &[Param], e: &Expr) -> Opti
             .iter()
             .find(|p| &p.name == n)
             .map(|p| p.ty.clone()),
-        Expr::This => class.map(|c| Type::Named(c.name.clone())),
+        Expr::This(_) => class.map(|c| Type::Named(c.name.clone())),
         Expr::Field(base, f) => {
-            if matches!(unparen(base), Expr::This) {
+            if matches!(unparen(base), Expr::This(_)) {
                 class.and_then(|c| {
                     c.fields
                         .iter()
@@ -1255,7 +1255,7 @@ impl<'a> PUsage<'a> {
                 .params(self.self_name, name)
                 .or_else(|| self.iface_params(name)),
             Some(r) => match unparen(r) {
-                Expr::This => self
+                Expr::This(_) => self
                     .sigs
                     .params(self.self_name, name)
                     .or_else(|| self.iface_params(name)),
@@ -1300,9 +1300,9 @@ impl<'a> PUsage<'a> {
     fn static_type(&self, e: &Expr) -> Option<Type> {
         match unparen(e) {
             Expr::Ident(n) => self.idx(n).map(|i| self.types[i].clone()),
-            Expr::This => self.class.map(|c| Type::Named(c.name.clone())),
+            Expr::This(_) => self.class.map(|c| Type::Named(c.name.clone())),
             Expr::Field(base, f) => {
-                if matches!(unparen(base), Expr::This) {
+                if matches!(unparen(base), Expr::This(_)) {
                     self.class
                         .and_then(|c| c.fields.iter().find(|x| &x.name == f).map(|x| x.ty.clone()))
                 } else {
@@ -1387,7 +1387,7 @@ fn body_needs_mut(
 /// 实参是否以 `this` 为根（`this`、`this.f`、`this.f[i]`）。
 fn this_rooted(e: &Expr) -> bool {
     match unparen(e) {
-        Expr::This => true,
+        Expr::This(_) => true,
         Expr::Field(b, _) | Expr::Index(b, _) => this_rooted(b),
         _ => false,
     }
@@ -1405,8 +1405,8 @@ fn call_callee_params(
     let ty = match recv {
         None => Some(self_name.to_string()),
         Some(r) => match unparen(r) {
-            Expr::This => Some(self_name.to_string()),
-            Expr::Field(base, f) if matches!(unparen(base), Expr::This) => class.and_then(|c| {
+            Expr::This(_) => Some(self_name.to_string()),
+            Expr::Field(base, f) if matches!(unparen(base), Expr::This(_)) => class.and_then(|c| {
                 c.fields
                     .iter()
                     .find(|x| &x.name == f)
@@ -1435,8 +1435,8 @@ fn call_needs_mut(
         // 裸调用：实例方法里等价于 `self.name()`。
         None => self_method_mut(prog, self_name, name, sigs),
         Some(r) => match &**r {
-            Expr::This => self_method_mut(prog, self_name, name, sigs),
-            Expr::Field(base, f) if matches!(**base, Expr::This) => {
+            Expr::This(_) => self_method_mut(prog, self_name, name, sigs),
+            Expr::Field(base, f) if matches!(**base, Expr::This(_)) => {
                 if is_mut_builtin(name) {
                     return true;
                 }
@@ -1510,7 +1510,7 @@ fn iface_closure(t: &Type, prog: &Program, out: &mut HashSet<String>) {
 fn target_writes_this_field(target: &Expr) -> Option<String> {
     match target {
         Expr::Field(recv, name) => match &**recv {
-            Expr::This => Some(name.clone()),
+            Expr::This(_) => Some(name.clone()),
             inner => target_writes_this_field(inner),
         },
         Expr::Index(recv, _) => target_writes_this_field(recv),
@@ -1522,7 +1522,7 @@ fn target_writes_this_field(target: &Expr) -> Option<String> {
 fn find_return_this(stmts: &[Stmt], diags: &mut Vec<Diag>) {
     walk_stmts_all(stmts, &mut |s| {
         if let Stmt::Return {
-            value: Some(Expr::This),
+            value: Some(Expr::This(_)),
             line,
         } = s
         {

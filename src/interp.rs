@@ -880,7 +880,7 @@ impl<'a> Interp<'a> {
             Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Null => Ok(Value::Option(None)),
             Expr::Ident(name) => self.read_var(name),
-            Expr::This => self.read_this(),
+            Expr::This(_) => self.read_this(),
             Expr::Field(recv, name) => {
                 let v = self.eval(recv)?;
                 self.read_field(&v, name)

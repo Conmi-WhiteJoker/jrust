@@ -374,7 +374,8 @@ pub enum Expr {
     /// `null`：只允许出现在可空类型上下文（`T?`），产物为 `None`。
     Null,
     Ident(String),
-    This,
+    /// `this`，携带源码行号（诊断用：多行语句里也能定位到 `this` 本身）。
+    This(usize),
     Field(Box<Expr>, String),
     Call {
         recv: Option<Box<Expr>>,

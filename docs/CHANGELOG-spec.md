@@ -104,5 +104,12 @@
 ## v1.12 — 2026-11-26
 
 - **修正 `JR3023` 诊断行号**：`Codegen` 的 `saw_this: bool` 改为 `this_line: Option<usize>`，`Expr::This` 首次出现时记录 `cur_line`；`spawn` 生成结束后用该行报错，不再指向块内最后一条语句。例：`spawn { println(this.x); println("done"); }` 现在报 `this` 所在行。
-- 用例：`neg_spawn_this` 增加块尾语句以暴露行号偏差；`tests/l1_cases.sh` 的 `run_neg` 支持可选第 4 参数断言行号（`run_neg ... 11`）。
+- 用例：`neg_spawn_this` 增加块尾语句以暴露行号偏差；`tests/l1_cases.sh` 的 `run_neg` 支持可选第 4 参数断言行号。
+- 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.13 — 2026-11-26
+
+- **`Expr::This` 携带源码行号**（`This(usize)`，parser 取 token 行）：`spawn` 的 `JR3023` 改用它定位，多行语句不再退化成语句起始行。例：`println(` 换行后再写 `this.x`，现在报 `this.x` 所在行。
+- 用例：`neg_spawn_this` 改为多行实参形态，断言行号为 `this.x` 行。
+- 同步修正：`find_return_this` 的 `Expr::This` 模式改为 `This(_)`，避免 `JR4003` 因行号字段失配而漏报（由 `neg_return_this` 回归捕获）。
 - 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。

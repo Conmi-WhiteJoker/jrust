@@ -435,7 +435,7 @@ run_neg neg_newarray_type JR3014 "只支持标量 / String"
 run_neg neg_wildcard JR3010 "trait object"
 run_neg neg_mutable_static JR3013 "可变全局"
 run_neg neg_await_sync JR3022 "async"
-run_neg neg_spawn_this JR3023 "this" 11
+run_neg neg_spawn_this JR3023 "this" 13
 run_neg neg_iface_static_no_body JR3024 "必须有方法体"
 run_neg neg_iter_unknown JR3017 "白名单"
 run_neg neg_sync_target JR3026 "this.f"

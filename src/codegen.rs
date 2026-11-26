@@ -415,7 +415,7 @@ impl<'a> Codegen<'a> {
             },
             Expr::Field(recv, f) => {
                 let base = match &**recv {
-                    Expr::This => env.self_class.clone().map(Type::Named),
+                    Expr::This(_) => env.self_class.clone().map(Type::Named),
                     other => self.infer_type(other, env),
                 };
                 match base {
@@ -1656,7 +1656,7 @@ impl<'a> Codegen<'a> {
                     target: Expr::Field(recv, field),
                     value,
                     ..
-                } if matches!(**recv, Expr::This) => {
+                } if matches!(**recv, Expr::This(_)) => {
                     if class.fields.iter().any(|f| &f.name == field && is_const_field(f)) {
                         self.cur_line = ctor.line;
                         self.err(
@@ -2189,7 +2189,7 @@ impl<'a> Codegen<'a> {
                 self.cur_line = *line;
                 self.marker(*line);
                 let field = match strip_parens_expr(lock) {
-                    Expr::Field(recv, f) if matches!(**recv, Expr::This) => Some(f.clone()),
+                    Expr::Field(recv, f) if matches!(**recv, Expr::This(_)) => Some(f.clone()),
                     _ => None,
                 };
                 let valid = field.as_ref().map_or(false, |f| {
@@ -2534,10 +2534,10 @@ impl<'a> Codegen<'a> {
                 }
                 n.clone()
             }
-            Expr::This => {
-                // 只记首个 `this` 行：同一语句里出现多次也定位到该语句。
+            Expr::This(line) => {
+                // 记录首个 `this` 的源码行（而非语句起始行），供 JR3023 精确定位。
                 if self.this_line.is_none() {
-                    self.this_line = Some(self.cur_line);
+                    self.this_line = Some(*line);
                 }
                 "self".to_string()
             }
@@ -2560,7 +2560,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 // `@shared` 字段（JR-C13）：读走 Arc / Mutex 解引用；块内已持锁时直接用 guard。
-                if matches!(**recv, Expr::This) {
+                if matches!(**recv, Expr::This(_)) {
                     if let Some(cn) = env.self_class.clone() {
                         if self.is_shared_field(&cn, name) {
                             if let Some(g) = self.guarded.get(name).cloned() {
@@ -2723,7 +2723,7 @@ impl<'a> Codegen<'a> {
                 self.gen_expr(inner, env, None)
             }
             Expr::Field(recv, f) => {
-                if matches!(**recv, Expr::This) {
+                if matches!(**recv, Expr::This(_)) {
                     self.err(
                         format!("`move this.{}`：方法的 `self` 是借用（`&self`），字段搬不出去", f),
                         format!(
@@ -3450,7 +3450,7 @@ impl<'a> Codegen<'a> {
     fn infer_type(&self, e: &Expr, env: &Env) -> Option<Type> {
         match e {
             Expr::Ident(n) => env.vars.get(n).cloned(),
-            Expr::This => env.self_class.clone().map(Type::Named),
+            Expr::This(_) => env.self_class.clone().map(Type::Named),
             Expr::New {
                 class, type_args, ..
             } => {
@@ -3930,7 +3930,7 @@ fn field_is_shared(f: &Field) -> bool {
 fn target_writes_this_field(target: &Expr) -> Option<String> {
     match target {
         Expr::Field(recv, name) => match &**recv {
-            Expr::This => Some(name.clone()),
+            Expr::This(_) => Some(name.clone()),
             inner => target_writes_this_field(inner),
         },
         Expr::Index(recv, _) => target_writes_this_field(recv),
@@ -4082,7 +4082,7 @@ fn calls_mut_on_field(
             ..
         } = e
         {
-            if matches!(&**r, Expr::Field(base, f) if f == field && matches!(**base, Expr::This)) {
+            if matches!(&**r, Expr::Field(base, f) if f == field && matches!(**base, Expr::This(_))) {
                 if let Some(m) = cd
                     .methods
                     .iter()
