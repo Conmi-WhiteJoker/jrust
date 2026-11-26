@@ -1,0 +1,14 @@
+// Stage E：`spawn` 捕获的局部变量在捕获前 clone，外层仍可继续使用（JR-C11）。
+public class Main {
+    public static async void main(String[] args) {
+        String greeting = "hello";
+        List<Integer> xs = new ArrayList<>();
+        xs.add(1);
+        spawn {
+            println("{}", xs.size());
+        }
+        // 外层变量仍然可用：spawn 捕获的是副本（不是 move 走）。
+        println(greeting);
+        println("{}", xs.size());
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "spawn-capture"
+version = "0.1.0"
+edition = "2021"
+
+# 独立 workspace：避免被上层 crate 当成成员
+[workspace]
+
+[dependencies]
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

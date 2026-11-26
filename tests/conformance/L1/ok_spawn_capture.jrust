@@ -1,0 +1,18 @@
+// Stage E：`spawn` 捕获的局部变量在捕获前 clone，外层仍可继续使用（JR-C11）。
+// 只校验产物形态：需要 tokio 运行时，L1 不在此处 cargo 编译。
+public class Main {
+    public static void main(String[] args) {
+        String s = "hello";
+        int n = 3;
+        List<Integer> xs = new ArrayList<>();
+        xs.add(1);
+        spawn {
+            println(s);
+            println(n);
+            println("{}", xs.size());
+        }
+        println(s);
+        println(n);
+        println("{}", xs.size());
+    }
+}

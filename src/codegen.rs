@@ -167,6 +167,8 @@ struct Codegen<'a> {
     sigs: Sigs,
     /// warning 级诊断（如 `JR4101`）：只打印，不阻断生成。
     warnings: Vec<Diag>,
+    /// `spawn` 捕获副本的临时变量编号（Stage E）：保证同一个方法里多次 spawn 不撞名。
+    spawn_seq: usize,
 }
 
 impl<'a> Codegen<'a> {
@@ -259,6 +261,7 @@ impl<'a> Codegen<'a> {
             local_roots: HashSet::new(),
             sigs: Sigs::default(),
             warnings: Vec::new(),
+            spawn_seq: 0,
         }
     }
 
@@ -2136,6 +2139,36 @@ impl<'a> Codegen<'a> {
             Stmt::Spawn { body, line } => {
                 self.cur_line = *line;
                 self.marker(*line);
+                // Stage E：`async move` 会把捕获的变量整个搬进闭包，外层再用就 `E0382`。
+                // 做法：spawn 之前为每个自由变量生成 `let __jr_sp<N>_x = x.clone();`，
+                // 闭包内再 `let x = __jr_sp<N>_x;` 把名字接回来。这样 `async move`
+                // 捕获的是副本，外层原值仍在（与 Java lambda 捕获局部变量是副本一致）。
+                // 注意不能用 `let x = x.clone();` 的同名 shadowing —— 那只是给同一块内存
+                // 起了第二个名字，`async move` 照样把外层 `x` 移走。
+                let outer: Vec<String> = env.vars.keys().cloned().collect();
+                let captures = spawn_free_vars(body, &outer);
+                let mut rebind: Vec<(String, String)> = Vec::new();
+                for name in captures.iter() {
+                    let ty = env.vars.get(name).cloned();
+                    // Copy 标量由 `async move` 直接复制，不需要（也不该）clone。
+                    if ty.as_ref().map_or(false, |t| t.is_copy_scalar()) {
+                        continue;
+                    }
+                    // 借用形参不会走到这里：`spawn` 捕获本身是 Value 用法（参数三态会推成
+                    // owned），显式 `@ref` / `@mut` 又被 Stage D 的 `JR4001` 先拦下。
+                    if !ty.as_ref().map_or(true, |t| self.is_cloneable_type(t)) {
+                        self.err_code(
+                            "JR4002",
+                            format!("`spawn` 块捕获的 `{}` 不可 Clone，无法复制进闭包", name),
+                            "它含有 trait 对象等不可克隆字段；改成可 Clone 的数据结构，或把需要的部分拆成可复制的局部变量。",
+                        );
+                        continue;
+                    }
+                    let tmp = format!("__jr_sp{}_{}", self.spawn_seq, name);
+                    self.emit(&format!("let {} = {}.clone();", tmp, name));
+                    rebind.push((name.clone(), tmp));
+                }
+                self.spawn_seq += 1;
                 // `spawn` 的闭包按值捕获：`self` 是 `&self`，不满足 'static（JR3023）。
                 let prev_this = self.saw_this;
                 self.saw_this = false;
@@ -2143,6 +2176,9 @@ impl<'a> Codegen<'a> {
                 self.in_async = true;
                 self.emit("tokio::spawn(async move {");
                 self.indent += 1;
+                for (name, tmp) in &rebind {
+                    self.emit(&format!("let {} = {};", name, tmp));
+                }
                 self.gen_stmts(body, env);
                 self.indent -= 1;
                 self.emit("});");
@@ -3856,6 +3892,41 @@ fn collect_mutated(stmts: &[Stmt]) -> HashSet<String> {
     let mut set = HashSet::new();
     walk_mut(stmts, &mut set);
     set
+}
+
+// ---------- spawn 自由变量（Stage E / JR-C11） ----------
+
+/// `spawn` 块里引用到的、但在块内**声明**的外层变量（自由变量），按出现顺序。
+///
+/// `async move` 会把这些变量整个搬进闭包，外层再用就 `E0382`。Stage E 的做法是
+/// 在闭包开头补一条 `let x = x.clone();`，让闭包持有副本、外层保留原值 ——
+/// 与 Java 里「lambda 捕获的局部变量是副本」的直觉一致。
+fn spawn_free_vars(body: &[Stmt], outer: &[String]) -> Vec<String> {
+    // 块内声明过的名字（含循环变量）：它们是闭包自己的，不算自由变量。
+    let mut declared: HashSet<String> = HashSet::new();
+    each_stmt(body, &mut |s| match s {
+        Stmt::Let { name, .. } => {
+            declared.insert(name.clone());
+        }
+        Stmt::ForEach { name, .. } | Stmt::ForRange { name, .. } => {
+            declared.insert(name.clone());
+        }
+        _ => {}
+    });
+
+    let mut out: Vec<String> = Vec::new();
+    each_stmt_expr(body, &mut |e| {
+        // `each_expr` 会递归进 `x.f` / `x[i]` / `x.m()`，所以只看裸 `Ident` 就能拿到根变量。
+        if let Expr::Ident(n) = e {
+            if outer.iter().any(|o| o == n)
+                && !declared.contains(n)
+                && !out.iter().any(|x| x == n)
+            {
+                out.push(n.clone());
+            }
+        }
+    });
+    out
 }
 
 // ---------- @shared 分析（JR-C13） ----------
