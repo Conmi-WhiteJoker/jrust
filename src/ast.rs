@@ -173,6 +173,8 @@ pub struct InterfaceDecl {
     pub name: String,
     pub attrs: Vec<Attr>,
     pub docs: Vec<String>,
+    /// `interface A extends B, C`：父接口 → Rust `trait A: B + C`（JR-D6）。
+    pub extends: Vec<Type>,
     /// 接口级类型参数：`interface Mapper<T>` 里的 `T`。
     pub type_params: Vec<TypeParam>,
     pub methods: Vec<MethodSig>,

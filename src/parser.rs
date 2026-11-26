@@ -726,14 +726,17 @@ impl Parser {
         } else {
             Vec::new()
         };
+        let mut extends = Vec::new();
         if self.eat_kw(Kw::Extends) {
-            self.diags.push(
-                Diag::error(line, "jrust 不支持接口继承（extends）").with_hint(
-                    "Rust 用 trait 组合：把公共方法抽到另一个 trait，类型同时实现多个 trait。",
-                ),
-            );
-            self.expect_ident();
-            self.skip_generic_args();
+            loop {
+                match self.parse_type() {
+                    Some(t) => extends.push(t),
+                    None => break,
+                }
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
         }
         let mut methods = Vec::new();
         if self.expect_punct("{") {
@@ -794,6 +797,7 @@ impl Parser {
             name,
             attrs,
             docs,
+            extends,
             type_params,
             methods,
             line,

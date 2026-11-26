@@ -90,6 +90,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 |---|---|---|---|
 | `public class Foo` | `pub struct Foo` + `impl Foo` | 数据与行为拆成两块 | [ClassInterface](examples/ClassInterface.jrust) |
 | `interface Foo` | `pub trait Foo` | | [ClassInterface](examples/ClassInterface.jrust) |
+| `interface Foo extends A, B` | `pub trait Foo: A + B` | 实现 `Foo` 的类会自动为 `A`、`B` 也生成 `impl`（祖先接口的 impl 一并补齐） | [L1 用例](tests/conformance/L1/ok_iface_extends.jrust) |
 | `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl | [ClassInterface](examples/ClassInterface.jrust) |
 | `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 | [ClassInterface](examples/ClassInterface.jrust) |
 | `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | | [RustTypes](examples/RustTypes.jrust) |

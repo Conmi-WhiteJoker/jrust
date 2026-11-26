@@ -619,10 +619,18 @@ impl<'a> Codegen<'a> {
         for l in self.attr_lines(&iface.attrs) {
             self.emit(&l);
         }
+        // `interface A extends B, C` → `trait A: B + C`（JR-D6）。
+        let supers = if iface.extends.is_empty() {
+            String::new()
+        } else {
+            let parts: Vec<String> = iface.extends.iter().map(|t| self.trait_ref_type(t)).collect();
+            format!(": {}", parts.join(" + "))
+        };
         self.emit(&format!(
-            "pub trait {}{} {{",
+            "pub trait {}{}{} {{",
             iface.name,
-            type_param_decl(&iface.type_params)
+            type_param_decl(&iface.type_params),
+            supers
         ));
         self.indent += 1;
         for m in &iface.methods {
@@ -961,8 +969,14 @@ impl<'a> Codegen<'a> {
 
         let impl_params = impl_param_decl(&class.type_params);
         let prog = self.prog;
-        let mut iface_methods: HashSet<String> = HashSet::new();
+        // 展开接口继承（JR-D6）：实现子接口时，祖先接口也要生成 impl。
+        let mut impl_ifaces: Vec<Type> = Vec::new();
+        let mut seen_ifaces: HashSet<String> = HashSet::new();
         for ity in &class.implements {
+            collect_ifaces(ity.clone(), prog, &mut impl_ifaces, &mut seen_ifaces);
+        }
+        let mut iface_methods: HashSet<String> = HashSet::new();
+        for ity in &impl_ifaces {
             if let Some(iface) = prog.interfaces.iter().find(|x| x.name == type_name(ity)) {
                 for m in &iface.methods {
                     iface_methods.insert(m.name.clone());
@@ -971,7 +985,7 @@ impl<'a> Codegen<'a> {
         }
 
         // 实现接口的方法 → impl Trait for Type
-        for ity in &class.implements {
+        for ity in &impl_ifaces {
             let Some(iface) = prog.interfaces.iter().find(|x| x.name == type_name(ity)) else {
                 continue;
             };
@@ -2772,6 +2786,21 @@ impl<'a> Codegen<'a> {
 // ---------- 自由函数 ----------
 
 /// `Named` / `Generic` 的类型名（不含实参）。
+/// 递归展开 `interface A extends B, C`（JR-D6）：收集实现某接口时需要一并 impl 的祖先接口。
+/// 按「先自己、再父接口」的顺序去重加入，保证子 trait 的 impl 先输出。
+fn collect_ifaces(t: Type, prog: &Program, out: &mut Vec<Type>, seen: &mut HashSet<String>) {
+    let n = type_name(&t).to_string();
+    if n.is_empty() || !seen.insert(n.clone()) {
+        return;
+    }
+    out.push(t);
+    if let Some(iface) = prog.interfaces.iter().find(|x| x.name == n) {
+        for p in &iface.extends {
+            collect_ifaces(p.clone(), prog, out, seen);
+        }
+    }
+}
+
 fn type_name(ty: &Type) -> &str {
     match ty {
         Type::Named(n) | Type::Generic(n, _) => n,
@@ -2780,8 +2809,7 @@ fn type_name(ty: &Type) -> &str {
 }
 
 /// 把类型里的类型参数（`T`）替换成实参类型（`Integer` → `Int`）。
-fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
-    match ty {
+fn subst_type(ty: &Type, map: &HashMap<String, Type>) -> Type {    match ty {
         Type::Named(n) => map.get(n).cloned().unwrap_or_else(|| ty.clone()),
         Type::Generic(n, args) => {
             Type::Generic(n.clone(), args.iter().map(|a| subst_type(a, map)).collect())

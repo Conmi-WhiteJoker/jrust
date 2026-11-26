@@ -1,0 +1,35 @@
+// 接口继承：interface Container extends Named, Sized2 → trait Container: Named + Sized2（JR-D6）。
+public interface Named {
+    public String name();
+}
+
+public interface Sized2 {
+    public int size();
+}
+
+public interface Container extends Named, Sized2 {
+    public boolean isEmpty();
+}
+
+public class Box implements Container {
+    public String name() {
+        return "box";
+    }
+
+    public int size() {
+        return 3;
+    }
+
+    public boolean isEmpty() {
+        return false;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Box b = new Box();
+        println(b.name());
+        println(b.size());
+        println(b.isEmpty());
+    }
+}
