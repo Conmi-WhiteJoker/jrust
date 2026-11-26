@@ -88,3 +88,9 @@
 - **JR-C11**（`spawn` 捕获克隆，✅）：`async move` 会把捕获的变量整个搬进闭包，外层再用就 `E0382`。新增 `spawn_free_vars`（自由变量表：块内声明的不算，`each_expr` 递归拿到 `x` / `x.f` / `x[i]` / `x.m()` 的根），在 `tokio::spawn` **之前**生成 `let __jr_sp<N>_x = x.clone();`，闭包内再 `let x = __jr_sp<N>_x;` 接回名字。关键是**不能用同名 shadowing**（`let x = x.clone();`）——那只是给同一块内存起第二个名字，`async move` 照样把外层 `x` 移走，实测确认过。Copy 标量不 clone（`async move` 直接复制）；不可 Clone 的类型报 `JR4002`；`this` 仍报 `JR3023`。新增 `Codegen::spawn_seq` 保证同一方法里多次 spawn 不撞临时名。
 - **与解释器对拍的边界**：`spawn` 是真并发、输出顺序不确定，解释器是同步执行。含 `spawn` 的用例因此不参与 `tests/interp_parity.sh` 的逐字节对拍 —— 新增 `tests/spawn_capture/`（独立 cargo 工程 + tokio），在 L1 里用 `run_spawn_capture` 做真实编译运行并按行计数断言（`hello` 一次、`1` 两次）。
 - 用例：L1 新增 `ok_spawn_capture`（产物形态断言 `let __jr_sp0_s = s.clone();` / `let s = __jr_sp0_s;`，且 Copy 标量 `n` 不 clone）与 `run_spawn_capture`（cargo + tokio 真实编译运行）。L1 94 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.10 — 2026-11-26
+
+- **修复 `@mut String` 的调用点（`E0308`）**：D2 规定 `@mut String` 落 owned，但此前只在 codegen 的 `effective_mode` 里改了签名，`Sigs` 仍是 `MutRef`，调用点于是生成 `f(&mut s)`，与 `fn f(s: String)` 冲突。现在把 D2 归一提前到分析阶段：新增 `analysis::param_sig_mode`，把 `@mut String` 钳成 `Value` 写进 `Sigs`，签名与调用点同时落 owned；调用方之后再用该变量由 `JR4001` 拦下（与 owned 语义一致）。
+- 用例：`ok_override_ref` 增补 `note(@mut String)` 与 `fn note(&self, s: String)` / `u.note(note)` 两条产物断言（原来的用例没有 `@mut String`，问题被全绿掩盖）。L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+- 文档：设计文档 §13.14 增补勘误（`@mut String` 的 `Sigs` 归一）。

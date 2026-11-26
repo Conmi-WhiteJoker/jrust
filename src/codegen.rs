@@ -3899,8 +3899,11 @@ fn collect_mutated(stmts: &[Stmt]) -> HashSet<String> {
 /// `spawn` 块里引用到的、但在块内**声明**的外层变量（自由变量），按出现顺序。
 ///
 /// `async move` 会把这些变量整个搬进闭包，外层再用就 `E0382`。Stage E 的做法是
-/// 在闭包开头补一条 `let x = x.clone();`，让闭包持有副本、外层保留原值 ——
+/// 在 `spawn` **之前**给每个自由变量生成 `let __jr_sp<N>_x = x.clone();`，
+/// 闭包内再 `let x = __jr_sp<N>_x;` 接回名字 —— 闭包持有副本、外层保留原值，
 /// 与 Java 里「lambda 捕获的局部变量是副本」的直觉一致。
+/// 注意不能用同名 shadowing（`let x = x.clone();`）：那只是给同一块内存起第二个名字，
+/// `async move` 照样把外层 `x` 移走。
 fn spawn_free_vars(body: &[Stmt], outer: &[String]) -> Vec<String> {
     // 块内声明过的名字（含循环变量）：它们是闭包自己的，不算自由变量。
     let mut declared: HashSet<String> = HashSet::new();

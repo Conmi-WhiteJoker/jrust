@@ -408,6 +408,9 @@ run_build_has ok_pick_lifetime 'fn tag(&self) -> &str'
 run_build_has ok_override_ref 'fn touch(&self, xs: &mut Vec<i32>)'
 run_build_has ok_override_ref 'fn count(&self, xs: &\[i32\]) -> i32'
 run_build_has ok_override_ref 'u.touch(&mut xs)'
+# `@mut String` 按 D2 落 owned：签名与调用点都必须是 String，不能生成 `&mut String`。
+run_build_has ok_override_ref 'fn note(&self, s: String)'
+run_build_has ok_override_ref 'u.note(note)'
 run_warn ok_ext_unknown 'w.write(&text)'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"

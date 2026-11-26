@@ -23,6 +23,11 @@ public class Util {
     public void say(@ref String s) {
         println(s);
     }
+
+    // D2：`@mut String` 落 owned —— 签名与调用点都必须是 String（不能是 `&mut String`）。
+    public void note(@mut String s) {
+        println(s);
+    }
 }
 
 public class Main {
@@ -41,5 +46,9 @@ public class Main {
         String who = "jrust";
         u.say(who);
         println(who);
+
+        u.note("stage-d");
+        String note = "regress";
+        u.note(note);
     }
 }

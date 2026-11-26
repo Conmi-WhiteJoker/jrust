@@ -217,7 +217,7 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 for (i, t) in modes.into_iter().enumerate() {
                     if let Some(cur) = sig.params.get_mut(i) {
                         // 显式 `@ref` / `@mut` 是硬约束：不动点里也不许被 `join` 抬走（Stage D）。
-                        let n = match param_explicit_mode(&m.params[i]) {
+                        let n = match param_sig_mode(&m.params[i]) {
                             Some(explicit) => explicit,
                             None => cur.join(t),
                         };
@@ -292,7 +292,7 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 for (k, t) in modes.into_iter().enumerate() {
                     if let Some(cur) = sig.params.get_mut(k) {
                         // 接口声明上的 `@ref` / `@mut` 同样是硬约束（Stage D）。
-                        let n = match param_explicit_mode(&m.params[k]) {
+                        let n = match param_sig_mode(&m.params[k]) {
                             Some(explicit) => explicit,
                             None => cur.join(t),
                         };
@@ -816,6 +816,18 @@ fn override_attr_name(m: PMode) -> &'static str {
         "mut"
     } else {
         "ref"
+    }
+}
+
+/// 写进 `Sigs` 的**有效**覆盖模式：`@mut String` 按 D2 落 `Value`（owned）。
+///
+/// 必须在分析阶段归一，而不是只让 codegen 的 `effective_mode` 改签名：
+/// `Sigs` 同时决定调用点实参，若留下 `MutRef` 就会生成
+/// `fn f(s: String)` + `f(&mut s)`（`E0308`）。
+fn param_sig_mode(p: &Param) -> Option<PMode> {
+    match param_explicit_mode(p) {
+        Some(PMode::MutRef) if p.ty == Type::String => Some(PMode::Value),
+        other => other,
     }
 }
 
