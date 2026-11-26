@@ -3,18 +3,21 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "== 1/4 构建 jrust =="
+echo "== 1/5 构建 jrust =="
 cargo build --quiet
 
-echo "== 2/4 转译 examples/*/main.jrust =="
+echo "== 2/5 单元测试（rustc 错误行扫描 / 离线重试判据）=="
+cargo test --quiet
+
+echo "== 3/5 转译 examples/*/main.jrust =="
 for f in examples/*/main.jrust; do
     ./target/debug/jrust build "$f"
 done
 
-echo "== 3/4 cargo build 验证生成的 Rust（examples 是 workspace，13 个例程各为独立 crate） =="
+echo "== 4/5 cargo build 验证生成的 Rust（examples 是 workspace，13 个例程各为独立 crate） =="
 cargo build --quiet --manifest-path examples/Cargo.toml --workspace
 
-echo "== 4/4 L1 一致性用例（throws / switch / enum / 闭包 / T? / for / new T[n] / 字符串 + / 泛型类·方法·接口·枚举·上界）=="
+echo "== 5/5 L1 一致性用例（throws / switch / enum / 闭包 / T? / for / new T[n] / 字符串 + / 泛型类·方法·接口·枚举·上界）=="
 ./tests/l1_cases.sh
 
 echo "全部通过：jrust 产物可被 rustc 编译。"

@@ -1384,10 +1384,12 @@ fn verify_tree(dir: &Path) -> bool {
             return false;
         }
     };
-    // 依赖不在本地缓存时 `--offline` 会失败；这类失败与用户代码无关，自动在线重试一次。
+    // 依赖不在本地缓存 / registry 索引缺失时 `--offline` 会失败；这类失败与用户代码无关，
+    // 自动在线重试一次。判据用具体的解析错误文案，而不是「有没有 error」（编译错误也有）。
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-        if stderr.contains("--offline") || stderr.contains("no matching package") {
+        let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+        let resolve_issue = is_resolve_issue(&stderr);
+        if resolve_issue {
             eprintln!("提示: 依赖不在本地 cargo 缓存里，已去掉 --offline 重试一次");
             match run_cargo(false) {
                 Ok(o) => out = o,
@@ -1457,11 +1459,34 @@ fn scan_rustc_errors_multi(stderr: &str) -> Vec<(String, usize, String)> {
             if let (Some(gen_line), Some(msg)) = (gen_line, pending.take()) {
                 out.push((file, gen_line, msg));
             }
+        } else if line.starts_with("warning:") || line.starts_with("note:") {
+            // warning / note 的 `-->` 不能配给上一个没定位的 error，否则会张冠李戴。
+            pending = None;
         } else if line.starts_with("error[") || line.starts_with("error:") {
-            pending = Some(line.to_string());
+            // 汇总行（aborting / could not compile）没有 `-->`，留着会污染下一条 warning 的位置。
+            if line.starts_with("error: aborting") || line.starts_with("error: could not compile") {
+                pending = None;
+            } else {
+                pending = Some(line.to_string());
+            }
         }
     }
     out
+}
+
+/// `--offline` 失败是否属于依赖解析 / registry 索引问题（值得在线重试一次）。
+/// 入参须已转小写；带 `error[E…]`（rustc 编译错误）一律不算，避免把编译错误重跑一遍。
+fn is_resolve_issue(stderr_lower: &str) -> bool {
+    !stderr_lower.contains("error[e")
+        && (stderr_lower.contains("offline")
+            || stderr_lower.contains("no matching package")
+            || stderr_lower.contains("registry index was not found")
+            || stderr_lower.contains("failed to select a version")
+            || stderr_lower.contains("failed to load source")
+            || stderr_lower.contains("failed to get")
+            || stderr_lower.contains("failed to download")
+            || stderr_lower.contains("unable to update")
+            || stderr_lower.contains("network"))
 }
 
 /// `jrust verify`（无参数）：跑仓库里的一致性套件（JR-G5）。
@@ -1597,5 +1622,53 @@ fn print_diags(path: &Path, diags: &[diag::Diag]) {
 fn print_warnings(path: &Path, diags: &[diag::Diag]) {
     for d in diags.iter().filter(|d| d.is_warning()) {
         eprintln!("{}", d.render(&path.display().to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// error 没有 `-->` 时，下一条 warning 的 `-->` 不能被当成它的位置（P2：pending 不清空）。
+    #[test]
+    fn scan_multi_does_not_pair_warning_location_with_previous_error() {
+        let stderr = "\
+error: aborting due to 1 previous error
+warning: unused variable: `x`
+ --> /tmp/work/main.rs:3:9
+";
+        let hits = scan_rustc_errors_multi(stderr);
+        assert!(hits.is_empty(), "不该产生任何定位结果，实际 {:?}", hits);
+    }
+
+    #[test]
+    fn scan_multi_pairs_error_with_location() {
+        let stderr = "\
+error[E0599]: no method named `nope`
+ --> /tmp/work/main.rs:12:20
+";
+        let hits = scan_rustc_errors_multi(stderr);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].1, 12);
+        assert!(hits[0].2.contains("E0599"));
+    }
+
+    #[test]
+    fn scan_multi_strips_ansi() {
+        let stderr = "\u{1b}[1m\u{1b}[91merror[E0308]\u{1b}[0m: mismatched types\n --> /tmp/a.rs:5:1\n";
+        let hits = scan_rustc_errors_multi(stderr);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].1, 5);
+    }
+
+    /// 离线重试判据：解析类失败要认出来，rustc 编译错误不能误判。
+    #[test]
+    fn resolve_issue_classification() {
+        assert!(is_resolve_issue("error: failed to get `serde` as a dependency"));
+        assert!(is_resolve_issue("no matching package named `x` found"));
+        assert!(is_resolve_issue("registry index was not found"));
+        assert!(is_resolve_issue("failed to select a version for the requirement"));
+        assert!(!is_resolve_issue("error[e0599]: no method named `nope` found"));
+        assert!(!is_resolve_issue("error: expected expression, found `let` statement"));
     }
 }

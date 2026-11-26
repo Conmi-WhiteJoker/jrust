@@ -1,19 +1,8 @@
-# 13 个例程各自是独立 crate，共享同一个 target/（编译一次，避免 13 份增量缓存）。
+# 每个例程目录各自是独立 crate，共享同一个 target/（编译一次，避免多份增量缓存）。
 # 单独跑某个例程：cargo run -p asyncmain  （或 cd AsyncMain && cargo run）
+# members 用 glob：新增例程只要建目录 + Cargo.toml，不用再改这里。
+# 注意 cargo 的 glob 不按「有没有 Cargo.toml」过滤，构建产物目录必须显式 exclude。
 [workspace]
 resolver = "2"
-members = [
-    "AsyncMain",
-    "ClassInterface",
-    "Generics",
-    "HelloWorld",
-    "MapDemo",
-    "MoveEdges",
-    "Nullable",
-    "Ownership",
-    "PolymorphicList",
-    "PrintShort",
-    "RustTypes",
-    "SharedState",
-    "VecImport",
-]
+members = ["*"]
+exclude = ["target"]

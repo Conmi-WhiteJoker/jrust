@@ -2,6 +2,10 @@
 name = "jrust"
 version = "0.1.0"
 edition = "2021"
+# examples/ 是独立的 cargo 工程集合（examples/Cargo.toml 里的 workspace），
+# 不是本 crate 的 Cargo example；不关掉会让 `cargo test` / `--all-targets` 误把
+# 它们当示例编译（例如把 AsyncMain 当特性目标，缺 tokio 依赖而失败）。
+autoexamples = false
 description = "jrust：把 Java 风格源码转译成可读 Rust 的教学工具（MVP）"
 license = "MIT"
 

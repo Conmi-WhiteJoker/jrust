@@ -244,3 +244,28 @@
 ### 验收
 
 `./verify.sh` 全绿：L1 **122 通过 0 失败**，新增 `vtree_lib` / `strict_warnings` 两项。
+
+## v1.23 — 2026-11-26
+
+### 修复（P2 边角）
+
+- **错误行扫描张冠李戴**：`scan_rustc_errors_multi` 的 `pending` 只在下一次 `-->` 时清空，
+  导致「无定位的 error（如 `aborting due to N previous errors`）」会把随后 warning 的
+  `-->` 当成自己的位置，错误信息与行号错配。现在 `warning:` / `note:` 与 cargo 汇总行
+  都会清空 `pending`。
+- **离线重试判据偏窄**：原判据只看 `--offline` / `no matching package`，
+  `registry index was not found`、`failed to get ... as a dependency` 等不会重试。
+  抽出 `is_resolve_issue()`：命中解析/索引类文案且**不含 `error[E…]`** 才在线重试一次，
+  避免把真正的编译错误重跑一遍。
+- **examples workspace 成员手工维护**：`members` 改为 `["*"]` + `exclude = ["target"]`
+  （cargo 的 glob 不按「有没有 Cargo.toml」过滤，构建产物目录必须显式排除）。
+  新增例程只需建目录 + `Cargo.toml`，实测临时 `ZzProbe` 被自动纳入并可 `-p` 构建。
+- **顺带：根 crate 的 `autoexamples = false`**。`examples/` 是独立的 cargo 工程集合，
+  但 cargo 会把它当成本 crate 的 `Cargo` example 自动发现 —— `cargo test` 因此把
+  `AsyncMain` 当示例编译、因缺 tokio 失败。关掉自动发现后 `cargo test` 才可用。
+
+### 验收
+
+`verify.sh` 增加第 2 步 `cargo test`（4 个新增单测：warning 不配 error 位置、
+正常配对、ANSI 剥离、离线判据分类），总计 **8 个单测全绿**；
+L1 **122 通过 0 失败**。
