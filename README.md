@@ -94,10 +94,10 @@ cargo build
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对 13 个示例、以及 L1 里解释器支持的正向夹具（当前 18 个），
+`tests/interp_parity.sh` 对 13 个示例、以及 L1 里解释器支持的正向夹具（当前 23 个），
 比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
 解释器暂不支持的字形列在 `tests/interp_unsupported.txt`（raw、switch/enum、`?` 传播、
-迭代器链、`@ref` 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
+`@ref` 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
 「不支持」静默跳过；反过来，清单里的用例哪天能跑了会提示把它移除。
 
 ## 设计原则
@@ -257,7 +257,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
-- 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包 / raw，这些特性走 `jrust build` + cargo 验证。
+- 解释器（`jrust run`）暂不支持 enum / switch / throws / raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
 - `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`raw` 不能嵌套（`JR3027`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。

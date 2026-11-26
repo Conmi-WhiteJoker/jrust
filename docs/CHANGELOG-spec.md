@@ -370,3 +370,22 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 `check:bulk_negative`）；对拍「examples 13 + L1 18，清单跳过 18」。
 变异验证：往 `ok_assert/expected.txt` 追加一行 → 对拍 FAIL；把一个负向夹具伪装成正向 →
 `check:bulk_positive` FAIL 并点名该夹具。
+
+## v1.28 — 2026-11-26
+
+### 解释器能力（批次 1：内置方法与容器）
+
+- **String 方法**：`length()` 按字符计数（与 Java 对齐，不是 Rust 的字节 `len()`）、`isEmpty()`。
+- **迭代器链**（JR-E18 的解释执行）：`xs.stream()` 取快照，`map` / `filter` 按元素调用内联闭包，
+  `collectList()` 收集成 `List`；闭包体可读 `this` 字段与外层局部变量（按引用捕获）。
+- **`Set<T>` / `HashSet<T>`**（JR-T6）：解释器新增 `Value::Set`，按插入顺序保存并去重；
+  支持 `add` / `contains` / `remove` / `size` / `isEmpty`；`new HashSet<>()` 与 `Type::Set` 默认值同步。
+- **`xs.mutable()`**（JR-E4）：返回原列表视图，遍历时元素按引用共享，循环内改对象字段会写回原对象。
+- 闭包仅支持迭代器链里的内联写法；`enum` / `switch` / `throws` / `raw` / `@ref` 仍在
+  `tests/interp_unsupported.txt` 中，后续批次处理。
+
+### 验收
+
+`tests/interp_unsupported.txt` 移除 `ok_pick_lifetime` / `ok_iter_chain` / `ok_closure_capture` /
+`ok_set` / `ok_for_mutable` 五条；解释/编译对拍由「L1 18 通过、清单跳过 18」变为
+**L1 23 通过、清单跳过 13**；`./verify.sh` 七步全绿（L1 仍 131 项）。

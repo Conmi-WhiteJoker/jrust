@@ -67,6 +67,8 @@ enum Value {
     Char(char),
     Str(String),
     List(Rc<RefCell<Vec<Value>>>),
+    /// `Set<T>` / `HashSet<T>`：按插入顺序保存并去重（Rust 侧是 `HashSet`，顺序不承诺）。
+    Set(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<HashMap<String, Value>>>),
     Obj(Rc<RefCell<Instance>>),
     /// `T?`：`Some(v)` / `None`，与 Rust 的 `Option<T>` 对齐。
@@ -91,6 +93,9 @@ struct Slot {
 fn deep_clone(v: &Value) -> Value {
     match v {
         Value::List(rc) => Value::List(Rc::new(RefCell::new(
+            rc.borrow().iter().map(deep_clone).collect(),
+        ))),
+        Value::Set(rc) => Value::Set(Rc::new(RefCell::new(
             rc.borrow().iter().map(deep_clone).collect(),
         ))),
         Value::Map(rc) => Value::Map(Rc::new(RefCell::new(
@@ -125,6 +130,23 @@ fn deep_clone(v: &Value) -> Value {
     }
 }
 
+/// 闭包参数省略类型标注时，用实参的动态类型补一个（只用于调试面板与赋值的可空包装）。
+fn dynamic_type(v: &Value) -> Type {
+    match v {
+        Value::Int(_) => Type::Int,
+        Value::Double(_) => Type::Double,
+        Value::Bool(_) => Type::Boolean,
+        Value::Char(_) => Type::Char,
+        Value::Str(_) => Type::String,
+        Value::List(_) => Type::List(Box::new(Type::Int)),
+        Value::Set(_) => Type::Set(Box::new(Type::Int)),
+        Value::Map(_) => Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+        Value::Obj(obj) => Type::Named(obj.borrow().class.clone()),
+        Value::Option(_) => Type::Nullable(Box::new(Type::Int)),
+        Value::Unit => Type::Void,
+    }
+}
+
 impl Value {
     /// Copy 类型直接复制；其余类型在普通赋值时走 `deep_clone`，显式 `move` 才转移所有权。
     fn is_copy(&self) -> bool {
@@ -142,7 +164,9 @@ impl Value {
             Value::Bool(b) => b.to_string(),
             Value::Char(c) => c.to_string(),
             Value::Str(s) => s.clone(),
-            Value::List(_) | Value::Obj(_) | Value::Map(_) | Value::Option(_) => self.debug_repr(),
+            Value::List(_) | Value::Set(_) | Value::Obj(_) | Value::Map(_) | Value::Option(_) => {
+                self.debug_repr()
+            }
             Value::Unit => "()".to_string(),
         }
     }
@@ -160,6 +184,11 @@ impl Value {
                 let items = items.borrow();
                 let inner: Vec<String> = items.iter().map(|v| v.debug_repr()).collect();
                 format!("[{}]", inner.join(", "))
+            }
+            Value::Set(items) => {
+                let items = items.borrow();
+                let inner: Vec<String> = items.iter().map(|v| v.debug_repr()).collect();
+                format!("{{{}}}", inner.join(", "))
             }
             Value::Map(entries) => {
                 let entries = entries.borrow();
@@ -205,6 +234,7 @@ impl Value {
             Value::Char(_) => "char",
             Value::Str(_) => "String",
             Value::List(_) => "List",
+            Value::Set(_) => "Set",
             Value::Map(_) => "Map",
             Value::Obj(obj) => return obj.borrow().class.clone(),
             Value::Option(_) => "Option",
@@ -250,8 +280,7 @@ fn default_value(t: &Type) -> Value {
         Type::String => Value::Str(String::new()),
         Type::List(_) | Type::Array(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
         Type::Map(_, _) => Value::Map(Rc::new(RefCell::new(HashMap::new()))),
-        // 解释器暂不支持 Set 的方法语义，兜底为空列表以保持可运行（仅占位）。
-        Type::Set(_) => Value::List(Rc::new(RefCell::new(Vec::new()))),
+        Type::Set(_) => Value::Set(Rc::new(RefCell::new(Vec::new()))),
         Type::Named(_) | Type::Generic(_, _) | Type::Void => Value::Unit,
         Type::Nullable(_) => Value::Option(None),
     }
@@ -1145,6 +1174,16 @@ impl<'a> Interp<'a> {
         ) {
             return Ok(Value::List(Rc::new(RefCell::new(Vec::new()))));
         }
+        if matches!(class, "HashSet" | "Set") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    line,
+                    "jrust MVP 只支持无参的 new HashSet<>()",
+                )
+                .with_hint("先 `new HashSet<>()`，再用 `add` 逐个插入。"));
+            }
+            return Ok(Value::Set(Rc::new(RefCell::new(Vec::new()))));
+        }
         if matches!(class, "HashMap" | "Map") {
             if !args.is_empty() {
                 return Err(RuntimeError::new(
@@ -1341,9 +1380,88 @@ impl<'a> Interp<'a> {
                             None => Err(index_error(line, i, items.len())),
                         }
                     }
+                    // `xs.stream()` 取一份快照，后续 map / filter 不改动原列表（JR-E18）。
+                    "stream" => Ok(Value::List(Rc::new(RefCell::new(
+                        rc.borrow().iter().map(deep_clone).collect(),
+                    )))),
+                    // `for (T x : c.mutable())`：元素按引用共享，循环里改字段会写回原对象（JR-E4）。
+                    "mutable" => Ok(rv.clone()),
+                    "map" | "filter" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(
+                                line,
+                                format!("`{}` 需要一个闭包参数，例如 `x -> x * 2`", name),
+                            ));
+                        }
+                        let items = rc.borrow().clone();
+                        let mut out = Vec::new();
+                        for item in items {
+                            let r = self.call_closure(&args[0], vec![item.clone()])?;
+                            if name == "map" {
+                                out.push(r);
+                            } else if self.as_bool(&r)? {
+                                out.push(item);
+                            }
+                        }
+                        Ok(Value::List(Rc::new(RefCell::new(out))))
+                    }
+                    "collectList" => Ok(Value::List(Rc::new(RefCell::new(
+                        rc.borrow().iter().map(deep_clone).collect(),
+                    )))),
                     other => Err(RuntimeError::new(
                         line,
                         format!("List 没有方法 `{}`", other),
+                    )),
+                },
+                Value::Set(rc) => match name {
+                    "add" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "add 需要一个参数"));
+                        }
+                        let v = self.eval_place_take(&args[0])?;
+                        let mut items = rc.borrow_mut();
+                        if !items.iter().any(|x| values_equal(x, &v)) {
+                            items.push(v);
+                        }
+                        Ok(Value::Bool(true))
+                    }
+                    "contains" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "contains 需要一个参数"));
+                        }
+                        let v = self.eval(&args[0])?;
+                        Ok(Value::Bool(
+                            rc.borrow().iter().any(|x| values_equal(x, &v)),
+                        ))
+                    }
+                    "remove" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "remove 需要一个参数"));
+                        }
+                        let v = self.eval(&args[0])?;
+                        let mut items = rc.borrow_mut();
+                        match items.iter().position(|x| values_equal(x, &v)) {
+                            Some(pos) => {
+                                items.remove(pos);
+                                Ok(Value::Bool(true))
+                            }
+                            None => Ok(Value::Bool(false)),
+                        }
+                    }
+                    "size" | "length" => Ok(Value::Int(rc.borrow().len() as i64)),
+                    "isEmpty" => Ok(Value::Bool(rc.borrow().is_empty())),
+                    other => Err(RuntimeError::new(
+                        line,
+                        format!("Set 没有方法 `{}`", other),
+                    )),
+                },
+                Value::Str(s) => match name {
+                    // Java 的 `length()` 数的是字符个数；Rust 的 `len()` 是字节数。
+                    "length" => Ok(Value::Int(s.chars().count() as i64)),
+                    "isEmpty" => Ok(Value::Bool(s.is_empty())),
+                    other => Err(RuntimeError::new(
+                        line,
+                        format!("String 没有方法 `{}`", other),
                     )),
                 },
                 Value::Map(rc) => match name {
@@ -1466,6 +1584,50 @@ impl<'a> Interp<'a> {
                 format!("`{}` 需要 {} 个参数，实际给了 {} 个", name, expected, actual),
             ))
         }
+    }
+
+    /// 在迭代器链（`map` / `filter`）里按元素调用闭包：参数绑定到新作用域，
+    /// 闭包体可以照常读取 `this` 和外层局部变量（按引用捕获）。
+    fn call_closure(&mut self, e: &Expr, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let line = self.cur_line;
+        let (params, body) = match strip_paren(e) {
+            Expr::Closure { params, body } => (params, body),
+            _ => {
+                return Err(RuntimeError::new(
+                    line,
+                    "迭代器链的 map / filter 需要一个闭包参数，例如 `x -> x * 2`",
+                ))
+            }
+        };
+        if params.len() != args.len() {
+            return Err(RuntimeError::new(
+                line,
+                format!(
+                    "闭包需要 {} 个参数，实际给了 {} 个",
+                    params.len(),
+                    args.len()
+                ),
+            ));
+        }
+        let mut scope = Vec::new();
+        for (p, v) in params.iter().zip(args.into_iter()) {
+            let ty = p.ty.clone().unwrap_or_else(|| dynamic_type(&v));
+            let v = self.coerce_value(v, &ty, line)?;
+            scope.push((
+                p.name.clone(),
+                Slot {
+                    value: v,
+                    moved: false,
+                    ty,
+                },
+            ));
+        }
+        if let Some(f) = self.frames.last_mut() {
+            f.scopes.push(scope);
+        }
+        let r = self.eval(body);
+        self.pop_scope();
+        r
     }
 
     fn call_method(
