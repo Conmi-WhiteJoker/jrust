@@ -94,3 +94,9 @@
 - **修复 `@mut String` 的调用点（`E0308`）**：D2 规定 `@mut String` 落 owned，但此前只在 codegen 的 `effective_mode` 里改了签名，`Sigs` 仍是 `MutRef`，调用点于是生成 `f(&mut s)`，与 `fn f(s: String)` 冲突。现在把 D2 归一提前到分析阶段：新增 `analysis::param_sig_mode`，把 `@mut String` 钳成 `Value` 写进 `Sigs`，签名与调用点同时落 owned；调用方之后再用该变量由 `JR4001` 拦下（与 owned 语义一致）。
 - 用例：`ok_override_ref` 增补 `note(@mut String)` 与 `fn note(&self, s: String)` / `u.note(note)` 两条产物断言（原来的用例没有 `@mut String`，问题被全绿掩盖）。L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
 - 文档：设计文档 §13.14 增补勘误（`@mut String` 的 `Sigs` 归一）。
+
+## v1.11 — 2026-11-26
+
+- **F 收尾（清理）**：删除 `JRUST_BORROW=legacy` 过渡开关（`analysis::legacy_mode` 与 `analyze` 里的早退分支），jrust 只保留借用推断这一条路径；SPEC JR-O7 同步去掉「可回退旧行为」的说明。
+- **删除死代码**：`codegen::generate_multi`（Stage C 起由 `generate_multi_with_sigs` 取代）与 `expr_is_str_literal`，`cargo build` 零警告。
+- 验证：L1 96 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。

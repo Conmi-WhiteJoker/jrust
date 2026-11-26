@@ -19,18 +19,6 @@ pub fn generate(prog: &Program, src_name: &str) -> Result<Generated, Vec<Diag>> 
     generate_opts(prog, src_name, false)
 }
 
-/// 多文件模式（JR-S4/M3）：跨模块的 `import a.b.C;` 需要写成 `use crate::a::b::C;`。
-pub fn generate_multi(prog: &Program, src_name: &str) -> Result<Generated, Vec<Diag>> {
-    let mut roots = HashSet::new();
-    if let Some(p) = &prog.package {
-        if let Some(first) = p.split('.').next() {
-            roots.insert(first.to_string());
-        }
-    }
-    let sigs = borrow_sigs(prog)?;
-    generate_multi_with_sigs(prog, src_name, &roots, sigs)
-}
-
 /// 多文件模式（Stage C）：`Sigs` 由调用方对**全工程**做一次分析后传入，
 /// 这样跨文件调用也能拿到对方方法的形参三态与返回来源。
 /// `local_roots` 是工程里的顶层模块名：只有命中的 import 才加 `crate::`，其余按外部 crate（JR-M4）。
@@ -3827,14 +3815,6 @@ fn flatten_add_chain<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
         }
         Expr::Paren(inner) => flatten_add_chain(inner, out),
         _ => out.push(e),
-    }
-}
-
-fn expr_is_str_literal(e: &Expr) -> bool {
-    match e {
-        Expr::Str(_) => true,
-        Expr::Paren(inner) => expr_is_str_literal(inner),
-        _ => false,
     }
 }
 

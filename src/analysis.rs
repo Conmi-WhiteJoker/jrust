@@ -141,11 +141,6 @@ impl Sigs {
     }
 }
 
-/// 过渡开关：`JRUST_BORROW=legacy` 回到「全 Value + &self」的旧行为（F 阶段删除）。
-pub fn legacy_mode() -> bool {
-    std::env::var("JRUST_BORROW").map_or(false, |v| v == "legacy")
-}
-
 /// 分析整个文件：返回签名表与诊断（目前只有 `JR4003`）。
 pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
     let mut sigs = Sigs::default();
@@ -169,10 +164,6 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
             }
         }
     }
-    if legacy_mode() {
-        return (Sigs::default(), Vec::new());
-    }
-
     // 不动点：接收者 / 参数三态会与「调用其它方法」「接口签名并集」互相影响。
     loop {
         let mut changed = false;
