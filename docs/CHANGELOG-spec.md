@@ -1,0 +1,22 @@
+# SPEC 变更记录（CHANGELOG-spec）
+
+记录 `docs/SPEC-v1.md` 每个 MINOR 版本新增 / 变更的需求号（JR-G16）。
+格式：`版本 - 日期 - 需求号列表 - 一句话说明`。
+
+## v1.0 — 初版
+
+- 基线：JR-D8/D9/C7/C9/C10/C11/X1 等主干能力按 SPEC 首次落地。
+- 说明：v1 目标是单文件、无继承、错误用统一 `JrustError` 枚举的子集。
+
+## v1.1 — 2026-11-26
+
+- **JR-C13**：`@shared` 共享字段 → `Arc<T>` / `Arc<Mutex<T>>`（按类内方法是否写字段决定）。
+- **JR-C12**：`synchronized` 方法与 `synchronized (this.f) { ... }` 块 → 锁 `@shared` 可变字段。
+- **JR-S5**：`public static async void main` → `#[tokio::main] async fn main()`。
+- **JR-E6**：带标签 `outer:` / `break outer;` / `continue outer;` 报 `JR2004`。
+- **JR-X3**：`raw` 禁止嵌套报 `JR3027`（覆盖率单列仍随 `jrust verify` 待做）。
+- **JR-L2**：`///` 文档注释保留并挂到类 / 接口 / 枚举 / 分支 / 字段 / 方法 / 构造器。
+- **JR-T6**：`Set<T>` / `HashSet<T>` → `HashSet<T>`（`add`/`contains`/`remove`/`size`/`isEmpty`）。
+- **JR-E4**：`for (T x : c.mutable())` → `for x in c.iter_mut()`（`Set` 报 `JR3028`）。
+- **JR-D6**：`interface A extends B, C` → `trait A: B + C`，实现类自动补齐祖先接口 impl。
+- 诊断码新增：`JR3026`（synchronized 锁对象非法）、`JR3027`（raw 嵌套）、`JR3028`（mutable 不适用）。
