@@ -239,8 +239,18 @@ impl Parser {
 
     /// 解析 `@Xxx(args)` 注解序列（JR-D9）。实参按 token 原文拼接，交给 codegen 输出属性。
     fn parse_annotations(&mut self) -> Vec<Attr> {
+        self.parse_annotations_impl(false)
+    }
+
+    /// 形参位置的注解（Stage D）：额外接受 `@ref` / `@mut`。
+    fn parse_param_annotations(&mut self) -> Vec<Attr> {
+        self.parse_annotations_impl(true)
+    }
+
+    fn parse_annotations_impl(&mut self, allow_borrow: bool) -> Vec<Attr> {
         let mut attrs = Vec::new();
         while self.check_punct("@") {
+            let aline = self.line();
             self.bump(); // @
             // `raw` 现在是关键字（JR-X1），但 `@raw("…")` 注解（JR-D9）仍然合法。
             if !matches!(self.peek(), Tok::Ident(_) | Tok::Kw(Kw::Raw)) {
@@ -280,15 +290,29 @@ impl Parser {
                 }
                 args = Some(buf);
             }
-            // `@shared` 是字段注解（JR-C13），必须以字段形式出现。
             if matches!(name.as_str(), "ref" | "mut") {
-                self.err_hint(
-                    format!("`@{}` 是参数借用注解，尚未实现（SPEC §9.2）", name),
-                    "当前只支持 `@derive(...)`、`@raw(\"…\")`、`@shared` 与按同名透传的 Rust 属性。",
-                );
-            } else {
-                attrs.push(Attr { name, args });
+                if !allow_borrow {
+                    self.err_hint(
+                        format!("`@{}` 只能写在方法形参上", name),
+                        "`@ref` / `@mut` 用来覆盖形参借用推断，写在方法签名或接口方法声明的形参前。",
+                    );
+                    continue;
+                }
+                if args.is_some() {
+                    self.err_hint(
+                        format!("`@{}` 不接受参数", name),
+                        "直接写 `@ref` / `@mut`，括号里什么都不用填。",
+                    );
+                }
+                if attrs.iter().any(|a: &Attr| a.name == "ref" || a.name == "mut") {
+                    self.err_hint(
+                        format!("形参上 `@ref` / `@mut` 只能出现一个（第 {} 行）", aline),
+                        "两者互斥：只读借用写 `@ref`，可变借用写 `@mut`。",
+                    );
+                    continue;
+                }
             }
+            attrs.push(Attr { name, args });
         }
         attrs
     }
@@ -640,7 +664,7 @@ impl Parser {
 
         if self.check_punct("(") {
             let mline = self.line();
-            let params = self.parse_params();
+            let params = self.parse_method_params();
             let mut throws = Vec::new();
             if self.eat_kw(Kw::Throws) {
                 loop {
@@ -790,7 +814,7 @@ impl Parser {
                 match self.parse_type() {
                     Some(ret) => {
                         let mname = self.expect_ident();
-                        let params = self.parse_params();
+                        let params = self.parse_method_params();
                         // `;` = 只有签名；`{ ... }` = 默认方法 / static 方法体（JR-D10）。
                         let body = if self.eat_punct(";") {
                             None
@@ -1047,6 +1071,15 @@ impl Parser {
     }
 
     fn parse_params(&mut self) -> Vec<Param> {
+        self.parse_params_impl(false)
+    }
+
+    /// 方法 / 接口方法形参：允许 `@ref` / `@mut`（Stage D）。
+    fn parse_method_params(&mut self) -> Vec<Param> {
+        self.parse_params_impl(true)
+    }
+
+    fn parse_params_impl(&mut self, allow_borrow: bool) -> Vec<Param> {
         let mut v = Vec::new();
         if !self.expect_punct("(") {
             return v;
@@ -1055,12 +1088,23 @@ impl Parser {
             return v;
         }
         loop {
+            let pline = self.line();
+            let attrs = if allow_borrow {
+                self.parse_param_annotations()
+            } else {
+                self.parse_annotations()
+            };
             let ty = match self.parse_type() {
                 Some(t) => t,
                 None => Type::Int,
             };
             let name = self.expect_ident();
-            v.push(Param { ty, name });
+            v.push(Param {
+                ty,
+                name,
+                attrs,
+                line: pline,
+            });
             if self.eat_punct(",") {
                 continue;
             }

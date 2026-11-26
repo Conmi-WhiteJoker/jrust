@@ -57,6 +57,11 @@ pub enum Vis {
 pub struct Param {
     pub ty: Type,
     pub name: String,
+    /// 形参上的注解（Stage D）：`@ref` 固定 `Ref`，`@mut` 固定 `MutRef`。
+    /// 只允许出现在方法 / 接口方法的形参位置；构造器与枚举载荷一律不借。
+    pub attrs: Vec<Attr>,
+    /// 形参所在源码行（诊断定位用）。
+    pub line: usize,
 }
 
 /// 声明侧类型参数：`<T extends A & B>` 里的 `T` 与上界 `A`、`B`。

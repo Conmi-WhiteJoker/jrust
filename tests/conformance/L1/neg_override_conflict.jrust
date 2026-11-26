@@ -1,0 +1,19 @@
+// Stage D：`@ref` 与所有权用法冲突 → JR4001（存进字段需要所有权）。
+public class Store {
+    private String v;
+
+    public Store(String v) {
+        this.v = v;
+    }
+
+    public void set(@ref String s) {
+        this.v = s;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Store s = new Store("a");
+        s.set("b");
+    }
+}

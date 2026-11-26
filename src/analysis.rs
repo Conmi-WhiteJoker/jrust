@@ -216,7 +216,11 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 let sig = sigs.entry(&c.name, &m.name, m.params.len());
                 for (i, t) in modes.into_iter().enumerate() {
                     if let Some(cur) = sig.params.get_mut(i) {
-                        let n = cur.join(t);
+                        // 显式 `@ref` / `@mut` 是硬约束：不动点里也不许被 `join` 抬走（Stage D）。
+                        let n = match param_explicit_mode(&m.params[i]) {
+                            Some(explicit) => explicit,
+                            None => cur.join(t),
+                        };
                         if *cur != n {
                             *cur = n;
                             changed = true;
@@ -263,6 +267,8 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                             .map(|p| Param {
                                 ty: p.ty.clone(),
                                 name: p.name.clone(),
+                                attrs: p.attrs.clone(),
+                                line: p.line,
                             })
                             .collect();
                         infer_param_modes(prog, None, &i.name, &params, &generics, body, &sigs)
@@ -285,7 +291,11 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 let sig = sigs.entry(&i.name, &m.name, m.params.len());
                 for (k, t) in modes.into_iter().enumerate() {
                     if let Some(cur) = sig.params.get_mut(k) {
-                        let n = cur.join(t);
+                        // 接口声明上的 `@ref` / `@mut` 同样是硬约束（Stage D）。
+                        let n = match param_explicit_mode(&m.params[k]) {
+                            Some(explicit) => explicit,
+                            None => cur.join(t),
+                        };
                         if *cur != n {
                             *cur = n;
                             changed = true;
@@ -298,6 +308,11 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
             break;
         }
     }
+
+    // 显式标注与用法的冲突校验（JR4001）：必须在不动点之后跑，此时 `Sigs` 已稳定，
+    // 被调方法的形参三态才能反映到「传给 owned 形参」这类用法上。
+    let conflict_diags = check_override_conflicts(prog, &sigs);
+    diags.extend(conflict_diags);
 
     let ret_diags = infer_ret_modes(prog, &mut sigs);
     diags.extend(ret_diags);
@@ -738,23 +753,13 @@ fn infer_param_modes(
     sigs: &Sigs,
 ) -> Vec<PMode> {
     let n = params.len();
-    let mut u = PUsage {
-        names: params.iter().map(|p| p.name.clone()).collect(),
-        types: params.iter().map(|p| p.ty.clone()).collect(),
-        value: vec![false; n],
-        mutref: vec![false; n],
-        prog,
-        class,
-        self_name,
-        sigs,
-    };
+    let mut u = scan_usage(prog, class, self_name, params, body, sigs);
     // Copy 标量 / 泛型：直接 Value。
     for i in 0..n {
         if u.types[i].is_copy_scalar() || contains_generic(&u.types[i], generics) {
             u.value[i] = true;
         }
     }
-    u.stmts(body, false);
     (0..n)
         .map(|i| {
             if u.value[i] {
@@ -766,6 +771,245 @@ fn infer_param_modes(
             }
         })
         .collect()
+}
+
+/// 一次扫描收集形参用法（`Value` / `MutRef` 两类标记）。
+///
+/// 只做「方法体怎么用这些名字」，不含 Copy 标量 / 泛型的强制 `Value` 判定 ——
+/// 那一步在 `infer_param_modes` 里单独做，因为 `@ref` 冲突校验需要看到真实用法。
+fn scan_usage<'a>(
+    prog: &'a Program,
+    class: Option<&'a ClassDecl>,
+    self_name: &'a str,
+    params: &[Param],
+    body: &[Stmt],
+    sigs: &'a Sigs,
+) -> PUsage<'a> {
+    let n = params.len();
+    let mut u = PUsage {
+        names: params.iter().map(|p| p.name.clone()).collect(),
+        types: params.iter().map(|p| p.ty.clone()).collect(),
+        value: vec![false; n],
+        mutref: vec![false; n],
+        prog,
+        class,
+        self_name,
+        sigs,
+    };
+    u.stmts(body, false);
+    u
+}
+
+/// 形参上的显式借用覆盖：`@mut` → `MutRef`，`@ref` → `Ref`（Stage D）。
+fn param_explicit_mode(p: &Param) -> Option<PMode> {
+    if p.attrs.iter().any(|a| a.name == "mut") {
+        Some(PMode::MutRef)
+    } else if p.attrs.iter().any(|a| a.name == "ref") {
+        Some(PMode::Ref)
+    } else {
+        None
+    }
+}
+
+fn override_attr_name(m: PMode) -> &'static str {
+    if m == PMode::MutRef {
+        "mut"
+    } else {
+        "ref"
+    }
+}
+
+/// `@ref` / `@mut` 与用法的冲突校验（`JR4001`，Stage D）。
+///
+/// 显式借用是「强制上调用点规则表的某一列」，但它不能兑现所有权语义：
+/// 形参被 `move` / 返回 / 存进字段 / 传给 owned 形参 / 被 `spawn` 捕获时，
+/// 借用与所有权二选一，报 `JR4001` 让用户显式决定。
+fn check_override_conflicts(prog: &Program, sigs: &Sigs) -> Vec<Diag> {
+    let mut diags = Vec::new();
+    for c in &prog.classes {
+        for m in &c.methods {
+            let generics = generic_names(&c.type_params, &m.type_params);
+            if m.is_static {
+                check_static_overrides(&m.params, &mut diags);
+                continue;
+            }
+            let u = scan_usage(prog, Some(c), &c.name, &m.params, &m.body, sigs);
+            check_param_overrides(&m.params, &u, &generics, &mut diags);
+        }
+    }
+    for i in &prog.interfaces {
+        for m in &i.methods {
+            let generics = generic_names(&i.type_params, &m.type_params);
+            if m.is_static {
+                check_static_overrides(&m.params, &mut diags);
+                continue;
+            }
+            let Some(body) = &m.body else { continue };
+            let u = scan_usage(prog, None, &i.name, &m.params, body, sigs);
+            check_param_overrides(&m.params, &u, &generics, &mut diags);
+        }
+    }
+    check_override_consistency(prog, sigs, &mut diags);
+    diags
+}
+
+/// 接口上的显式标注与实现类签名的一致性（Stage D）。
+///
+/// D9 的并集本来保证 trait 与 impl 逐字一致，但显式标注会**钳住**一侧：
+/// 接口写 `@ref`、实现类要改这个参数 → trait 是 `&[T]`、impl 是 `&mut Vec<T>`，
+/// 生成的 Rust 过不了 `E0053`。这类冲突必须在分析阶段报出来，而不是丢给 rustc。
+fn check_override_consistency(prog: &Program, sigs: &Sigs, diags: &mut Vec<Diag>) {
+    for c in &prog.classes {
+        for m in &c.methods {
+            if m.is_static {
+                continue;
+            }
+            let Some(impl_modes) = sigs.params(&c.name, &m.name) else {
+                continue;
+            };
+            for i in &prog.interfaces {
+                if !implements_iface(c, &i.name, prog) {
+                    continue;
+                }
+                let Some(im) = i.methods.iter().find(|x| x.name == m.name && !x.is_static) else {
+                    continue;
+                };
+                let Some(iface_modes) = sigs.params(&i.name, &m.name) else {
+                    continue;
+                };
+                for (k, (a, b)) in iface_modes.iter().zip(impl_modes.iter()).enumerate() {
+                    if a == b {
+                        continue;
+                    }
+                    let Some(p) = m.params.get(k) else { continue };
+                    // 只有显式标注才能造成这种分歧（隐式推断由 D9 并集抹平）。
+                    let iface_explicit = im.params.get(k).and_then(param_explicit_mode);
+                    let impl_explicit = param_explicit_mode(p);
+                    let attr = iface_explicit
+                        .map(override_attr_name)
+                        .or_else(|| impl_explicit.map(override_attr_name));
+                    let Some(attr) = attr else { continue };
+                    diags.push(
+                        Diag::error_code(
+                            p.line,
+                            "JR4001",
+                            format!(
+                                "形参 `{}` 的 `@{}` 与接口 `{}` 的实现签名冲突（{} vs {}）",
+                                p.name,
+                                attr,
+                                i.name,
+                                mode_name(*a),
+                                mode_name(*b)
+                            ),
+                        )
+                        .with_hint(
+                            "接口与实现必须生成同一个 Rust 签名：要么两边标同一个注解，要么去掉注解让自动推断统一。",
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn mode_name(m: PMode) -> &'static str {
+    match m {
+        PMode::Ref => "只读借用",
+        PMode::MutRef => "可变借用",
+        PMode::Value => "按值",
+    }
+}
+
+/// 静态方法形参一律按值（不进 `Sigs`），显式借用注解没有落点。
+fn check_static_overrides(params: &[Param], diags: &mut Vec<Diag>) {
+    for p in params {
+        let Some(m) = param_explicit_mode(p) else {
+            continue;
+        };
+        diags.push(
+            Diag::error_code(
+                p.line,
+                "JR4001",
+                format!(
+                    "静态方法形参 `{}` 不支持 `@{}`",
+                    p.name,
+                    override_attr_name(m)
+                ),
+            )
+            .with_hint("静态方法没有 `self`，形参一律按值传递；把方法改成实例方法，或去掉注解。"),
+        );
+    }
+}
+
+fn check_param_overrides(
+    params: &[Param],
+    u: &PUsage,
+    generics: &HashSet<String>,
+    diags: &mut Vec<Diag>,
+) {
+    for (i, p) in params.iter().enumerate() {
+        let Some(explicit) = param_explicit_mode(p) else {
+            continue;
+        };
+        let attr = override_attr_name(explicit);
+        if p.ty.is_copy_scalar() {
+            diags.push(
+                Diag::error_code(
+                    p.line,
+                    "JR4001",
+                    format!("Copy 标量形参 `{}` 不能标 `@{}`", p.name, attr),
+                )
+                .with_hint("标量按值复制即可，借用没有意义；去掉注解。"),
+            );
+            continue;
+        }
+        if contains_generic(&p.ty, generics) {
+            diags.push(
+                Diag::error_code(
+                    p.line,
+                    "JR4001",
+                    format!("泛型形参 `{}` 不能标 `@{}`", p.name, attr),
+                )
+                .with_hint(
+                    "泛型类型参数一律按值，避免给 `&T` 引入额外的 `Display` / `Clone` 上界；去掉注解。",
+                ),
+            );
+            continue;
+        }
+        // `String` 不生成 `&mut String`（D2）：`@mut` 落到 owned（可变用法本就按值）。
+        if explicit == PMode::MutRef && p.ty == Type::String {
+            continue;
+        }
+        if u.value.get(i).copied().unwrap_or(false) {
+            diags.push(
+                Diag::error_code(
+                    p.line,
+                    "JR4001",
+                    format!(
+                        "形参 `{}` 标了 `@{}`，但方法体里需要它的所有权",
+                        p.name, attr
+                    ),
+                )
+                .with_hint(
+                    "所有权用法（`move` / 返回 / 存进字段 / 传给 owned 形参 / 被 spawn 捕获）与借用冲突：去掉注解按自动推断生成 owned，或改写方法体只做读取。",
+                ),
+            );
+            continue;
+        }
+        // `@ref` 但方法体要改它：`&T` 兑现不了写操作，生成出来也编译不过。
+        if explicit == PMode::Ref && u.mutref.get(i).copied().unwrap_or(false) {
+            diags.push(
+                Diag::error_code(
+                    p.line,
+                    "JR4001",
+                    format!("形参 `{}` 标了 `@ref`，但方法体里会修改它", p.name),
+                )
+                .with_hint(
+                    "只读借用拿不到写权限：改成 `@mut`（可变借用），或把写操作去掉。",
+                ),
+            );
+        }
+    }
 }
 
 fn contains_generic(t: &Type, generics: &HashSet<String>) -> bool {

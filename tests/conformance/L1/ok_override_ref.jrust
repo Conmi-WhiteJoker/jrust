@@ -1,0 +1,45 @@
+// Stage D：`@ref` / `@mut` 强制覆盖形参借用推断，不做二次推断。
+public interface Sink {
+    int count(@ref List<Integer> xs);
+}
+
+public class Summer implements Sink {
+    public int count(@ref List<Integer> xs) {
+        int s = 0;
+        for (Integer x : xs) {
+            s = s + x;
+        }
+        return s;
+    }
+}
+
+public class Util {
+    // 只读用法，推断本会是 `&[i32]`；`@mut` 强制可变借用。
+    public void touch(@mut List<Integer> xs) {
+        println("len {}", xs.size());
+    }
+
+    // String 只读，推断就是 `&str`；注解把它锁住。
+    public void say(@ref String s) {
+        println(s);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Summer sum = new Summer();
+        List<Integer> xs = new ArrayList<>();
+        xs.add(1);
+        xs.add(2);
+        println("{}", sum.count(xs));
+        println("{}", xs.size());
+
+        Util u = new Util();
+        u.touch(xs);
+        println("{}", xs.size());
+
+        String who = "jrust";
+        u.say(who);
+        println(who);
+    }
+}
