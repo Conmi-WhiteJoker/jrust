@@ -84,7 +84,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 ## 保留的语法
 
-下表每条语法都有可运行示例：`examples/` 下 `Xxx.jrust` 源码与 jrust 生成的 `Xxx.rs` 产物成对出现。
+下表每条语法都有可运行示例：优先指向 `examples/` 下 `Xxx.jrust`（与生成的 `Xxx.rs` 成对出现）；新特性若暂无独立示例，则指向 `tests/conformance/L1/` 的一致性用例。
 
 | Java 写法 | jrust 产物 | 说明 | 示例 |
 |---|---|---|---|
@@ -131,16 +131,16 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `Cls.staticMethod(x)` / `Iface.staticMethod(x)` | `Cls::staticMethod(x)` / `Iface_staticMethod(x)` | 类静态方法 → 关联函数；接口静态方法 → 顶层自由函数（Rust 不支持 `Trait::f()`） | [L1 用例](tests/conformance/L1/ok_iface_default.jrust) |
 | `public async int f()` / `await e` | `pub async fn f(&self)` / `e.await` | `await` 只在 `async` 方法内合法，否则报 `JR3022`；解释器把 `await` 视为恒等 | [L1 用例](tests/conformance/L1/ok_async.jrust) |
 | `spawn { ... }` | `tokio::spawn(async move { ... });` | 产物需要 tokio 运行时；捕获 `this`（`&self`）报 `JR3023` | [L1 用例](tests/conformance/L1/ok_spawn.jrust) |
-| `public static async void main(String[] args)` | `#[tokio::main] async fn main()` | 异步入口需要 tokio 运行时（产物同样依赖 tokio） | [L1 用例](tests/conformance/L1/ok_async_main.jrust) |
+| `public static async void main(String[] args)` | `#[tokio::main] async fn main()` | 异步入口需要 tokio 运行时（`verify/Cargo.toml` 已声明） | [AsyncMain](examples/AsyncMain.jrust) |
 | `raw { <Rust 源码> }` | 原样输出（前后带 `// jrust:L`） | 语句 / 表达式 / 类成员三处可用；块内不转译、不配平字符串与注释里的花括号；成员按顶层条目输出；解释器无法执行 raw；不能嵌套（报 `JR3027`） | [L1 用例](tests/conformance/L1/ok_raw.jrust) |
 | `import java.util.List;` | 忽略（`List` / `ArrayList` 已内置映射到 `Vec`） | 只用于让 jrust 认识类型名 | [VecImport](examples/VecImport.jrust) |
 | `import std.vec.Vec;` | `use std::vec::Vec;` | 非 `java.*` 路径原样转成 Rust 的 `use`（圆点换 `::`），去重后输出；`Vec<T>` 与 `List<T>` 同义 | [VecImport](examples/VecImport.jrust) |
-| `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [L1 用例](tests/conformance/L1/ok_docs.jrust) |
+| `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [SharedState](examples/SharedState.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
 | `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
-| `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [L1 用例](tests/conformance/L1/ok_shared.jrust) |
-| `synchronized` 方法 / `synchronized (this.f) { ... }` | 方法体开头按字段名排序依次 `lock()` 类内 `@shared` 可变字段；块语句 `let _g = self.f.lock().unwrap();` | 已持锁时复用不重复加锁；锁不是 `@shared` 可变字段报 `JR3026` | [L1 用例](tests/conformance/L1/ok_sync.jrust) |
+| `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [SharedState](examples/SharedState.jrust) |
+| `synchronized` 方法 / `synchronized (this.f) { ... }` | 方法体开头按字段名排序依次 `lock()` 类内 `@shared` 可变字段；块语句 `let _g = self.f.lock().unwrap();` | 已持锁时复用不重复加锁；锁不是 `@shared` 可变字段报 `JR3026` | [SharedState](examples/SharedState.jrust) |
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -183,9 +183,10 @@ src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推�
 src/interp.rs   树遍历解释器（run / debug 共用，赋值复制 + 显式 move）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
-examples/       10 个示例（各含 .jrust 源码 + 生成的 .rs）：
+examples/       13 个示例（各含 .jrust 源码 + 生成的 .rs）：
                 HelloWorld、ClassInterface、PolymorphicList、Ownership、MoveEdges、
-                PrintShort、RustTypes、MapDemo、VecImport、Nullable
+                PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
+                SharedState、AsyncMain
 tests/          一致性用例（move 边界、解释/编译对拍、L1 语法）+ verify 脚本
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```

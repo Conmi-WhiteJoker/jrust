@@ -1,0 +1,45 @@
+/// 示例 11：共享状态——`@shared` 字段与 `synchronized`。
+///
+/// `@shared` 只读字段生成 `Arc<T>`；被类内方法写的字段生成 `Arc<Mutex<T>>`。
+/// `synchronized` 方法与 `synchronized (this.value) { ... }` 块都锁在共享字段上。
+public class Counter {
+    /// 当前计数值（方法会写 → `Arc<Mutex<i32>>`）。
+    @shared int value;
+    /// 标签（只读 → `Arc<String>`）。
+    @shared String label;
+
+    public Counter(String label) {
+        this.value = 0;
+        this.label = label;
+    }
+
+    /// 线程安全的累加。
+    public synchronized void add(int d) {
+        this.value += d;
+    }
+
+    /// 同步块写法：一次持锁完成两次累加。
+    public void addTwice(int d) {
+        synchronized (this.value) {
+            this.value += d;
+            this.value += d;
+        }
+    }
+
+    public int get() {
+        return this.value;
+    }
+
+    public String name() {
+        return this.label;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Counter c = new Counter("shared");
+        c.add(3);
+        c.addTwice(2);
+        println(c.name() + " = " + c.get());
+    }
+}

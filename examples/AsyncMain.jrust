@@ -1,0 +1,9 @@
+/// 示例 12：异步入口——`public static async void main` 生成
+/// `#[tokio::main] async fn main()`。
+///
+/// 产物依赖 tokio 运行时；`verify/Cargo.toml` 已声明 tokio 依赖，因此示例可被编译。
+public class Main {
+    public static async void main(String[] args) {
+        System.out.println("async main ready");
+    }
+}

@@ -5,3 +5,7 @@ edition = "2021"
 
 # 独立 workspace：避免被上层 crate 当成成员
 [workspace]
+
+# 仅为编译 async main / spawn 的生成产物（examples/AsyncMain.rs）。
+[dependencies]
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
