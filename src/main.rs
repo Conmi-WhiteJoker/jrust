@@ -415,12 +415,17 @@ fn build_verify_manifest(
     // 原 [[bin]] 的 path 相对 manifest 目录；映射到待验目录内、且确实是 jrust 产物的才保留
     // （手写 .rs、待验目录之外的目标都无法在临时工程里重建，跳过）。
     let mut bins: Vec<(String, String)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     for (name, path) in bin_blocks {
         let rel = match manifest_dir.join(&path).strip_prefix(dir) {
             Ok(r) => r.to_path_buf(),
-            Err(_) => continue,
+            Err(_) => {
+                skipped.push(path);
+                continue;
+            }
         };
         if !plan.files.contains_key(&rel) {
+            skipped.push(path);
             continue;
         }
         let name = name.unwrap_or_else(|| {
@@ -429,6 +434,14 @@ fn build_verify_manifest(
                 .unwrap_or_else(|| "bin".to_string())
         });
         bins.push((name, rel.to_string_lossy().replace('\\', "/")));
+    }
+    if !skipped.is_empty() {
+        // 静默丢弃会让用户以为「整工程都验过了」，明确提示哪些 bin 没参与。
+        eprintln!(
+            "提示: 跳过 {} 个 [[bin]]（不在待验目录内，或不是 jrust 产物）：{}",
+            skipped.len(),
+            skipped.join(", ")
+        );
     }
     let root = plan.root_out.to_string_lossy().replace('\\', "/");
     if plan.lib_mode {

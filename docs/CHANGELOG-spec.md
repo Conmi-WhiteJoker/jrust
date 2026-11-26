@@ -269,3 +269,21 @@
 `verify.sh` 增加第 2 步 `cargo test`（4 个新增单测：warning 不配 error 位置、
 正常配对、ANSI 剥离、离线判据分类），总计 **8 个单测全绿**；
 L1 **122 通过 0 失败**。
+
+## v1.24 — 2026-11-26
+
+### 改进（P2 收尾）
+
+- **跳过 `[[bin]]` 时不再静默**：`verify <目录>` 重建 manifest 时，指向手写 `.rs` /
+  待验目录之外的 bin 会打印
+  `提示: 跳过 N 个 [[bin]]（不在待验目录内，或不是 jrust 产物）：<path>...`。
+  `run_verify_tree` 增加断言：l2 的 `ref/reference.rs` 必须出现在提示里。
+- **`./verify.sh` 覆盖全套**：由 5 步扩到 **7 步**，补上 `tests/move_cases.sh`
+  （12 个 move 非法边界）与 `tests/interp_parity.sh`（解释 / 编译输出对拍）。
+  此前这两项只在 `jrust verify`（无参数）里跑，「端到端脚本 ≠ 全套」是个隐性缺口。
+- README 的 `./verify.sh` 说明同步为七步。
+
+### 验收
+
+`./verify.sh` 七步全绿：cargo test 8 passed、13 例程 cargo build、L1 122 通过 0 失败、
+move 12 项全过、对拍输出一致。

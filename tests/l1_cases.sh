@@ -570,6 +570,13 @@ run_verify_tree() {
         fail=$((fail + 1))
         return
     fi
+    # 搬不走的 bin（l2 的手写 ref/reference.rs）要明确提示，不能静默丢弃。
+    if ! grep -q '跳过 1 个 \[\[bin\]\]' "$TMP/out" || ! grep -q 'ref/reference.rs' "$TMP/out"; then
+        echo "FAIL vtree：缺少「跳过 ref/reference.rs」的提示"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
     echo "PASS vtree"
     pass=$((pass + 1))
 }

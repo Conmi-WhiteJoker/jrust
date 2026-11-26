@@ -36,7 +36,8 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证：转译 examples/*/main.jrust，再用 cargo 编译产物
+# 端到端验证（七步）：cargo test → 转译 13 个例程 → cargo build →
+# l1_cases → move_cases → 解释/编译对拍
 ./verify.sh
 
 # 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
