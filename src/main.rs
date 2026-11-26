@@ -9,7 +9,7 @@ mod json;
 mod lexer;
 mod parser;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -192,6 +192,163 @@ fn crate_name(dir: &Path) -> String {
     name
 }
 
+/// 从源文件所在目录向上找最近的 `Cargo.toml`（JR-M4：依赖的唯一事实来源）。
+fn find_manifest(path: &Path) -> Option<PathBuf> {
+    let mut dir = path.parent()?.to_path_buf();
+    loop {
+        let candidate = dir.join("Cargo.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// 读取 `Cargo.toml` 里声明的依赖名（`-` 归一成 `_`，与 Rust crate 名一致）。
+fn manifest_deps(manifest: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(manifest).unwrap_or_default();
+    let mut deps = Vec::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            for key in [
+                "dependencies.",
+                "dev-dependencies.",
+                "build-dependencies.",
+            ] {
+                if let Some(rest) = section.strip_prefix(key) {
+                    let name = rest.trim().trim_matches('"').trim_matches('\'');
+                    if !name.is_empty() {
+                        deps.push(name.replace('-', "_"));
+                    }
+                }
+            }
+            continue;
+        }
+        if matches!(
+            section.as_str(),
+            "dependencies" | "dev-dependencies" | "build-dependencies"
+        ) {
+            if let Some((k, _)) = line.split_once('=') {
+                let name = k.trim().trim_matches('"').trim_matches('\'');
+                if !name.is_empty() {
+                    deps.push(name.replace('-', "_"));
+                }
+            }
+        }
+    }
+    deps
+}
+
+/// 源文件是否位于 manifest 同级的 `src/` 目录下（JR-M5 的工程目录约定）。
+fn is_under_src(src: &Path, manifest: &Path) -> bool {
+    let src = match std::fs::canonicalize(src) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let root = match manifest.parent().and_then(|p| std::fs::canonicalize(p).ok()) {
+        Some(p) => p,
+        None => return false,
+    };
+    match src.strip_prefix(&root) {
+        Ok(rel) => rel
+            .components()
+            .next()
+            .map(|c| c.as_os_str() == "src")
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+/// JR-M4 / JR-C15：`.jrust` 里用到的外部 crate 必须在最近的 `Cargo.toml` 里声明，
+/// async 代码还要求 tokio；缺失报 `JR5001`（jrust 只读校验，不生成也不改写 Cargo.toml）。
+fn validate_deps(
+    src: &Path,
+    prog: &ast::Program,
+    local_roots: &HashSet<String>,
+) -> Vec<diag::Diag> {
+    let mut out = Vec::new();
+    let mut external: Vec<&str> = Vec::new();
+    for imp in &prog.imports {
+        let first = imp.split('.').next().unwrap_or("");
+        if matches!(
+            first,
+            "java" | "std" | "core" | "alloc" | "crate" | "self" | "super"
+        ) || local_roots.contains(first)
+        {
+            continue;
+        }
+        external.push(imp);
+    }
+    let async_used = prog.classes.iter().any(|c| c.methods.iter().any(|m| m.is_async));
+    if external.is_empty() && !async_used {
+        return out;
+    }
+    let manifest = match find_manifest(src) {
+        Some(m) => m,
+        None => {
+            for imp in &external {
+                let krate = imp.split('.').next().unwrap_or("");
+                out.push(
+                    diag::Diag::error_code(
+                        1,
+                        "JR5001",
+                        format!("`{}` 用到的 crate `{}` 找不到对应的 Cargo.toml", imp, krate),
+                    )
+                    .with_hint("把源文件放进带 Cargo.toml 的工程目录，或删掉这个 import。"),
+                );
+            }
+            return out;
+        }
+    };
+    let deps = manifest_deps(&manifest);
+    for imp in &external {
+        let krate = imp.split('.').next().unwrap_or("");
+        let normalized = krate.replace('-', "_");
+        if !deps.iter().any(|d| *d == normalized) {
+            out.push(
+                diag::Diag::error_code(
+                    1,
+                    "JR5001",
+                    format!(
+                        "`{}` 依赖的 crate `{}` 不在 {} 的 [dependencies] 里",
+                        imp,
+                        krate,
+                        manifest.display()
+                    ),
+                )
+                .with_hint(format!(
+                    "在 Cargo.toml 的 [dependencies] 添加 `{} = \"…\"`；jrust 只读取校验，不生成也不改写 Cargo.toml。",
+                    krate
+                )),
+            );
+        }
+    }
+    if async_used && is_under_src(src, &manifest) && !deps.iter().any(|d| d == "tokio") {
+        out.push(
+            diag::Diag::error_code(
+                1,
+                "JR5001",
+                format!(
+                    "async 代码依赖 tokio，但 {} 的 [dependencies] 里没有 tokio",
+                    manifest.display()
+                ),
+            )
+            .with_hint(
+                "在 Cargo.toml 添加 `tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }`。",
+            ),
+        );
+    }
+    out
+}
+
 fn build_one(path: &Path) -> bool {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
@@ -207,6 +364,11 @@ fn build_one(path: &Path) -> bool {
             return false;
         }
     };
+    let dep_diags = validate_deps(path, &prog, &HashSet::new());
+    if !dep_diags.is_empty() {
+        print_diags(path, &dep_diags);
+        return false;
+    }
     match codegen::generate(&prog, &path.display().to_string()) {
         Ok(code) => {
             let out = path.with_extension("rs");
@@ -386,10 +548,27 @@ fn build_tree(dir: &Path) -> bool {
     }
     let root_out = units[roots[0]].out_rel.clone();
 
+    // JR-M4：工程内所有 package 的顶层段都是本地模块，其余 import 按外部 crate 校验。
+    let local_roots: HashSet<String> = units
+        .iter()
+        .filter_map(|u| u.prog.package.as_ref())
+        .filter_map(|p| p.split('.').next().map(|s| s.to_string()))
+        .collect();
+    for u in &units {
+        let dep_diags = validate_deps(Path::new(&u.src_name), &u.prog, &local_roots);
+        if !dep_diags.is_empty() {
+            print_diags(Path::new(&u.src_name), &dep_diags);
+            ok = false;
+        }
+    }
+    if !ok {
+        return false;
+    }
+
     let mut files_out: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut sources: BTreeMap<Vec<String>, PathBuf> = BTreeMap::new();
     for u in &units {
-        let code = match codegen::generate_multi(&u.prog, &u.src_name) {
+        let code = match codegen::generate_multi_with_modules(&u.prog, &u.src_name, &local_roots) {
             Ok(c) => c,
             Err(diags) => {
                 print_diags(Path::new(&u.src_name), &diags);
@@ -499,6 +678,11 @@ fn check_one(path: &Path) -> bool {
             return false;
         }
     };
+    let dep_diags = validate_deps(path, &prog, &HashSet::new());
+    if !dep_diags.is_empty() {
+        print_diags(path, &dep_diags);
+        return false;
+    }
     match codegen::generate(&prog, &path.display().to_string()) {
         Ok(_) => {
             println!("检查通过 {}", path.display());

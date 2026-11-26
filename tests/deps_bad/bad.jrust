@@ -1,0 +1,7 @@
+import serde_json.Value;
+
+public class BadDeps {
+    public static void main(String[] args) {
+        System.out.println("x");
+    }
+}

@@ -14,7 +14,31 @@ pub fn generate(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
 
 /// 多文件模式（JR-S4/M3）：跨模块的 `import a.b.C;` 需要写成 `use crate::a::b::C;`。
 pub fn generate_multi(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
-    generate_opts(prog, src_name, true)
+    let mut roots = HashSet::new();
+    if let Some(p) = &prog.package {
+        if let Some(first) = p.split('.').next() {
+            roots.insert(first.to_string());
+        }
+    }
+    generate_multi_with_modules(prog, src_name, &roots)
+}
+
+/// 多文件模式 + 已知工程里所有顶层模块名：只有这些模块才加 `crate::` 前缀，
+/// 其余（如 `serde_json`）仍按外部 crate 处理（JR-M4）。
+pub fn generate_multi_with_modules(
+    prog: &Program,
+    src_name: &str,
+    local_roots: &HashSet<String>,
+) -> Result<String, Vec<Diag>> {
+    let mut g = Codegen::new(prog);
+    g.multi_file = true;
+    g.local_roots = local_roots.clone();
+    g.run(src_name);
+    if g.diags.is_empty() {
+        Ok(g.out)
+    } else {
+        Err(g.diags)
+    }
 }
 
 fn generate_opts(prog: &Program, src_name: &str, multi_file: bool) -> Result<String, Vec<Diag>> {
@@ -80,6 +104,8 @@ struct Codegen<'a> {
     guarded: HashMap<String, String>,
     /// 多文件模式：`import a.b.C;` → `use crate::a::b::C;`（JR-S4/M3）。
     multi_file: bool,
+    /// 工程里的顶层模块名：只有命中的 import 才加 `crate::`，其余按外部 crate（JR-M4）。
+    local_roots: HashSet<String>,
 }
 
 impl<'a> Codegen<'a> {
@@ -169,6 +195,7 @@ impl<'a> Codegen<'a> {
             shared_mut,
             guarded: HashMap::new(),
             multi_file: false,
+            local_roots: HashSet::new(),
         }
     }
 
@@ -591,6 +618,7 @@ impl<'a> Codegen<'a> {
             // 本身就是根路径，都不加前缀。
             let first = imp.split('.').next().unwrap_or("");
             let path = if self.multi_file
+                && self.local_roots.contains(first)
                 && !matches!(first, "std" | "core" | "alloc" | "crate" | "self" | "super")
             {
                 format!("crate::{}", path)

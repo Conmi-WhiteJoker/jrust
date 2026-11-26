@@ -67,6 +67,9 @@ cargo build
 
 布局不合规（`JR3029`）会直接报错并给出改法；例子见 `tests/multifile/`。
 
+`.jrust` 里用到的外部 crate 必须写在最近的 `Cargo.toml` 里（jrust 只读取校验、不生成也不改写），
+缺失报 `JR5001`；`src/**` 工程里的 async 代码还要求声明 `tokio`。
+
 除了「转译成 `.rs`」，jrust 还内置了一个树遍历解释器，直接执行 AST：
 
 - `jrust run <文件>`：不经过 `rustc`，立即执行并打印结果。

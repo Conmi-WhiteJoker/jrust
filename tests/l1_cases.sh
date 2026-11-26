@@ -189,6 +189,31 @@ run_multifile_neg() {
     fi
 }
 
+# JR-M4 / JR-C15：外部 crate 必须在最近的 Cargo.toml 声明，缺失报 JR5001。
+run_deps() {
+    local src=$1
+    local expect=$2
+    local pattern=${3:-}
+    if $JRUST check "$src" >"$TMP/out" 2>&1; then
+        if [ "$expect" = ok ]; then
+            echo "PASS deps:$src"
+            pass=$((pass + 1))
+        else
+            echo "FAIL deps:$src：本应报错却通过了"
+            fail=$((fail + 1))
+        fi
+    else
+        if [ "$expect" = fail ] && grep -q 'error\[JR5001\]' "$TMP/out" && grep -q -- "$pattern" "$TMP/out"; then
+            echo "PASS deps:$src"
+            pass=$((pass + 1))
+        else
+            echo "FAIL deps:$src：缺少 JR5001 / $pattern"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+        fi
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -243,6 +268,9 @@ run_check ok_shared ok
 run_check neg_labeled fail
 run_multifile
 run_multifile_neg
+run_deps tests/deps_bad/bad.jrust fail 'serde_json'
+run_deps tests/deps_ok/ok.jrust ok
+run_deps tests/deps_async/src/main.jrust fail 'tokio'
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]
