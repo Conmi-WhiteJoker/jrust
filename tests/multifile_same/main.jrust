@@ -1,0 +1,11 @@
+import a.util.Util;
+
+public class Main {
+    public static void main(String[] args) {
+        Util u = new Util();
+        // 用 String 变量而不是字面量：跨文件的 Value 形参在调用点拿不到具体类型，
+        // 字面量不会补 .to_string()（同一签名键限制的连带影响）。
+        String s = "x";
+        println(u.f(s));
+    }
+}

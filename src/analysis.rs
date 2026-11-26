@@ -46,6 +46,18 @@ pub enum Recv {
     Mut,
 }
 
+impl Recv {
+    /// 不动点里的合并只会「升级」：`Mut` 压过 `Ref`。
+    /// 若允许回退为 `Ref`，同名类（跨 package）共享签名键时会 `Ref ↔ Mut` 振荡，`analyze` 永不收敛。
+    pub fn join(self, other: Recv) -> Recv {
+        if self == Recv::Mut || other == Recv::Mut {
+            Recv::Mut
+        } else {
+            Recv::Ref
+        }
+    }
+}
+
 /// 借用返回的来源：`&self` 或第 `i` 个形参。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Origin {
@@ -183,8 +195,9 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 }
                 let target = if want { Recv::Mut } else { Recv::Ref };
                 let cur = sigs.entry(&c.name, &m.name, m.params.len()).recv;
-                if cur != target {
-                    sigs.entry(&c.name, &m.name, m.params.len()).recv = target;
+                let merged = cur.join(target);
+                if cur != merged {
+                    sigs.entry(&c.name, &m.name, m.params.len()).recv = merged;
                     changed = true;
                 }
 
@@ -208,12 +221,14 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 for (i, t) in modes.into_iter().enumerate() {
                     if let Some(cur) = sig.params.get_mut(i) {
                         // 显式 `@ref` / `@mut` 是硬约束：不动点里也不许被 `join` 抬走（Stage D）。
-                        let n = match param_sig_mode(&m.params[i]) {
+                        // 但合并本身只升级（同名类共享键时两种注解会互相覆盖，回退会死循环）。
+                        let want_mode = match param_sig_mode(&m.params[i]) {
                             Some(explicit) => explicit,
-                            None => cur.join(t),
+                            None => t,
                         };
-                        if *cur != n {
-                            *cur = n;
+                        let merged = cur.join(want_mode);
+                        if *cur != merged {
+                            *cur = merged;
                             changed = true;
                         }
                     }
@@ -243,8 +258,9 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 }
                 let target = if want { Recv::Mut } else { Recv::Ref };
                 let cur = sigs.entry(&i.name, &m.name, m.params.len()).recv;
-                if cur != target {
-                    sigs.entry(&i.name, &m.name, m.params.len()).recv = target;
+                let merged = cur.join(target);
+                if cur != merged {
+                    sigs.entry(&i.name, &m.name, m.params.len()).recv = merged;
                     changed = true;
                 }
 

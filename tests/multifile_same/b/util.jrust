@@ -1,0 +1,18 @@
+package b.util;
+
+public class Util {
+    private String kept;
+
+    public Util(String k) {
+        this.kept = k;
+    }
+
+    public String f(String s) {
+        this.kept = s;
+        return "b";
+    }
+
+    public String g() {
+        return this.kept;
+    }
+}

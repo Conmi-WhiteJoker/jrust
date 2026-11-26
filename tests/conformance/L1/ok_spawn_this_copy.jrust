@@ -1,0 +1,23 @@
+// 缺口 1：spawn 不能捕获 this（JR3023），替代路径是先把字段复制到局部变量。
+// 本用例只校验产物形态（tokio 运行时由 tests/spawn_capture 覆盖）。
+public class Worker {
+    private String tag;
+
+    public Worker(String tag) {
+        this.tag = tag;
+    }
+
+    public void run() {
+        String t = this.tag;
+        spawn {
+            println(t);
+        }
+        println(t);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        new Worker("x").run();
+    }
+}

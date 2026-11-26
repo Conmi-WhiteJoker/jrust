@@ -1,0 +1,24 @@
+// 缺口 6：闭包按引用捕获 this 字段与局部变量；外层变量在闭包之后仍可用。
+public class C {
+    private String name;
+
+    public C(String name) {
+        this.name = name;
+    }
+
+    public void run() {
+        String s = "-";
+        List<Integer> xs = new ArrayList<>();
+        xs.add(1);
+        xs.add(2);
+        List<String> ys = xs.stream().map(v -> this.name + s + v).collectList();
+        println(ys.get(0));
+        println(s);
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        new C("n").run();
+    }
+}

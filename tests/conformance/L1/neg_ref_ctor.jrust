@@ -1,0 +1,8 @@
+// 缺口 5：@ref 只允许写在方法形参上，构造器形参也一律拒绝。
+public class Foo {
+    private String name;
+
+    public Foo(@ref String name) {
+        this.name = name;
+    }
+}

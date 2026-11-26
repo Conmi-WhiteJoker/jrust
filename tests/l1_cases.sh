@@ -76,7 +76,7 @@ run_neg() {
 run_neg_plain() {
     local base=$1
     local pattern=$2
-    local hint=$3
+    local hint=${3:-}
     if $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
         echo "FAIL $base：本应报错却成功了"
         fail=$((fail + 1))
@@ -88,7 +88,8 @@ run_neg_plain() {
         fail=$((fail + 1))
         return
     fi
-    if ! grep -q "提示:" "$TMP/out" || ! grep -q -- "$hint" "$TMP/out"; then
+    # 部分解析错误没有「提示:」行，此时第 3 参数留空即可跳过。
+    if [ -n "$hint" ] && { ! grep -q "提示:" "$TMP/out" || ! grep -q -- "$hint" "$TMP/out"; }; then
         echo "FAIL $base：提示行不符合预期（$hint）"
         cat "$TMP/out"
         fail=$((fail + 1))
@@ -133,6 +134,25 @@ run_build_has() {
     else
         echo "FAIL $base：产物里没有预期写法（$pattern）"
         fail=$((fail + 1))
+    fi
+}
+
+# 产物形态的「不应出现」断言：转译必须成功，且产物里不能有指定写法（锁定已知限制）。
+run_build_lacks() {
+    local base=$1
+    local pattern=$2
+    if ! $JRUST build "$DIR/$base.jrust" >/dev/null 2>"$TMP/err"; then
+        echo "FAIL $base：转译失败"
+        cat "$TMP/err"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q -- "$pattern" "$DIR/$base.rs"; then
+        echo "FAIL $base：产物里不应出现（$pattern）"
+        fail=$((fail + 1))
+    else
+        echo "PASS $base"
+        pass=$((pass + 1))
     fi
 }
 
@@ -257,6 +277,55 @@ run_multifile_neg() {
     else
         echo "FAIL multifile_bad：缺少 JR3029 / crate 根提示"
         cat "$TMP/out"
+        fail=$((fail + 1))
+    fi
+}
+
+# 缺口 4：不同 package 下的同名类共享签名键，曾让不动点 Ref ↔ Mut 振荡（analyze 死循环）。
+# 同时守住「构建能结束（不挂起）」和「产物能编译运行」。
+run_multifile_same() {
+    local work="$TMP/multifile_same"
+    rm -rf "$work"
+    cp -r tests/multifile_same "$work"
+    if ! timeout 30 $JRUST build "$work" >"$TMP/out" 2>&1; then
+        echo "FAIL multifile_same：转译失败或超时"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! rustc --edition 2021 -A warnings "$work/main.rs" -o "$TMP/ms" 2>"$TMP/err"; then
+        echo "FAIL multifile_same：生成的 Rust 编译失败"
+        cat "$TMP/err"
+        fail=$((fail + 1))
+        return
+    fi
+    "$TMP/ms" >"$TMP/out"
+    if [ "$(cat "$TMP/out")" = "x!" ]; then
+        echo "PASS multifile_same"
+        pass=$((pass + 1))
+    else
+        echo "FAIL multifile_same：输出是 $(cat "$TMP/out")"
+        fail=$((fail + 1))
+    fi
+}
+
+# 缺口 3：外部 crate 的构造器没有签名信息，实参按 owned 生成（不能是 `&s`）。
+run_deps_ctor() {
+    local work="$TMP/deps_ctor"
+    rm -rf "$work"
+    cp -r tests/deps_ok "$work"
+    if ! $JRUST build "$work/ctor.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL deps_ctor：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q 'Value::new(s)' "$work/ctor.rs" && ! grep -q 'Value::new(&s)' "$work/ctor.rs"; then
+        echo "PASS deps_ctor"
+        pass=$((pass + 1))
+    else
+        echo "FAIL deps_ctor：外部构造器实参不是 owned"
+        grep -n 'Value::new' "$work/ctor.rs"
         fail=$((fail + 1))
     fi
 }
@@ -415,6 +484,8 @@ run_ok ok_borrow_list
 run_ok ok_getter_ref
 run_ok ok_pick_lifetime
 run_ok ok_override_ref
+# 缺口 6：闭包按引用捕获 this 字段与局部变量，外层变量仍可用（rustc 真实编译运行）。
+run_ok ok_closure_capture
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 # Stage E：捕获的局部变量在 spawn 前 clone（Copy 标量不 clone），外层仍可用。
@@ -446,6 +517,14 @@ run_build_has ok_override_ref 'u.touch(&mut xs)'
 run_build_has ok_override_ref 'fn note(&self, s: String)'
 run_build_has ok_override_ref 'u.note(note)'
 run_warn ok_ext_unknown 'w.write(&text)'
+# 缺口 1：spawn 不能捕获 this（JR3023），替代路径是字段先复制到局部变量。
+run_build_has ok_spawn_this_copy 'let t: String = self.tag.clone();'
+run_build_has ok_spawn_this_copy 'let __jr_sp0_t = t.clone();'
+# 缺口 2：raw 块内的自由变量不参与 spawn 捕获克隆（已知限制，锁定现状）。
+run_build_has ok_spawn_raw 'println!("{}", s);'
+run_build_lacks ok_spawn_raw '__jr_sp0_s'
+# 缺口 3：外部 crate 构造器的实参按 owned 生成，不做借用推断。
+run_deps_ctor
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"
@@ -482,11 +561,17 @@ run_neg neg_override_iface JR4001 "实现签名冲突"
 run_neg_plain neg_override_misplaced "只能写在方法形参上" "写在方法签名或接口方法声明的形参前"
 run_neg_plain neg_override_args "不接受参数" "括号里什么都不用填"
 run_neg_plain neg_override_both "只能出现一个" "两者互斥"
+# 缺口 5：@ref / @mut 不适用于构造器形参、枚举载荷与返回值位置。
+run_neg_plain neg_ref_ctor "只能写在方法形参上" "写在方法签名或接口方法声明的形参前"
+run_neg_plain neg_ref_enum "只能写在方法形参上" "写在方法签名或接口方法声明的形参前"
+run_neg_plain neg_ref_return "这里期望一个类型"
 
 run_check ok_shared ok
 run_check neg_labeled fail
 run_multifile
 run_multifile_neg
+# 缺口 4：跨 package 同名类的签名键冲突（曾导致 analyze 死循环）。
+run_multifile_same
 run_deps tests/deps_bad/bad.jrust fail 'serde_json'
 run_deps tests/deps_ok/ok.jrust ok
 run_deps tests/deps_async/src/main.jrust fail 'tokio'

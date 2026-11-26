@@ -1,0 +1,10 @@
+import serde_json.Value;
+
+// 缺口 3：外部 crate 的构造器没有签名信息，实参一律按 owned 生成（不做借用推断）。
+public class Main {
+    public static void main(String[] args) {
+        String s = "x";
+        Value v = new Value(s);
+        println(v);
+    }
+}

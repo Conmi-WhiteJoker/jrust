@@ -1,0 +1,12 @@
+// 缺口 2：raw 块里的自由变量不参与 spawn 的捕获克隆（已知限制，这里锁定现状）。
+public class R {
+    public static async void main(String[] args) {
+        String s = "hi";
+        spawn {
+            raw {
+                println!("{}", s);
+            }
+        }
+        println(s);
+    }
+}

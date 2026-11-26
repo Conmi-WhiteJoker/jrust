@@ -1,0 +1,6 @@
+// 缺口 5：返回值位置不支持 @ref / @mut（解析期就会拒绝）。
+public class R {
+    public @ref String f() {
+        return "x";
+    }
+}

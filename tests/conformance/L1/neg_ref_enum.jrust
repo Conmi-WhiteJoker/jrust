@@ -1,0 +1,5 @@
+// 缺口 5：枚举载荷不支持 @ref / @mut。
+public enum E {
+    A(@ref String s),
+    B
+}

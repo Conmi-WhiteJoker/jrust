@@ -1,0 +1,9 @@
+package a.util;
+
+public class Util {
+    public Util() {}
+
+    public String f(String s) {
+        return s + "!";
+    }
+}

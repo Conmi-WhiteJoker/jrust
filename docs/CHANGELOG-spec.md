@@ -127,3 +127,16 @@
 - **变异验证**：逐条把对应检查改坏（`is_copy_scalar` 短路、注释掉 `check_override_consistency`、放开 `@ref`/`@mut` 互斥判断），确认相应用例会变红，避免写出「永远通过」的假用例；随后完整恢复源码。
 - **SPEC JR-O11 措辞修正**：明确 `@mut String` 在分析阶段就归一成 owned，因此存字段 / 传给 owned 形参 / 被 `spawn` 捕获**都不报** `JR4001`（与 `@mut List<T>` 不同）；六类触发条件单列，并补 parser 层三类直接报错。
 - L1 104 通过 0 失败；`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.15 — 2026-11-26
+
+- **修复跨 package 同名类导致的死循环**：两个同名类共享 `(类型名, 方法名)` 签名键时，`recv` 的 `Ref ↔ Mut` 非单调回写会让 `analyze` 永不收敛（`jrust build <目录>` 直接挂起）。新增 `Recv::join`，接收者与形参的合并一律只升级、不回退。
+- **补齐 6 个手工缺口用例**（L1 104 → 114）：
+  1. `spawn` 捕获 `this` 的正向替代路径（字段先复制到局部变量）——`ok_spawn_this_copy`；
+  2. `raw` 块内自由变量不参与捕获克隆（已知限制，断言无 `__jr_sp0_s`）——`ok_spawn_raw` + `run_build_lacks`；
+  3. 外部 crate 构造器实参按 owned 生成——`tests/deps_ok/ctor.jrust` + `run_deps_ctor`；
+  4. 跨 package 同名类（含防挂起的 `timeout` 断言与 rustc 编译运行）——`tests/multifile_same` + `run_multifile_same`；
+  5. `@ref` 不适用于构造器形参 / 枚举载荷 / 返回值位置——`neg_ref_ctor` / `neg_ref_enum` / `neg_ref_return`；
+  6. 闭包按引用捕获 `this` 字段与局部变量，外层仍可用——`ok_closure_capture`（rustc 编译运行）。
+- 工具：`run_neg_plain` 的第 3 参数改为可选（部分解析错误没有「提示:」行）。
+- 验证：L1 114 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
