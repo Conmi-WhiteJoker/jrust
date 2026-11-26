@@ -21,6 +21,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 fail=0
+skip=0
 for f in examples/*/main.jrust; do
     base=$(basename "$(dirname "$f")")
     if ! ./target/debug/jrust run "$f" >"$tmp/${base}.interp" 2>"$tmp/${base}.interp.err"; then
@@ -40,9 +41,35 @@ for f in examples/*/main.jrust; do
         fail=1
     fi
 done
+l1_pass=0
+for e in tests/conformance/L1/*/expected.txt; do
+    d=$(dirname "$e")
+    base=$(basename "$d")
+    if ./target/debug/jrust run "$d/main.jrust" >"$tmp/$base.out" 2>"$tmp/$base.err"; then
+        # 已列在「暂不支持」清单里但能跑了：提示移除，不阻断。
+        if grep -q "^$base\s" tests/interp_unsupported.txt 2>/dev/null; then
+            echo "提示 $base: 解释执行已可用，可从 tests/interp_unsupported.txt 移除"
+        fi
+        if diff -u "$e" "$tmp/$base.out" >"$tmp/$base.diff"; then
+            echo "PASS L1/$base"
+            l1_pass=$((l1_pass + 1))
+        else
+            echo "FAIL L1/$base: 解释执行与期望输出不一致"
+            cat "$tmp/$base.diff"
+            fail=1
+        fi
+    elif grep -q "^$base\s" tests/interp_unsupported.txt 2>/dev/null; then
+        echo "SKIP L1/$base（在 tests/interp_unsupported.txt 中）"
+        skip=$((skip + 1))
+    else
+        echo "FAIL L1/$base: 解释执行失败（清单里没有它）"
+        cat "$tmp/$base.err"
+        fail=1
+    fi
+done
 
 if [ "$fail" -ne 0 ]; then
     echo "对拍失败。"
     exit 1
 fi
-echo "全部通过：解释执行与编译执行输出一致。"
+echo "全部通过：解释执行与编译执行输出一致（examples 13 个 + L1 $l1_pass 个，清单跳过 $skip 个）。"

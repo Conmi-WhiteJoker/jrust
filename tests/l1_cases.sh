@@ -90,6 +90,43 @@ run_neg() {
 }
 
 # parser 层错误（没有诊断码）：必须失败，且输出同时包含消息片段与提示片段。
+# `jrust check`（编辑器保存钩子入口）的全量覆盖：
+#   所有正向夹具必须 check 通过，所有负向夹具必须 check 报错。
+# 逐条跑但只计 2 项，失败时列出具体夹具，避免用例总数被灌水。
+run_check_bulk() {
+    local bad="" n_ok=0 n_neg=0 d base
+    for e in "$DIR"/*/expected.txt; do
+        d=$(dirname "$e")
+        if $JRUST check "$d/main.jrust" >"$TMP/out" 2>&1; then
+            n_ok=$((n_ok + 1))
+        else
+            bad="$bad 正向:$(basename "$d")"
+        fi
+    done
+    if [ -z "$bad" ]; then
+        echo "PASS check:bulk_positive（$n_ok 个）"
+        pass=$((pass + 1))
+    else
+        echo "FAIL check:bulk_positive：$bad"
+        fail=$((fail + 1))
+    fi
+    bad=""
+    for d in "$DIR"/neg_*/; do
+        if $JRUST check "$d/main.jrust" >"$TMP/out" 2>&1; then
+            bad="$bad 负向误过:$(basename "$d")"
+        else
+            n_neg=$((n_neg + 1))
+        fi
+    done
+    if [ -z "$bad" ]; then
+        echo "PASS check:bulk_negative（$n_neg 个）"
+        pass=$((pass + 1))
+    else
+        echo "FAIL check:bulk_negative：$bad"
+        fail=$((fail + 1))
+    fi
+}
+
 run_neg_plain() {
     local base=$1
     local pattern=$2
@@ -1016,6 +1053,7 @@ run_neg_plain neg_ref_return "这里期望一个类型"
 
 run_check ok_shared ok
 run_check neg_labeled fail
+run_check_bulk
 run_multifile
 run_multifile_neg
 # 缺口 4：跨 package 同名类的签名键冲突（曾导致 analyze 死循环）。

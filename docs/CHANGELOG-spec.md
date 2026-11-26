@@ -348,3 +348,25 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 `./verify.sh` 七步全绿；L1 **129 通过 0 失败**（用例数不变，断言变严）。
 变异验证：把 `gen_switch` 的 `line` 参数回退（继续用 `cur_line`）→ `neg_switch_incomplete`
 立即变红。
+
+## v1.27 — 2026-11-26
+
+### 测试
+
+- **解释 / 编译对拍扩到 L1 夹具**：`tests/interp_parity.sh` 原来只跑 13 个 examples，
+  L1 的 79 个夹具（raw、泛型上界、throws、`T?`、C 风格 `for` 等）只在编译侧验过。
+  现在遍历全部带 `expected.txt` 的 36 个正向夹具：能解释执行的要求与期望输出逐字节一致
+  （当前 **18 个**），解释器跑不动的必须出现在新清单 `tests/interp_unsupported.txt` 里
+  才允许 SKIP（当前 **18 个**，逐条注明缺什么能力）。
+  - 清单外的用例一旦跑不动 → 直接 FAIL，避免「解释器回归」被当成「不支持」静默跳过；
+  - 清单内的用例哪天能跑了 → 打印「可移除」提示，让覆盖自己长起来。
+- **`jrust check` 全量覆盖**：新增 `run_check_bulk`，36 个正向夹具必须 check 通过、
+  36 个 `neg_*` 夹具必须 check 报错；逐条跑但只计 2 项（失败时列出具体夹具，不灌水
+  用例总数）。此前 check 只有 2 个手挑用例。
+
+### 验收
+
+`./verify.sh` 七步全绿，L1 **131 通过 0 失败**（新增 `check:bulk_positive` /
+`check:bulk_negative`）；对拍「examples 13 + L1 18，清单跳过 18」。
+变异验证：往 `ok_assert/expected.txt` 追加一行 → 对拍 FAIL；把一个负向夹具伪装成正向 →
+`check:bulk_positive` FAIL 并点名该夹具。

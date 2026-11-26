@@ -1,0 +1,29 @@
+# `jrust run`（解释执行）目前不支持、因而无法参与「解释 / 编译」对拍的 L1 夹具。
+#
+# 语义（由 tests/interp_parity.sh 强制）：
+#   - 列在这里的用例：允许解释执行失败，计为 SKIP；
+#   - 没列的用例：解释执行必须成功且与 expected.txt 逐字节一致，否则 FAIL；
+#   - 列在这里但解释执行已成功：打印「可移除」提示（不阻断），提示把这一行删掉以扩大覆盖。
+#
+# 因此新增解释器能力后，这个清单会自己缩水；而解释器回归（原本能跑的跑不动了）会立刻变红，
+# 不会被当成「不支持」静默跳过。
+
+# 缺少的具体能力见每行注释。
+ok_bool_switch         # 解释器暂不支持 switch / enum
+ok_borrow_list         # @ref / 借用语义（使用已移动的值）
+ok_borrow_param        # @ref / 借用语义（使用已移动的值）
+ok_closure_capture     # List.stream() 迭代器链
+ok_const               # 类内 const 常量
+ok_custom_exception     # 异常 `?` 传播
+ok_enum_switch         # 带数据 enum + switch
+ok_for_mutable         # for (T x : xs.mutable())
+ok_generic_iface_enum  # 泛型接口 + 泛型 enum
+ok_iface_default       # 接口默认方法
+ok_illegal_arg         # 接口作类型（Box<dyn>）
+ok_iter_chain          # List.stream() 迭代器链
+ok_override_ref        # @ref 覆盖 + 借用语义
+ok_pick_lifetime       # String.length() 等内置方法
+ok_raw                 # raw 块
+ok_raw_multiline       # raw 块
+ok_set                 # HashSet 等标准容器
+ok_throws              # 异常 `?` 传播

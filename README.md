@@ -94,8 +94,11 @@ cargo build
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对每个示例比较 `jrust run` 与「转译 + cargo 跑二进制」的
-stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
+`tests/interp_parity.sh` 对 13 个示例、以及 L1 里解释器支持的正向夹具（当前 18 个），
+比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
+解释器暂不支持的字形列在 `tests/interp_unsupported.txt`（raw、switch/enum、`?` 传播、
+迭代器链、`@ref` 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
+「不支持」静默跳过；反过来，清单里的用例哪天能跑了会提示把它移除。
 
 ## 设计原则
 
