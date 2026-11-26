@@ -123,6 +123,7 @@ run_ok ok_shared
 run_ok ok_sync
 run_ok ok_docs
 run_ok ok_set
+run_ok ok_for_mutable
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'
@@ -148,6 +149,7 @@ run_neg neg_iter_unknown JR3017 "白名单"
 run_neg neg_sync_target JR3026 "this.f"
 run_neg neg_labeled JR2004 "不支持带标签"
 run_neg neg_raw_nested JR3027 "不能嵌套"
+run_neg neg_mutable_set JR3028 "只适用于 List"
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

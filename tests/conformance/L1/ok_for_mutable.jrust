@@ -1,0 +1,24 @@
+// 可变遍历：for (T x : c.mutable()) → for x in c.iter_mut()（JR-E4）。
+public class Point {
+    int x;
+
+    public Point(int x) {
+        this.x = x;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        List<Point> ps = new ArrayList<>();
+        ps.add(new Point(1));
+        ps.add(new Point(2));
+
+        for (Point p : ps.mutable()) {
+            p.x = p.x + 10;
+        }
+
+        for (Point p : ps) {
+            println(p.x);
+        }
+    }
+}

@@ -1,0 +1,10 @@
+// Set 不能可变遍历（JR-E4 → JR3028）。
+public class Main {
+    public static void main(String[] args) {
+        Set<Integer> s = new HashSet<>();
+        s.add(1);
+        for (Integer x : s.mutable()) {
+            println(x);
+        }
+    }
+}

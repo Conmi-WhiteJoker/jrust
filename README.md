@@ -100,7 +100,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `new ArrayList<>()` | `Vec::new()` | | [VecImport](examples/VecImport.jrust) |
 | `int[] a = new int[n]` | `let mut a: Vec<i32> = vec![0; (n) as usize];` | 元素只支持标量 / `String`（默认值 `0` / `0.0` / `false` / `String::new()`）；`a.size()` / `a[i]` / 增强 for 与 `List` 一致；`new Foo[n]` 报 `JR3014` | [L1 用例](tests/conformance/L1/ok_newarray.jrust) |
 | `list.add(x)` / `list.size()` | `push(x)` / `len()` | | [VecImport](examples/VecImport.jrust) |
-| `for (T x : list)` | `for x in &list` | 借用而不是移动 | [VecImport](examples/VecImport.jrust) |
+| `for (T x : list)` | `for x in &list` | 借用而不是移动；可变遍历写 `for (T x : list.mutable())` → `for x in list.iter_mut()`（仅 `List<T>`/`T[]`，`Set` 报 `JR3028`） | [VecImport](examples/VecImport.jrust) |
 | `list.stream().map(..).filter(..).collectList()` | `list.iter().cloned().map(..).filter(..).collect::<Vec<_>>()` | 白名单 `stream` / `map` / `filter` / `collectList`，其它方法报 `JR3017`；`cloned()` 保证按值处理元素；`collectList` 元素类型沿用基座集合 | [L1 用例](tests/conformance/L1/ok_iter_chain.jrust) |
 | `for (int i = 0; i < n; i++)` | `for i in 0..n` | 只支持同一个 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；其它形状报 `JR2003` 并提示改 `while` | [L1 用例](tests/conformance/L1/ok_cfor.jrust) |
 | `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo.jrust) |

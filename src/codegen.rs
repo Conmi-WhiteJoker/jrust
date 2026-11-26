@@ -1397,8 +1397,34 @@ impl<'a> Codegen<'a> {
             } => {
                 self.cur_line = *line;
                 self.marker(*line);
-                let it = self.gen_expr(iter, env, None);
-                self.emit(&format!("for {} in &{} {{", name, it));
+                // `for (T x : c.mutable())` → `for x in c.iter_mut()`（JR-E4）。
+                let mut_base = match strip_parens_expr(iter) {
+                    Expr::Call {
+                        recv: Some(base),
+                        name: n,
+                        args,
+                    } if n == "mutable" && args.is_empty() => Some(&**base),
+                    _ => None,
+                };
+                let it = if let Some(base) = mut_base {
+                    let ok = matches!(
+                        self.infer_type(base, env),
+                        Some(Type::List(_)) | Some(Type::Array(_))
+                    );
+                    if ok {
+                        format!("{}.iter_mut()", self.gen_expr(base, env, None))
+                    } else {
+                        self.err_code(
+                            "JR3028",
+                            "`mutable()` 只适用于 List<T> / T[]，用于需要修改元素时",
+                            "Set 的元素是哈希键，不能就地改；先 `remove` 再 `add`。只读遍历直接写 `for (T x : c)`。",
+                        );
+                        format!("&{}", self.gen_expr(base, env, None))
+                    }
+                } else {
+                    format!("&{}", self.gen_expr(iter, env, None))
+                };
+                self.emit(&format!("for {} in {} {{", name, it));
                 self.indent += 1;
                 env.vars.insert(name.clone(), ty.clone());
                 self.gen_stmts(body, env);
@@ -3297,7 +3323,7 @@ fn walk_mut_expr(e: &Expr, set: &mut HashSet<String>) {
         Expr::Call { recv, name, args } => {
             if matches!(
                 name.as_str(),
-                "add" | "push" | "insert" | "remove" | "clear" | "set" | "put"
+                "add" | "push" | "insert" | "remove" | "clear" | "set" | "put" | "mutable"
             ) {
                 if let Some(r) = recv {
                     if let Expr::Ident(n) = &**r {
