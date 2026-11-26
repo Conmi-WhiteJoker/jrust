@@ -1,0 +1,20 @@
+// `return this`（JR4003）：builder 风格本版不支持，直接给解释性诊断。
+public class Builder {
+    String name;
+
+    public Builder(String name) {
+        this.name = name;
+    }
+
+    public Builder rename(String n) {
+        this.name = n;
+        return this;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Builder b = new Builder("a");
+        println(b.name);
+    }
+}

@@ -1,5 +1,6 @@
 //! jrust 命令行入口：`.jrust` → `.rs`，或直接解释执行 / 调试。
 
+mod analysis;
 mod ast;
 mod codegen;
 mod debug;

@@ -1,0 +1,41 @@
+// 接收者推断（JR-O7）：改字段 / 调 &mut self 方法 → `&mut self`，只读方法保持 `&self`。
+// 接口签名取实现并集（JR-O7 第三条）：reset 在实现类里改字段，trait 声明也变 `&mut self`。
+public interface Resettable {
+    void reset();
+}
+
+public class Counter implements Resettable {
+    int count;
+
+    public Counter(int start) {
+        this.count = start;
+    }
+
+    public void inc() {
+        this.count += 1;
+    }
+
+    public void twice() {
+        this.inc();
+        this.inc();
+    }
+
+    public void reset() {
+        this.count = 0;
+    }
+
+    public int get() {
+        return this.count;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Counter c = new Counter(1);
+        c.twice();
+        println(c.get());
+        c.reset();
+        c.inc();
+        println(c.get());
+    }
+}

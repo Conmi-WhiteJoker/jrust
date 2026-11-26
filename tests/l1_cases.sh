@@ -306,6 +306,7 @@ run_ok ok_for_mutable
 run_ok ok_iface_extends
 run_ok ok_illegal_arg
 run_ok ok_custom_exception
+run_ok ok_mut_receiver
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'
@@ -313,6 +314,8 @@ run_build_has ok_async_main 'async fn main'
 run_build_has ok_illegal_arg 'panic!'
 run_build_has ok_custom_exception 'pub struct AppError'
 run_build_has ok_custom_exception 'impl std::error::Error for AppError'
+run_build_has ok_mut_receiver 'fn inc(&mut self)'
+run_build_has ok_mut_receiver 'fn get(&self)'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"
@@ -335,6 +338,7 @@ run_neg neg_sync_target JR3026 "this.f"
 run_neg neg_labeled JR2004 "不支持带标签"
 run_neg neg_raw_nested JR3027 "不能嵌套"
 run_neg neg_mutable_set JR3028 "只适用于 List"
+run_neg neg_return_this JR4003 "静态工厂"
 
 run_check ok_shared ok
 run_check neg_labeled fail

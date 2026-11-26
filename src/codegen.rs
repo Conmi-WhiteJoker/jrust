@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::analysis::{self, Recv, Sigs};
 use crate::ast::*;
 use crate::diag::Diag;
 
@@ -30,9 +31,11 @@ pub fn generate_multi_with_modules(
     src_name: &str,
     local_roots: &HashSet<String>,
 ) -> Result<String, Vec<Diag>> {
+    let sigs = borrow_sigs(prog)?;
     let mut g = Codegen::new(prog);
     g.multi_file = true;
     g.local_roots = local_roots.clone();
+    g.sigs = sigs;
     g.run(src_name);
     if g.diags.is_empty() {
         Ok(g.out)
@@ -42,13 +45,25 @@ pub fn generate_multi_with_modules(
 }
 
 fn generate_opts(prog: &Program, src_name: &str, multi_file: bool) -> Result<String, Vec<Diag>> {
+    let sigs = borrow_sigs(prog)?;
     let mut g = Codegen::new(prog);
     g.multi_file = multi_file;
+    g.sigs = sigs;
     g.run(src_name);
     if g.diags.is_empty() {
         Ok(g.out)
     } else {
         Err(g.diags)
+    }
+}
+
+/// 先跑借用分析；硬错误（如 `JR4003`）直接阻断生成。
+fn borrow_sigs(prog: &Program) -> Result<Sigs, Vec<Diag>> {
+    let (sigs, diags) = analysis::analyze(prog);
+    if diags.is_empty() {
+        Ok(sigs)
+    } else {
+        Err(diags)
     }
 }
 
@@ -106,6 +121,8 @@ struct Codegen<'a> {
     multi_file: bool,
     /// 工程里的顶层模块名：只有命中的 import 才加 `crate::`，其余按外部 crate（JR-M4）。
     local_roots: HashSet<String>,
+    /// 借用推断结果：接收者 `&mut self` / 参数三态（JR-O4/O7）。
+    sigs: Sigs,
 }
 
 impl<'a> Codegen<'a> {
@@ -196,6 +213,7 @@ impl<'a> Codegen<'a> {
             guarded: HashMap::new(),
             multi_file: false,
             local_roots: HashSet::new(),
+            sigs: Sigs::default(),
         }
     }
 
@@ -698,9 +716,21 @@ impl<'a> Codegen<'a> {
             for l in self.attr_lines(&m.attrs) {
                 self.emit(&l);
             }
-            let mut ps = vec!["&self".to_string()];
+            let recv_mut = self.sigs.recv(&iface.name, &m.name) == Recv::Mut;
+            let mutated = m.body.as_ref().map(|b| self.collect_mutated_with_sigs(b));
+            let mut ps = vec![if recv_mut {
+                "&mut self".to_string()
+            } else {
+                "&self".to_string()
+            }];
             for p in &m.params {
-                ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
+                // 只有默认方法才在形参上写 `mut`；纯声明不涉及方法体。
+                let mut_kw = if mutated.as_ref().map_or(false, |s| s.contains(&p.name)) {
+                    "mut "
+                } else {
+                    ""
+                };
+                ps.push(format!("{}{}: {}", mut_kw, p.name, self.rust_type(&p.ty)));
             }
             let ret = if m.ret == Type::Void {
                 String::new()
@@ -726,7 +756,7 @@ impl<'a> Codegen<'a> {
                     for p in &m.params {
                         env.vars.insert(p.name.clone(), p.ty.clone());
                     }
-                    env.mutated = collect_mutated(body);
+                    env.mutated = mutated.clone().unwrap_or_default();
                     env.self_class = Some(iface.name.clone());
                     let prev = self.in_method;
                     self.in_method = !m.is_static;
@@ -751,9 +781,15 @@ impl<'a> Codegen<'a> {
             for l in self.attr_lines(&m.attrs) {
                 self.emit(&l);
             }
+            let mutated = m.body.as_ref().map(|b| self.collect_mutated_with_sigs(b));
             let mut ps = Vec::new();
             for p in &m.params {
-                ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
+                let mut_kw = if mutated.as_ref().map_or(false, |s| s.contains(&p.name)) {
+                    "mut "
+                } else {
+                    ""
+                };
+                ps.push(format!("{}{}: {}", mut_kw, p.name, self.rust_type(&p.ty)));
             }
             let ret = if m.ret == Type::Void {
                 String::new()
@@ -779,7 +815,7 @@ impl<'a> Codegen<'a> {
                     for p in &m.params {
                         env.vars.insert(p.name.clone(), p.ty.clone());
                     }
-                    env.mutated = collect_mutated(body);
+                    env.mutated = mutated.clone().unwrap_or_default();
                     env.self_class = Some(iface.name.clone());
                     let prev = self.in_method;
                     self.in_method = false;
@@ -1185,7 +1221,7 @@ impl<'a> Codegen<'a> {
         for p in &main.params {
             env.vars.insert(p.name.clone(), p.ty.clone());
         }
-        env.mutated = collect_mutated(&main.body);
+        env.mutated = self.collect_mutated_with_sigs(&main.body);
         env.in_throws = throws;
         env.self_class = Some(class.name.clone());
         let prev = self.in_method;
@@ -1290,12 +1326,19 @@ impl<'a> Codegen<'a> {
                 "接口签名里没有错误类型；把异常改成返回值，或在实现类里自己吞掉并处理。",
             );
         }
+        let mutated = self.collect_mutated_with_sigs(&m.body);
+        let recv_mut = self.sigs.recv(class_name, &m.name) == Recv::Mut;
         let mut ps = Vec::new();
         if !m.is_static {
-            ps.push("&self".to_string());
+            ps.push(if recv_mut {
+                "&mut self".to_string()
+            } else {
+                "&self".to_string()
+            });
         }
         for p in &m.params {
-            ps.push(format!("{}: {}", p.name, self.rust_type(&p.ty)));
+            let mut_kw = if mutated.contains(&p.name) { "mut " } else { "" };
+            ps.push(format!("{}{}: {}", mut_kw, p.name, self.rust_type(&p.ty)));
         }
         let ret = if m.ret == Type::Void {
             if throws {
@@ -1332,7 +1375,7 @@ impl<'a> Codegen<'a> {
         for p in &m.params {
             env.vars.insert(p.name.clone(), p.ty.clone());
         }
-        env.mutated = collect_mutated(&m.body);
+        env.mutated = mutated;
         env.in_throws = throws;
         env.self_class = Some(class_name.to_string());
         let prev = self.in_method;
@@ -1364,6 +1407,31 @@ impl<'a> Codegen<'a> {
     }
 
     // ---------- 语句 ----------
+
+    /// 需要 `let mut` / `mut 形参` 的变量：赋值目标 + 以其为接收者调用 `&mut self` 方法
+    /// 或集合可变方法（如 `list.add(..)`）。名字级匹配，宁可多写 `mut`（只影响警告）。
+    fn collect_mutated_with_sigs(&self, stmts: &[Stmt]) -> HashSet<String> {
+        let mut set = collect_mutated(stmts);
+        if self.sigs.is_empty() {
+            return set;
+        }
+        let mut_names = self.sigs.mut_names();
+        each_stmt_expr(stmts, &mut |e| {
+            if let Expr::Call {
+                recv: Some(r),
+                name,
+                ..
+            } = e
+            {
+                if mut_names.contains(name) {
+                    if let Expr::Ident(n) = &**r {
+                        set.insert(n.clone());
+                    }
+                }
+            }
+        });
+        set
+    }
 
     fn gen_stmts(&mut self, stmts: &[Stmt], env: &mut Env) {
         for s in stmts {

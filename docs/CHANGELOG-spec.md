@@ -39,3 +39,11 @@
 - **JR-C14 / JR-X2**：新增 `jrust verify <文件>`：转译后以 lib 模式交给 rustc 编译，rustc 报错按 `// jrust:L` 标记映射回 `.jrust` 行；E0277 追加 Send/Sync 中文提示，raw 块内错误附「raw 块内第 k 行 → 原 .jrust 第 n 行」。
 - **JR-G5**（verify）：`jrust verify` 不带参数时依次运行 `tests/l1_cases.sh`、`tests/move_cases.sh`、`tests/interp_parity.sh`。
 - **JR-G5**（fmt）：`jrust fmt` 统一 4 空格缩进、去行尾空白、折叠连续空行，`raw` 块逐字保留（含未格式化内容）；格式化后仍可正常转译编译。G5 全部子命令落地。
+
+## v1.4 — 2026-11-26
+
+- **JR-O7**（接收者，✅）：新增 `src/analysis.rs`，按方法体是否真的修改 `this` 状态推断接收者 —— 写非 `@shared` 字段 / 调集合可变方法（`add`/`put`/`clear` 等）/ 调本类或接口的 `&mut self` 方法 → `&mut self`，否则 `&self`。接口与实现取并集（任一实现需要 `&mut self`，trait 声明也变 `&mut self`），由 worklist 不动点求解。`synchronized` 块与 `spawn` 子块不参与（字段访问走 `Arc` 锁 / 闭包捕获）。
+- **JR-O7**（`return this`）：builder 风格本版不做，直接报 `JR4003`，提示改 `this.clone()` 或静态工厂。
+- 调用点可变性传播（接收者部分）：`x.inc()` 中 `inc` 为 `&mut self` 时，`let x` 自动补 `mut`，形参自动写成 `mut p`，避免把编译错误推给用户。
+- 过渡开关：`JRUST_BORROW=legacy` 回退到「全 `&self`」的旧行为（F 阶段删除）。
+- 诊断码新增：`JR4003`。
