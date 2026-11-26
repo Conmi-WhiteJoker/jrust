@@ -191,7 +191,7 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 );
                 for ity in &c.implements {
                     if let Some(name) = ty_name(ity) {
-                        if let Some(im) = iface_method_params(prog, &name, &m.name) {
+                        if let Some(im) = iface_method_params(&sigs, &name, &m.name) {
                             for (i, t) in im.iter().enumerate() {
                                 if let Some(x) = modes.get_mut(i) {
                                     *x = x.join(*t);
@@ -254,7 +254,8 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                             .collect();
                         infer_param_modes(prog, None, &i.name, &params, &generics, body, &sigs)
                     }
-                    None => vec![PMode::Value; m.params.len()],
+                    // 抽象声明从偏序的底起步，随后与所有实现类求并集。
+                    None => vec![PMode::Ref; m.params.len()],
                 };
                 for c in &prog.classes {
                     if !implements_iface(c, &i.name, prog) {
@@ -383,12 +384,8 @@ fn is_pure_str_getter(c: &ClassDecl, m: &Method, recv: Recv) -> bool {
 }
 
 /// 接口方法的形参三态（供实现类求并集）。
-fn iface_method_params(prog: &Program, iface: &str, name: &str) -> Option<Vec<PMode>> {
-    prog.interfaces
-        .iter()
-        .find(|i| i.name == iface)
-        .and_then(|i| i.methods.iter().find(|m| m.name == name))
-        .map(|m| m.params.iter().map(|_| PMode::Value).collect())
+fn iface_method_params(sigs: &Sigs, iface: &str, name: &str) -> Option<Vec<PMode>> {
+    sigs.params(iface, name)
 }
 
 /// 泛型类型参数名（类 + 方法）：这类形参一律按 `Value`，避免给 `&T` 引入额外 trait 上界。
