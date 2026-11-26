@@ -1,0 +1,12 @@
+[package]
+name = "asyncmain"
+version = "0.1.0"
+edition = "2021"
+
+# 产物由 `jrust build main.jrust` 生成在同目录，`[[bin]]` 直接指向它。
+[[bin]]
+name = "asyncmain"
+path = "main.rs"
+
+[dependencies]
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

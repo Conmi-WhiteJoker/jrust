@@ -167,3 +167,18 @@
 - **补齐 `verify_tree` 的验收**（此前该入口零覆盖，正是 v1.16「验收标准存在 ≠ 被执行」的同款问题）：新增 `run_verify_tree`（正向）/ `run_verify_tree_bad`（raw 内 E0599，断言映射回 `main.jrust:<行>`，并注入 `CARGO_TERM_COLOR=always` 复现 Agent/CI 环境）/ `run_verify_tree_manifest`（build 脚本必须给明确诊断）。做过变异验证：放开颜色控制后 `run_verify_tree_bad` 变红。
 - 文档：`usage` / README 补目录模式与边界；SPEC §15 L1 计数表述修正、L2 行补 verify 边界；JR-G5 同步。
 - 验证：L1 **119 通过 0 失败**（新增 3 条），`verify.sh` 全绿；六个手工场景（raw 报错 / build.rs / workspace / path 依赖 / default-run / `tests/l2/src`）逐个复测符合预期。
+
+## v1.18 — 2026-11-26
+
+- **examples 拆成 13 个独立 cargo 工程**：`examples/<Name>/{main.jrust, main.rs, Cargo.toml}`，
+  `examples/Cargo.toml` 作为 workspace 共享一个 `target/`，bin 名 = 目录名小写。
+  单独跑：`cargo run -p helloworld`，或 `cd examples/HelloWorld && cargo run`。
+  每个目录也能直接 `jrust verify examples/<Name>`（v1.17 的目录模式正好派上用场）。
+- **依赖不再寄生在空 crate 里**：`AsyncMain` 的 tokio 依赖落到自己的 `Cargo.toml`；
+  删除只用于拼装编译的 `verify/` crate（`verify.sh` 不再复制 `.rs` 到 `verify/src/bin/`）。
+- 脚本：`verify.sh` / `tests/interp_parity.sh` 改为遍历 `examples/*/main.jrust`，
+  用 `cargo build --workspace` 一次编完；对拍直接执行 `examples/target/debug/<小写目录名>`。
+- `.gitignore`：增 `/examples/target/`，删 verify/ 相关条目；`examples/Cargo.lock` 纳入版本管理。
+- README：全部示例链接同步到 `examples/<Name>/main.jrust`，结构树与目录说明更新。
+- 验证：`verify.sh` 全绿（L1 119 通过 0 失败）；`jrust verify examples/HelloWorld`、
+  `cargo run -p helloworld`、`cargo run -p asyncmain` 三个入口逐一实测。

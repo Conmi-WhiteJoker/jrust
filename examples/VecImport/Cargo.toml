@@ -1,0 +1,9 @@
+[package]
+name = "vecimport"
+version = "0.1.0"
+edition = "2021"
+
+# 产物由 `jrust build main.jrust` 生成在同目录，`[[bin]]` 直接指向它。
+[[bin]]
+name = "vecimport"
+path = "main.rs"

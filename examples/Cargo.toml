@@ -1,0 +1,19 @@
+# 13 个例程各自是独立 crate，共享同一个 target/（编译一次，避免 13 份增量缓存）。
+# 单独跑某个例程：cargo run -p asyncmain  （或 cd AsyncMain && cargo run）
+[workspace]
+resolver = "2"
+members = [
+    "AsyncMain",
+    "ClassInterface",
+    "Generics",
+    "HelloWorld",
+    "MapDemo",
+    "MoveEdges",
+    "Nullable",
+    "Ownership",
+    "PolymorphicList",
+    "PrintShort",
+    "RustTypes",
+    "SharedState",
+    "VecImport",
+]

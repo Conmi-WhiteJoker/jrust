@@ -3,17 +3,53 @@
 version = 4
 
 [[package]]
-name = "jrust-verify"
+name = "asyncmain"
 version = "0.1.0"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
+name = "classinterface"
+version = "0.1.0"
+
+[[package]]
+name = "generics"
+version = "0.1.0"
+
+[[package]]
+name = "helloworld"
+version = "0.1.0"
+
+[[package]]
+name = "mapdemo"
+version = "0.1.0"
+
+[[package]]
+name = "moveedges"
+version = "0.1.0"
+
+[[package]]
+name = "nullable"
+version = "0.1.0"
+
+[[package]]
+name = "ownership"
+version = "0.1.0"
+
+[[package]]
 name = "pin-project-lite"
-version = "0.2.17"
+version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+checksum = "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752"
+
+[[package]]
+name = "polymorphiclist"
+version = "0.1.0"
+
+[[package]]
+name = "printshort"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"
@@ -32,6 +68,14 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "rusttypes"
+version = "0.1.0"
+
+[[package]]
+name = "sharedstate"
+version = "0.1.0"
 
 [[package]]
 name = "syn"
@@ -70,3 +114,7 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "vecimport"
+version = "0.1.0"
