@@ -1,0 +1,11 @@
+public class Weird {
+    raw {
+   fn helper() { println!("raw keep"); }
+    }
+}
+
+public class Main {
+public static void main(String[] args) {
+System.out.println("ok");
+}
+}

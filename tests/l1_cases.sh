@@ -239,6 +239,48 @@ run_verify() {
     fi
 }
 
+# JR-G5 fmt：统一 4 空格缩进，raw 块逐字保留；格式化后仍能编译运行。
+run_fmt() {
+    local work="$TMP/fmt"
+    rm -rf "$work"
+    cp -r tests/fmt "$work"
+    if ! $JRUST fmt "$work/main.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL fmt：格式化失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q '^    raw {' "$work/main.jrust" \
+        || ! grep -q '^    public static void main' "$work/main.jrust" \
+        || ! grep -q '^        System.out.println' "$work/main.jrust" \
+        || ! grep -qF '   fn helper() { println!("raw keep"); }' "$work/main.jrust"; then
+        echo "FAIL fmt：缩进或 raw 保留不符合预期"
+        cat "$work/main.jrust"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! $JRUST build "$work/main.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL fmt：格式化后转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! rustc --edition 2021 -A warnings "$work/main.rs" -o "$TMP/fmtbin" 2>"$TMP/err"; then
+        echo "FAIL fmt：格式化后编译失败"
+        cat "$TMP/err"
+        fail=$((fail + 1))
+        return
+    fi
+    "$TMP/fmtbin" >"$TMP/out"
+    if [ "$(cat "$TMP/out")" = "ok" ]; then
+        echo "PASS fmt"
+        pass=$((pass + 1))
+    else
+        echo "FAIL fmt：输出是 $(cat "$TMP/out")"
+        fail=$((fail + 1))
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -303,6 +345,7 @@ run_deps tests/deps_ok/ok.jrust ok
 run_deps tests/deps_async/src/main.jrust fail 'tokio'
 run_verify verify_ok ok
 run_verify verify_raw_error fail 'raw 块内'
+run_fmt
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

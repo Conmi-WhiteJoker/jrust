@@ -65,6 +65,29 @@ fn main() -> ExitCode {
             }
             exit_code(all_ok)
         }
+        "fmt" => {
+            if args.len() < 3 {
+                print_usage();
+                return ExitCode::FAILURE;
+            }
+            let mut all_ok = true;
+            for a in &args[2..] {
+                let p = Path::new(a);
+                if p.is_dir() {
+                    let mut files = Vec::new();
+                    collect_jrust(p, &mut files);
+                    files.sort();
+                    for f in &files {
+                        if !fmt_one(f) {
+                            all_ok = false;
+                        }
+                    }
+                } else if !fmt_one(p) {
+                    all_ok = false;
+                }
+            }
+            exit_code(all_ok)
+        }
         "verify" => {
             if args.len() < 3 {
                 exit_code(verify_suite())
@@ -129,6 +152,7 @@ fn print_usage() {
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
   jrust verify [文件.jrust...]             转译 + rustc 编译校验；不带参数时跑一致性套件
+  jrust fmt <文件或目录>                   格式化 .jrust（统一 4 空格缩进，raw 块原样保留）
   jrust dap                                以 DAP 适配器方式运行（供 IDE 连接）
 
 说明:
@@ -707,6 +731,185 @@ fn check_one(path: &Path) -> bool {
             false
         }
     }
+}
+
+/// 格式化扫描状态：跨行块注释。
+#[derive(Default)]
+struct ScanState {
+    block_comment: bool,
+}
+
+/// 去掉字符串 / 字符 / 注释后的「代码骨架」，只用于数括号和识别 `raw {`。
+fn code_only(line: &str, st: &mut ScanState) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if st.block_comment {
+            if c == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                st.block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+            break;
+        }
+        if c == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            st.block_comment = true;
+            i += 2;
+            continue;
+        }
+        if c == '"' {
+            i += 1;
+            while i < chars.len() {
+                if chars[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if c == '\'' {
+            let mut j = i + 1;
+            let mut closed = false;
+            while j < chars.len() {
+                if chars[j] == '\\' {
+                    j += 2;
+                    continue;
+                }
+                if chars[j] == '\'' {
+                    closed = true;
+                    break;
+                }
+                j += 1;
+            }
+            if closed {
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn brace_net(code: &str) -> isize {
+    code.matches('{').count() as isize - code.matches('}').count() as isize
+}
+
+/// 若这一行开始了一个跨行的 `raw {`，返回 raw 内部未闭合的花括号数。
+fn raw_open_balance(code: &str) -> Option<usize> {
+    let chars: Vec<char> = code.chars().collect();
+    let mut i = 0;
+    while i + 3 <= chars.len() {
+        let word = chars[i] == 'r' && chars[i + 1] == 'a' && chars[i + 2] == 'w';
+        let boundary = i == 0 || !(chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
+        let after = i + 3 == chars.len() || !(chars[i + 3].is_alphanumeric() || chars[i + 3] == '_');
+        if word && boundary && after {
+            let mut j = i + 3;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '{' {
+                let rest: String = chars[j..].iter().collect();
+                let net = brace_net(&rest);
+                return if net > 0 { Some(net as usize) } else { None };
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `jrust fmt`：统一 4 空格缩进、去行尾空白、空行最多留一行；`raw` 块内容逐字保留。
+fn format_jrust(src: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0usize;
+    let mut raw: Option<usize> = None;
+    let mut blank = false;
+    let mut scan = ScanState::default();
+    for raw_line in src.replace("\r\n", "\n").lines() {
+        let line = raw_line.trim_end();
+        if let Some(d) = raw {
+            // raw 内容原样保留（只去行尾空白），并在 raw 闭合时归还外层缩进层级。
+            let code = code_only(line, &mut scan);
+            let net = brace_net(&code);
+            let next = if net >= 0 {
+                d + net as usize
+            } else {
+                d.saturating_sub((-net) as usize)
+            };
+            out.push_str(line);
+            out.push('\n');
+            if next == 0 {
+                raw = None;
+                depth = depth.saturating_sub(1);
+            } else {
+                raw = Some(next);
+            }
+            blank = false;
+            continue;
+        }
+        if line.trim().is_empty() {
+            if !blank && !out.is_empty() {
+                out.push('\n');
+            }
+            blank = true;
+            continue;
+        }
+        blank = false;
+        let code = code_only(line, &mut scan);
+        let leading_closes = code.trim_start().chars().take_while(|c| *c == '}').count();
+        let effective = depth.saturating_sub(leading_closes);
+        out.push_str(&"    ".repeat(effective));
+        out.push_str(line.trim_start());
+        out.push('\n');
+        let net = brace_net(&code);
+        depth = if net >= 0 {
+            depth + net as usize
+        } else {
+            depth.saturating_sub((-net) as usize)
+        };
+        raw = raw_open_balance(&code);
+    }
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn fmt_one(path: &Path) -> bool {
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("无法读取 {}: {}", path.display(), e);
+            return false;
+        }
+    };
+    let formatted = format_jrust(&src);
+    if formatted == src {
+        println!("无需修改 {}", path.display());
+        return true;
+    }
+    if let Err(e) = std::fs::write(path, formatted) {
+        eprintln!("无法写入 {}: {}", path.display(), e);
+        return false;
+    }
+    println!("已格式化 {}", path.display());
+    true
 }
 
 /// 生成的 Rust 行号 → (.jrust 行号, 相对偏移)：取最近的 `// jrust:L<n>` 标记。
