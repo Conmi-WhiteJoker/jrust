@@ -319,6 +319,36 @@ run_fmt() {
     fi
 }
 
+# Stage E / JR-C11 / JR-C15：`spawn` 捕获 clone 后的产物用 cargo + tokio 真实编译运行。
+# spawn 是并发，输出顺序不确定，因此只断言「同一行出现的次数」而不是逐字节顺序。
+run_spawn_capture() {
+    local work="$TMP/spawn_capture"
+    rm -rf "$work"
+    cp -r tests/spawn_capture "$work"
+    if ! $JRUST build "$work/src/main.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL spawn_capture：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! cargo build --quiet --manifest-path "$work/Cargo.toml" >"$TMP/out" 2>&1; then
+        echo "FAIL spawn_capture：cargo 编译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    cargo run --quiet --manifest-path "$work/Cargo.toml" >"$TMP/out" 2>&1
+    # 期望：闭包内 `1`（xs.size()）+ 外层 `hello` + 外层 `1`。
+    if [ "$(grep -c '^hello$' "$TMP/out")" = "1" ] && [ "$(grep -c '^1$' "$TMP/out")" = "2" ]; then
+        echo "PASS spawn_capture"
+        pass=$((pass + 1))
+    else
+        echo "FAIL spawn_capture：输出不符合预期"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -350,8 +380,13 @@ run_ok ok_borrow_string
 run_ok ok_borrow_list
 run_ok ok_getter_ref
 run_ok ok_pick_lifetime
+run_ok ok_override_ref
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
+# Stage E：捕获的局部变量在 spawn 前 clone（Copy 标量不 clone），外层仍可用。
+run_build_has ok_spawn_capture 'let __jr_sp0_s = s.clone();'
+run_build_has ok_spawn_capture 'let __jr_sp0_xs = xs.clone();'
+run_build_has ok_spawn_capture 'let s = __jr_sp0_s;'
 run_build_has ok_async_main '#\[tokio::main\]'
 run_build_has ok_async_main 'async fn main'
 run_build_has ok_illegal_arg 'panic!'
@@ -369,6 +404,10 @@ run_build_has ok_getter_ref 'fn age(&self) -> i32'
 run_build_has ok_pick_lifetime "fn pick<'a>(&self, x: &'a str, y: &str) -> &'a str"
 run_build_has ok_pick_lifetime "fn choose<'a>(&self, x: &'a str, y: &'a str) -> &'a str"
 run_build_has ok_pick_lifetime 'fn tag(&self) -> &str'
+# Stage D：`@ref` / `@mut` 强制覆盖推断（`@mut` 把只读用法也写成 `&mut Vec`）。
+run_build_has ok_override_ref 'fn touch(&self, xs: &mut Vec<i32>)'
+run_build_has ok_override_ref 'fn count(&self, xs: &\[i32\]) -> i32'
+run_build_has ok_override_ref 'u.touch(&mut xs)'
 run_warn ok_ext_unknown 'w.write(&text)'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
@@ -395,6 +434,7 @@ run_neg neg_mutable_set JR3028 "只适用于 List"
 run_neg neg_return_this JR4003 "静态工厂"
 run_neg neg_conflict JR4001 "所有权已经移走"
 run_neg neg_borrow_field JR3011 "无法统一"
+run_neg neg_override_conflict JR4001 "需要它的所有权"
 
 run_check ok_shared ok
 run_check neg_labeled fail
@@ -406,6 +446,7 @@ run_deps tests/deps_async/src/main.jrust fail 'tokio'
 run_verify verify_ok ok
 run_verify verify_raw_error fail 'raw 块内'
 run_fmt
+run_spawn_capture
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

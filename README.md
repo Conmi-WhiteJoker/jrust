@@ -119,6 +119,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl | [ClassInterface](examples/ClassInterface.jrust) |
 | 方法接收者（自动推断） | `&self` / `&mut self` | 方法体写非 `@shared` 字段 / 调集合可变方法（`add`、`put` 等）/ 调 `&mut self` 方法 → `&mut self`，否则 `&self`；接口与实现取并集；`@shared` 写字段走 `Arc` 锁不产生 `&mut self`；`return this` 报 `JR4003` | [L1 用例](tests/conformance/L1/ok_mut_receiver.jrust) |
 | 方法形参（自动推断） | `&T` / `&mut T` / `T` | 只读 → 借用；改字段 / 调 `&mut self` 方法 / 集合可变方法 → `&mut`；被 `move`、被返回、存进字段、交给 owned 形参、被 `spawn` 捕获 → owned。`String` 只读 → `&str`，`List` 只读 → `&[T]` / 可写 → `&mut Vec<T>`，`Map`/`Set` 同理，接口 → `&dyn I`；泛型参数与 Copy 标量恒按值；构造器形参仍按值 | [L1 用例](tests/conformance/L1/ok_borrow_param.jrust) |
+| 形参借用覆盖（`@ref` / `@mut`） | 固定 `&T` / `&mut T` | 写在形参前，强制覆盖自动推断、不做二次推断，优先于接口并集。与所有权用法共存、`@ref` 但方法体会改它、Copy 标量、泛型参数、静态方法形参、接口与实现签名不一致 → `JR4001`；只能写在方法 / 接口方法的形参上（构造器与枚举载荷不支持） | [ok_override_ref](tests/conformance/L1/ok_override_ref.jrust) · [neg_override_conflict](tests/conformance/L1/neg_override_conflict.jrust) |
 | 借用返回（自动推断） | `-> &str` / `-> &'a str` | 来源 = `return 借用形参` / `return this.f`（非 `@shared` String 字段）/ `return p.f` / `return helper(x)`（沿调用链）；Copy 标量、泛型、`T?`、接口、枚举不借，类与集合字段仍 owned + `.clone()`。唯一来源省略生命周期，多来源统一 `'a`；`&mut` 形参 / 类型不一致 / 形参已按值使用 → `JR3011`。调用点落到 owned 上下文时自动 `to_string` / `to_vec` / `clone` | [getter](tests/conformance/L1/ok_getter_ref.jrust) · [生命周期](tests/conformance/L1/ok_pick_lifetime.jrust) |
 | 调用点实参 | `&x` / `&mut x` / `x` | 按被调形参三态生成：owned 变量裸传（之后不能再用，否则 `JR4001`）、字段 `.clone()`、字面量 `.to_string()`；借用形参和 `&str` 字面量原样传；`&mut` 实参自动把变量补成 `let mut` | [L1 用例](tests/conformance/L1/ok_borrow_list.jrust) |
 | 多文件借用（全局分析） | 跨文件方法的 `&str` / `&self` / `-> &T` | `jrust build <目录>` 对全工程做一次签名分析，跨文件调用也能拿到形参三态与返回来源；外部 crate 的类型没有源码签名时按 `&T` 传参并输出 `warning[JR4101]`（不阻断构建，可用 `@ref`/`@mut` 覆盖） | [multifile](tests/multifile/app/greet.jrust) · [ok_ext_unknown](tests/conformance/L1/ok_ext_unknown.jrust) |
@@ -171,9 +172,60 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `/// 文档注释` | `/// 文档注释` | 挂到类 / 接口 / 枚举 / 枚举分支 / 字段 / 方法 / 构造器上；方法体内的 `///` 丢弃；`//` 与 `/* */` 普通注释丢弃 | [SharedState](examples/SharedState.jrust) |
 | `private` / `public` | 私有 / `pub` | | [ClassInterface](examples/ClassInterface.jrust) |
 | `public static final int N = 3;` | `pub const N: i32 = 3;` | `static final` → 模块级 `const`（`String` 常量产物是 `&str`）；`Cls.N` 引用生成 `N`；可变静态（`static` 非 `final`）报 `JR3013` | [L1 用例](tests/conformance/L1/ok_const.jrust) |
-| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 尚未实现 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
+| `@derive(A, B)` / `@inline` | `#[derive(A, B)]` / `#[inline]` | 注解 → Rust 属性；`@derive` 与自动推导（`Clone` / `Debug`）合并；`@raw("…")` 原样输出；`@ref` / `@mut` 是形参注解（见上表），写在其它的位置报错 | [L1 用例](tests/conformance/L1/ok_attrs.jrust) |
 | `@shared T f;` | `Arc<T>` / `Arc<Mutex<T>>` | 共享字段：只读 → `Arc<T>`，类内方法写它 → `Arc<Mutex<T>>`；读自动解引用，写先取锁再赋值（`x += e` 不会二次加锁死锁）；构造器自动包 `Arc::new(...)`；同一表达式里重复读同一 `Arc<Mutex<T>>` 字段会死锁（限制） | [SharedState](examples/SharedState.jrust) |
 | `synchronized` 方法 / `synchronized (this.f) { ... }` | 方法体开头按字段名排序依次 `lock()` 类内 `@shared` 可变字段；块语句 `let _g = self.f.lock().unwrap();` | 已持锁时复用不重复加锁；锁不是 `@shared` 可变字段报 `JR3026` | [SharedState](examples/SharedState.jrust) |
+
+## 参数借用：自动推断与手动覆盖
+
+这一节是 jrust 最核心、也最容易和 Java 直觉冲突的地方，单独说明。
+
+### 为什么需要它
+
+Java 的参数是「引用的按值传递」——`f(p)` 之后 `p` 还指向同一个对象。如果直接映射成
+Rust 的按值传参，每次调用都要把实参 move 走或深拷贝，写起来又累又不像 Java。
+所以 jrust 按**方法体怎么用这个参数**推断形参形态：
+
+| 方法体对该参数做了什么 | 生成的形参 | 调用点 |
+|---|---|---|
+| 只读（没赋值、没 `move`、没存字段） | `&T` | `f(&x)` |
+| 调 `&mut self` 方法 / 改它的字段 / `add` 等集合可变方法 | `&mut T` | `f(&mut x)` |
+| 被 `move` / 被返回 / 存进 `this` 字段 / 交给 owned 形参 / 被 `spawn` 捕获 | `T`（owned） | `f(x)`，之后 `x` 不可再用 |
+
+类型上还有特化：`String` 只读 → `&str`；`List<T>` 只读 → `&[T]`、可写 → `&mut Vec<T>`；
+`Map` / `Set` 同理；接口 → `&dyn I`；泛型类型参数和 Copy 标量恒按值。
+
+### 想强制指定时
+
+自动推断猜错、或者你就是要某个形态，就在形参前加注解：
+
+```java
+public void feed(@ref String s) { ... }   // 固定 &str
+public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
+```
+
+`@ref` / `@mut` 是**硬覆盖**，不做二次推断。但它兑现不了所有权语义，所以下面这些情况报
+`JR4001`：参数被 `move` / 返回 / 存进字段 / 传给 owned 形参 / 被 `spawn` 捕获；`@ref` 但方法体
+会改它；Copy 标量或泛型参数；静态方法形参；接口声明与实现类签名不一致（trait 与 impl 必须
+逐字一致，否则 rustc 会报 `E0053`）。
+
+### 返回值也能借出
+
+方法体是 `return this.f;`（`f` 是非 `@shared` 的 `String`）或 `return 借用形参;` 时，
+返回类型会推成 `-> &str` / `-> &T`，而不是每次深拷贝。来源唯一时省略生命周期，
+多来源时统一成 `<'a>`；来源不可统一（`&mut` 形参、类型不一致）报 `JR3011`。
+调用点把它当 owned 用时，自动补 `.to_string()` / `.to_vec()` / `.clone()`。
+
+### 踩过的坑
+
+- **`spawn` 会搬走捕获的变量**：`async move` 把外层变量整个移进闭包，外层再用就 `E0382`。
+  jrust 在 spawn 前为每个自由变量生成一份 clone（`let __jr_sp0_x = x.clone();`），
+  闭包内接回名字，于是外层原值仍可用 —— 与 Java lambda 捕获局部变量是副本一致。
+  注意**不能**写成同名 shadowing（`let x = x.clone();`），那只是给同一块内存起第二个名字，
+  `async move` 照样把外层 `x` 移走。
+- **接口与实现的签名必须逐字一致**：显式注解只钳住一侧时（接口 `@ref`、实现要改），
+  trait 是 `&[T]`、impl 是 `&mut Vec<T>`，rustc 直接 `E0053`。这类冲突在分析阶段就报出来，
+  不会把编译错误推给你。
 
 ## 主动砍掉的语法（会给出解释性报错）
 
@@ -189,7 +241,7 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 
 ## MVP 的边界
 
-- 单文件转译，无包管理、无模块系统（一个 `.jrust` 对应一个可编译的 crate 根）。
+- 单文件与多文件两种模式：单文件一个 `.jrust` 对应一个 crate 根；多文件用 `package a.b;` 生成模块树（`jrust build <目录>`）。没有包管理与依赖解析——外部 crate 必须在最近的 `Cargo.toml` 里声明（缺失报 `JR5001`），jrust 从不生成或改写 `Cargo.toml`。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
 - 不支持实例字段初始化（`static final` 常量除外）、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
@@ -198,12 +250,13 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）暂不支持 enum / switch / throws / 闭包 / raw，这些特性走 `jrust build` + cargo 验证。
-- `raw` 目前只保证原样内联：块内 rustc 错误不会映射回 `.jrust` 行列（`JR-X2`），嵌套 `raw` 也不会被识别（`JR-X3`）。
+- `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`raw` 不能嵌套（`JR3027`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。
 - `synchronized` 只能锁定 `@shared` 可变字段（`synchronized (this.f)`），不支持锁定任意对象；`synchronized` 方法按字段名排序加锁，多个 `@shared` 可变字段时顺序固定以防交叉死锁。
-- `raw` 块不能嵌套（内层 `raw { ... }` 报 `JR3027`）；raw 内的 rustc 错误目前不会映射回 `.jrust` 行号。
+- `raw` 块不能嵌套（内层 `raw { ... }` 报 `JR3027`）。
+- `spawn` 捕获的局部变量在捕获前 clone（外层仍可用），但**不能**捕获 `this`（`&self` 不满足 `'static`，报 `JR3023`）；含 `spawn` 的用例因并发顺序不确定，不参与解释器逐字节对拍。
 - 字符串 `+` 在任意位置可用，生成 `format!`：字面量折进格式串，其余段走 `{}`；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍拆成更短的格式串。
 
 ## 目录结构
@@ -221,6 +274,7 @@ examples/       13 个示例（各含 .jrust 源码 + 生成的 .rs）：
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain
 tests/          一致性用例（move 边界、解释/编译对拍、L1 语法）+ verify 脚本
+tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```
 

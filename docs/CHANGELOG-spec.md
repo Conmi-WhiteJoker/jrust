@@ -74,3 +74,17 @@
 - **JR-O10**（跨文件无类型信息）：形参三态已知但形参类型不可见时按模式生成实参（`Ref` → `&x`，字面量 / 借用值原样；`MutRef` → `&mut x`）；`generate` 系列返回 `Generated { code, warnings }`，warning 与 error 分流。
 - 顺带修正：多文件模式零参静态调用的产物缺 `()`（`Greeter.create` → `Greeter::create()`）。
 - 用例：`tests/multifile` 增加跨文件借用方法 `Greeter.greet(String)`（生成 `pub fn greet(&self, name: &str) -> String`，调用点 `g.greet(&who)`）；L1 新增 `ok_ext_unknown`（`run_warn` 断言 `warning[JR4101]` 与 `w.write(&text)`）。L1 85 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.8 — 2026-11-26
+
+- **JR-O11 / JR-D9**（显式借用覆盖，✅）：形参前可写 `@ref` / `@mut`，强制覆盖 §9.2 的自动推断 —— `@ref` 固定 `&T`，`@mut` 固定 `&mut T`，**不做二次推断**，且优先于接口并集（不动点内也不允许被 `join` 抬走）。`@mut` 落在 `String` 上仍按 D2 生成 owned（jrust 从不生成 `&mut String`）。注解只允许出现在方法 / 接口方法声明的形参位置：写在类 / 字段 / 方法声明前报「只能写在方法形参上」；构造器与枚举载荷的 `parse_params` 不走形参注解路径。`@ref`/`@mut` 不接受参数，两者同时出现报错。
+- **JR-O5**（冲突校验补齐，✅）：显式标注与用法矛盾时报 `JR4001` —— 与所有权用法共存（`move` / 返回 / 存进字段 / 传给 owned 形参 / 被 `spawn` 捕获）、`@ref` 但方法体会修改它、Copy 标量、泛型类型参数、静态方法形参（不进 `Sigs`）。
+- **接口一致性**（新增 `JR4001`）：接口声明标 `@ref`、实现类需要可变 → trait 是 `&[T]`、impl 是 `&mut Vec<T>`，生成的 Rust 过不了 `E0053`。`analysis::check_override_consistency` 在不动点后比对 trait 与 impl 的形参三态，不一致即报错，不把编译错误推给 rustc。
+- 落点：`ast::Param` 增加 `attrs` / `line`；`parser` 拆出 `parse_param_annotations` / `parse_method_params`（非形参位置仍走 `parse_annotations` 报错）；`analysis` 抽出 `scan_usage`（用法扫描与 Copy/泛型强制 Value 解耦）、`param_explicit_mode`、`check_override_conflicts`、`check_override_consistency`。
+- 用例：L1 新增 `ok_override_ref`（`@mut` 把只读用法也写成 `&mut Vec<i32>`、`@ref` 锁住 `&str`、接口与实现同步）与 `neg_override_conflict`（`JR4001` 所有权冲突），并加产物形态断言（`fn touch(&self, xs: &mut Vec<i32>)`、`u.touch(&mut xs)`）。L1 90 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
+
+## v1.9 — 2026-11-26
+
+- **JR-C11**（`spawn` 捕获克隆，✅）：`async move` 会把捕获的变量整个搬进闭包，外层再用就 `E0382`。新增 `spawn_free_vars`（自由变量表：块内声明的不算，`each_expr` 递归拿到 `x` / `x.f` / `x[i]` / `x.m()` 的根），在 `tokio::spawn` **之前**生成 `let __jr_sp<N>_x = x.clone();`，闭包内再 `let x = __jr_sp<N>_x;` 接回名字。关键是**不能用同名 shadowing**（`let x = x.clone();`）——那只是给同一块内存起第二个名字，`async move` 照样把外层 `x` 移走，实测确认过。Copy 标量不 clone（`async move` 直接复制）；不可 Clone 的类型报 `JR4002`；`this` 仍报 `JR3023`。新增 `Codegen::spawn_seq` 保证同一方法里多次 spawn 不撞临时名。
+- **与解释器对拍的边界**：`spawn` 是真并发、输出顺序不确定，解释器是同步执行。含 `spawn` 的用例因此不参与 `tests/interp_parity.sh` 的逐字节对拍 —— 新增 `tests/spawn_capture/`（独立 cargo 工程 + tokio），在 L1 里用 `run_spawn_capture` 做真实编译运行并按行计数断言（`hello` 一次、`1` 两次）。
+- 用例：L1 新增 `ok_spawn_capture`（产物形态断言 `let __jr_sp0_s = s.clone();` / `let s = __jr_sp0_s;`，且 Copy 标量 `n` 不 clone）与 `run_spawn_capture`（cargo + tokio 真实编译运行）。L1 94 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。
