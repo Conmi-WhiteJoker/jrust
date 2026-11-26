@@ -155,3 +155,15 @@
 - **已知残留**：`examples/` 里仍有 4 个产物过不了 `rustfmt --check`（`Generics` / `MapDemo` / `SharedState` / `VecImport`），原因是单行超 100 列需拆行、`use` 顺序需重排 —— 属于「生成器不做行长优化」的既有缺口，未在本轮处理。
 - **L2 的边界**（写进 SPEC §15）：外部 crate 的**函数签名** jrust 无法得知（没有源码可分析），因此实际调用走 `raw` 原样内联；jrust 负责工程结构（`package`→`mod`、`import`→`use`、`Cargo.toml` 依赖校验）与本地类之间的借用推断。
 - 验证：L1 **116 通过 0 失败**（新增 2 条），`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过；`jrust verify tests/l2/src` 通过。
+
+## v1.17 — 2026-11-26
+
+- **修复 `jrust verify <目录>` 的五处缺陷**（全部为真实工程/CI 环境才会暴露，v1.16 的用例一条都没踩到）：
+  1. **cargo 没禁色导致错误映射整体失效**：`CARGO_TERM_COLOR=always` 时 `--> ` 带 ANSI 前缀，`scan_rustc_errors_multi` 全失配，所有报错退化为「未能定位到 .jrust 行」。修法：cargo 加 `--color never`，并让 `scan_rustc_errors` / `scan_rustc_errors_multi` 统一先过 `strip_ansi`。
+  2. **manifest 从「抄原文件 + 剥 target 段」改为白名单重建**：只保留 `[package]` 的 name/version/edition 与依赖段，`[workspace]` / target 段 / features / profile 一律丢弃。修掉 `build = "build.rs"`、`default-run`、`[workspace]` + members、crate 内 `path` 依赖四类「必然失败且报错像用户代码」的问题；后两类改为明确诊断（`build` 与 `path` 直接拒绝，`workspace` 继承的 version/edition 回落默认值后可用）。
+  3. **复用原 `Cargo.lock`**：此前临时目录会重新解析 `serde_json = "1"`，可能与用户实际编译版本不同，「与用户手工验收同一条路径」不成立。
+  4. **`--offline` 失败自动在线重试一次**：依赖不在本地缓存时给出提示并重试，不再只抛 cargo 原文。
+  5. **错误行号改报源码侧路径**：`错误: …/main.jrust:4`（此前报 `…/main.rs:4`，与 `.jrust` 行号混在一起）。
+- **补齐 `verify_tree` 的验收**（此前该入口零覆盖，正是 v1.16「验收标准存在 ≠ 被执行」的同款问题）：新增 `run_verify_tree`（正向）/ `run_verify_tree_bad`（raw 内 E0599，断言映射回 `main.jrust:<行>`，并注入 `CARGO_TERM_COLOR=always` 复现 Agent/CI 环境）/ `run_verify_tree_manifest`（build 脚本必须给明确诊断）。做过变异验证：放开颜色控制后 `run_verify_tree_bad` 变红。
+- 文档：`usage` / README 补目录模式与边界；SPEC §15 L1 计数表述修正、L2 行补 verify 边界；JR-G5 同步。
+- 验证：L1 **119 通过 0 失败**（新增 3 条），`verify.sh` 全绿；六个手工场景（raw 报错 / build.rs / workspace / path 依赖 / default-run / `tests/l2/src`）逐个复测符合预期。

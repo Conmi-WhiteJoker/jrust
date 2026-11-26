@@ -51,6 +51,9 @@ cargo build
 # 转译 + rustc 编译校验，rustc 报错映射回 .jrust 行（不带参数时跑一致性套件）
 ./target/debug/jrust verify examples/HelloWorld.jrust
 
+# 多文件工程：按整 crate 走 cargo build（依赖以最近的 Cargo.toml 为准，有 Cargo.lock 就复用）
+./target/debug/jrust verify tests/l2/src
+
 # 格式化 .jrust（4 空格缩进，raw 块原样保留）
 ./target/debug/jrust fmt examples/HelloWorld.jrust
 
@@ -273,7 +276,8 @@ examples/       13 个示例（各含 .jrust 源码 + 生成的 .rs）：
                 HelloWorld、ClassInterface、PolymorphicList、Ownership、MoveEdges、
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain
-tests/          一致性用例（move 边界、解释/编译对拍、L1 语法）+ verify 脚本
+tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate）+ verify 脚本
+tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 verify/         一个空 crate，只用来编译生成的 .rs（src/bin/ 由 verify.sh 填充）
 ```

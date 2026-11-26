@@ -531,6 +531,77 @@ run_l2_missing_dep() {
     fi
 }
 
+# L2 续：`jrust verify <目录>` 自身的验收（此前这一入口零覆盖，五个坑都是靠手工试出来的）。
+# 三条：① 正向通过；② 编译错误能映射回 .jrust 行；③ 搬不走的 manifest 给明确诊断。
+# ②③ 显式注入 CARGO_TERM_COLOR=always —— 复现 Agent/CI 环境，颜色一旦漏禁，
+# 映射会静默退化成「未能定位到 .jrust 行」。
+run_verify_tree() {
+    local work="$TMP/vtree"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    rm -rf "$work/target" "$work/src/app.rs" "$work/src/main.rs"
+    if ! CARGO_TERM_COLOR=always $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree：目录校验本应通过"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS vtree"
+    pass=$((pass + 1))
+}
+
+run_verify_tree_bad() {
+    local work="$TMP/vtree_bad"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    rm -rf "$work/target" "$work/src/app.rs" "$work/src/main.rs"
+    # 把 raws 里的调用改成 String 上不存在的方法 → rustc E0599 落在 raw 块内。
+    sed -i 's/v\["port"\].as_i64()/name.as_i64()/' "$work/src/main.jrust"
+    if CARGO_TERM_COLOR=always $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_bad：本应报错却成功了"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if grep -q '未能定位' "$TMP/out"; then
+        echo "FAIL vtree_bad：错误没有映射回 .jrust 行（cargo 颜色没禁用？）"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -qE 'main\.jrust:[0-9]+ - rustc error\[E[0-9]+\]' "$TMP/out"; then
+        echo "FAIL vtree_bad：缺少映射到 main.jrust 的错误行"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS vtree_bad"
+    pass=$((pass + 1))
+}
+
+run_verify_tree_manifest() {
+    local work="$TMP/vtree_manifest"
+    rm -rf "$work"
+    cp -r tests/l2 "$work"
+    rm -rf "$work/target" "$work/src/app.rs" "$work/src/main.rs"
+    # build 脚本没法搬进临时目录：必须给出明确诊断，而不是 cargo 的 "couldn't read build.rs"。
+    sed -i 's/^edition = "2021"$/edition = "2021"\nbuild = "build.rs"/' "$work/Cargo.toml"
+    if $JRUST verify "$work/src" >"$TMP/out" 2>&1; then
+        echo "FAIL vtree_manifest：本应报错却成功了"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'build 脚本' "$TMP/out" || grep -q '未能定位' "$TMP/out"; then
+        echo "FAIL vtree_manifest：缺少关于 build 脚本的明确诊断"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS vtree_manifest"
+    pass=$((pass + 1))
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -661,6 +732,10 @@ run_spawn_capture
 # SPEC §15 L2：多文件 + 外部 crate，cargo 编译 + 与手写实现行为对拍。
 run_l2
 run_l2_missing_dep
+# `jrust verify <目录>` 自身：正向 / 错误映射 / manifest 诊断。
+run_verify_tree
+run_verify_tree_bad
+run_verify_tree_manifest
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

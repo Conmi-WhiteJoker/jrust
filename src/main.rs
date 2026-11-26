@@ -158,7 +158,7 @@ fn print_usage() {
   jrust check <文件.jrust> [更多文件...]   只做词法/语法/代码生成检查，不写文件
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
-  jrust verify [文件.jrust...]             转译 + rustc 编译校验；不带参数时跑一致性套件
+  jrust verify [文件.jrust 或 目录...]     转译 + rustc/cargo 编译校验；不带参数时跑一致性套件
   jrust fmt <文件或目录>                   格式化 .jrust（统一 4 空格缩进，raw 块原样保留）
   jrust dap                                以 DAP 适配器方式运行（供 IDE 连接）
 
@@ -166,6 +166,8 @@ fn print_usage() {
   - 输入 Java 风格的 .jrust 源码，输出同名的 .rs 文件（与输入同目录）
   - 生成的 .rs 交给 rustc / cargo 编译；产物保持可读，并带 // jrust:L<行号> 源映射
   - `run` / `debug` 使用内置树遍历解释器，断点与变量都作用在 .jrust 源码行上
+  - `verify <目录>` 会按最近的 Cargo.toml 重建最小 manifest 后整 crate 编译；
+    不支持 build 脚本 / 本地 path 依赖 / workspace 依赖继承（会直接给出诊断）
   - 遇到 jrust 砍掉的 Java 特性时，会解释 Rust 为什么这么要求",
         env!("CARGO_PKG_VERSION")
     );
@@ -251,24 +253,145 @@ fn find_manifest(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// 去掉 `Cargo.toml` 里的 target 段（`[[bin]]` / `[lib]` / `[[test]]` / `[[bench]]` /
-/// `[[example]]`），只留包信息与依赖。`jrust verify <目录>` 把产物放进临时目录时用它，
-/// 否则原工程里指向 `src/xxx.rs` 的 target 会让 cargo 报「can't find bin」。
-fn strip_target_sections(text: &str) -> String {
-    let mut out = String::new();
-    let mut skipping = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if t.starts_with('[') && t.ends_with(']') {
-            let name = t.trim_matches(|c| c == '[' || c == ']').trim();
-            skipping = matches!(name, "bin" | "lib" | "test" | "bench" | "example");
+/// 去掉 ANSI 转义序列（`CARGO_TERM_COLOR=always` 时 cargo/rustc 的输出会带颜色）。
+///
+/// 子进程已经统一加 `--color never`，这里再兜一层：只要解析的是子进程输出，
+/// 就不能假设它一定无色 —— 否则 `--> ` 前缀匹配会静默失配，错误全部退化成
+/// 「未能定位到 .jrust 行」。
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\x1b' {
+            // CSI：ESC '[' 参数… 终止符（@–~）
+            if it.next() == Some('[') {
+                for c2 in it.by_ref() {
+                    if ('@'..='~').contains(&c2) {
+                        break;
+                    }
+                }
+            }
+            continue;
         }
-        if !skipping {
-            out.push_str(line);
-            out.push('\n');
-        }
+        out.push(c);
     }
     out
+}
+
+/// 为 `jrust verify <目录>` 重建一份最小可用 manifest（白名单，不再「抄原文件再剥」）。
+///
+/// 黑名单式删改永远会漏项，而且漏项报的是 cargo 的原始错误 —— 看上去像用户代码写错：
+/// `build = "build.rs"`（临时目录没这个文件）、`[package] default-run`（引用的 bin 已被剥掉）、
+/// `[workspace]` + members、crate 内 `path` 依赖（相对路径在临时目录下不存在）。
+/// 因此这里只保留 `[package]` 的 name/version/edition 与依赖段，其余（含 `[workspace]`、
+/// target 段、features、profile）全部丢弃；确实搬不走的情况给出明确诊断。
+fn build_verify_manifest(text: &str, root_out: &Path) -> Result<String, String> {
+    // 按 section 切块：块名 + 原始行。
+    let mut blocks: Vec<(String, Vec<String>)> = vec![(String::new(), Vec::new())];
+    for raw in text.lines() {
+        let t = raw.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            let name = t.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+            blocks.push((name, Vec::new()));
+        } else {
+            blocks.last_mut().unwrap().1.push(raw.to_string());
+        }
+    }
+
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut edition: Option<String> = None;
+    let mut dep_blocks: Vec<(String, Vec<String>)> = Vec::new();
+
+    for (section, lines) in &blocks {
+        match section.as_str() {
+            "package" => {
+                for l in lines {
+                    let t = l.trim();
+                    if t.is_empty() || t.starts_with('#') {
+                        continue;
+                    }
+                    let (k, v) = match t.split_once('=') {
+                        Some(kv) => kv,
+                        None => continue,
+                    };
+                    let (key, val) = (k.trim(), v.trim());
+                    if key == "build" {
+                        return Err(format!(
+                            "工程使用了 build 脚本（build = {}）；verify 会把产物放进临时目录，搬不走它，请改用 `jrust build` + cargo build",
+                            val
+                        ));
+                    }
+                    // 其余 package 字段（authors / description / default-run / readme…）与编译无关。
+                    if !matches!(key, "name" | "version" | "edition") {
+                        continue;
+                    }
+                    // 形如 { workspace = true } 的继承值在临时目录里解析不到，回落到默认值。
+                    let inherited = val.starts_with('{');
+                    match key {
+                        "name" if inherited => {
+                            return Err("Cargo.toml 的 package.name 来自 workspace 继承，verify 无法独立重建".into())
+                        }
+                        "name" => name = Some(val.to_string()),
+                        "version" => version = Some(if inherited { "0.0.0".into() } else { val.to_string() }),
+                        _ => edition = Some(if inherited { "2021".into() } else { val.to_string() }),
+                    }
+                }
+            }
+            // 依赖段：`[dependencies]` 与 `[target.'cfg(..)'.dependencies]` 保留，
+            // `[dev-dependencies]` / `[build-dependencies]` 与编译 bin 无关，丢弃。
+            s if s.ends_with("dependencies")
+                && !s.starts_with("dev-")
+                && !s.starts_with("build-") =>
+            {
+                for l in lines {
+                    let t = l.trim();
+                    if t.is_empty() || t.starts_with('#') {
+                        continue;
+                    }
+                    if t.contains("workspace = true") || t.contains("workspace=true") {
+                        return Err(format!(
+                            "依赖 `{}` 使用 workspace 继承，verify 的临时工程里没有 workspace 根",
+                            t.split('=').next().unwrap_or(t).trim()
+                        ));
+                    }
+                    // 只看第一个 `=` 之后的部分（`mylib = { path = "..." }` 里 path 在内联表里）。
+                    let value = t.split_once('=').map(|(_, v)| v).unwrap_or("");
+                    if value.contains("path =") || value.contains("path=") {
+                        return Err(format!(
+                            "依赖 `{}` 是本地 path 依赖，临时目录里解析不到它（路径相对用户工程）",
+                            t.split('=').next().unwrap_or(t).trim()
+                        ));
+                    }
+                }
+                dep_blocks.push((section.clone(), lines.clone()));
+            }
+            // `[workspace]` 及一切其它段：丢弃 —— 临时工程是独立 crate，不是 workspace 成员。
+            _ => {}
+        }
+    }
+
+    let name = name.unwrap_or_else(|| "jrust-verify".to_string());
+    let mut out = format!(
+        "[package]\nname = {}\nversion = {}\nedition = {}\n",
+        name,
+        version.unwrap_or_else(|| "0.0.0".into()),
+        edition.unwrap_or_else(|| "2021".into())
+    );
+    for (section, lines) in &dep_blocks {
+        out.push_str(&format!("\n[{}]\n", section));
+        for l in lines {
+            if !l.trim().is_empty() {
+                out.push_str(l.trim_end());
+                out.push('\n');
+            }
+        }
+    }
+    out.push_str(&format!(
+        "\n[[bin]]\nname = \"jrust-verify-tree\"\npath = \"{}\"\n",
+        root_out.to_string_lossy().replace('\\', "/")
+    ));
+    Ok(out)
 }
 
 /// 读取 `Cargo.toml` 里声明的依赖名（`-` 归一成 `_`，与 Rust crate 名一致）。
@@ -1007,7 +1130,7 @@ fn scan_rustc_errors(stderr: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut pending: Option<String> = None;
     for raw in stderr.lines() {
-        let line = raw.trim();
+        let line = strip_ansi(raw.trim());
         if let Some(pos) = line.strip_prefix("--> ") {
             let mut parts = pos.rsplitn(3, ':');
             let _col = parts.next();
@@ -1117,8 +1240,9 @@ fn verify_one(path: &Path) -> bool {
 ///
 /// 单文件模式用 `--crate-type lib --emit=metadata` 就能查，多文件工程不行：
 /// ① `mod` 树要求文件按真实路径排布，② 外部 crate（`serde_json` 等）要求依赖可解析。
-/// 因此这里把 `plan_tree` 的产物写进临时目录，抄一份最近的 `Cargo.toml`（依赖是
-/// 唯一事实来源，JR-M4），再用 `cargo build` 编整个 crate —— 与用户手工验收同一条路径。
+/// 因此这里把 `plan_tree` 的产物写进临时目录，按原 `Cargo.toml` 重建一份最小 manifest
+/// （依赖是唯一事实来源，JR-M4；有 `Cargo.lock` 就一起复用），再用 `cargo build` 编整个
+/// crate —— 与用户手工验收同一条路径。
 fn verify_tree(dir: &Path) -> bool {
     let plan = match plan_tree(dir) {
         Some(p) => p,
@@ -1164,24 +1288,40 @@ fn verify_tree(dir: &Path) -> bool {
         }
     }
     let manifest_text = std::fs::read_to_string(&manifest).unwrap_or_default();
-    // 只保留依赖与包信息：原 manifest 里的 `[[bin]]` / `[lib]` / `[[test]]` 等 target 段
-    // 指向的是用户工程里的路径，抄进临时目录会变成「找不到 bin」；crate 根由下面这条 `[[bin]]` 指定。
-    let bin_manifest = format!(
-        "{}\n[[bin]]\nname = \"jrust-verify-tree\"\npath = \"{}\"\n",
-        strip_target_sections(&manifest_text).trim_end(),
-        plan.root_out.to_string_lossy().replace('\\', "/")
-    );
+    // 白名单重建：只保留 package 元信息与依赖段（见 build_verify_manifest 的说明）。
+    let bin_manifest = match build_verify_manifest(&manifest_text, &plan.root_out) {
+        Ok(m) => m,
+        Err(msg) => {
+            eprintln!("{}/Cargo.toml: {}", manifest.parent().unwrap_or(&manifest).display(), msg);
+            cleanup();
+            return false;
+        }
+    };
     if let Err(e) = std::fs::write(work.join("Cargo.toml"), bin_manifest) {
         eprintln!("无法写入临时 Cargo.toml: {}", e);
         cleanup();
         return false;
     }
+    // 依赖解析要和用户一致：有 lockfile 就一起带过去，否则 `serde_json = "1"` 之类
+    // 会在临时目录里重新解析，可能与用户实际编译的版本不同。
+    if let Some(lock) = manifest.parent().map(|p| p.join("Cargo.lock")) {
+        if lock.is_file() {
+            let _ = std::fs::copy(&lock, work.join("Cargo.lock"));
+        }
+    }
 
-    let out = std::process::Command::new("cargo")
-        .args(["build", "--quiet", "--offline"])
-        .current_dir(&work)
-        .output();
-    let out = match out {
+    let run_cargo = |offline: bool| {
+        let mut cmd = std::process::Command::new("cargo");
+        // `--color never` 必须有：`CARGO_TERM_COLOR=always` 时 `--> ` 会带 ANSI 前缀，
+        // 下面的 scan_rustc_errors_multi 会全部失配，错误退化成「未能定位」。
+        cmd.args(["build", "--quiet", "--color", "never"])
+            .current_dir(&work);
+        if offline {
+            cmd.arg("--offline");
+        }
+        cmd.output()
+    };
+    let mut out = match run_cargo(true) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("无法运行 cargo（{}）；请确认 cargo 在 PATH 里", e);
@@ -1189,6 +1329,21 @@ fn verify_tree(dir: &Path) -> bool {
             return false;
         }
     };
+    // 依赖不在本地缓存时 `--offline` 会失败；这类失败与用户代码无关，自动在线重试一次。
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        if stderr.contains("--offline") || stderr.contains("no matching package") {
+            eprintln!("提示: 依赖不在本地 cargo 缓存里，已去掉 --offline 重试一次");
+            match run_cargo(false) {
+                Ok(o) => out = o,
+                Err(e) => {
+                    eprintln!("无法运行 cargo（{}）；请确认 cargo 在 PATH 里", e);
+                    cleanup();
+                    return false;
+                }
+            }
+        }
+    }
     if out.status.success() {
         println!("验证通过 {}", dir.display());
         cleanup();
@@ -1208,7 +1363,9 @@ fn verify_tree(dir: &Path) -> bool {
             .cloned()
             .unwrap_or_default();
         let (jline, off) = map_to_jrust(&code, gen_line);
-        eprintln!("错误: {}/{}:{} - rustc {}", dir.display(), rel, jline, msg);
+        // 生成文件与原 .jrust 同名同目录（`main.rs` ↔ `main.jrust`），报源码侧路径更好读。
+        let jpath = dir.join(rel).with_extension("jrust");
+        eprintln!("错误: {}:{} - rustc {}", jpath.display(), jline, msg);
         if off > 0 {
             eprintln!(
                 "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
@@ -1236,7 +1393,7 @@ fn scan_rustc_errors_multi(stderr: &str) -> Vec<(String, usize, String)> {
     let mut out = Vec::new();
     let mut pending: Option<String> = None;
     for raw in stderr.lines() {
-        let line = raw.trim();
+        let line = strip_ansi(raw.trim());
         if let Some(pos) = line.strip_prefix("--> ") {
             let mut parts = pos.rsplitn(3, ':');
             let _col = parts.next();
