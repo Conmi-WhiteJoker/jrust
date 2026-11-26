@@ -65,6 +65,19 @@ fn main() -> ExitCode {
             }
             exit_code(all_ok)
         }
+        "verify" => {
+            if args.len() < 3 {
+                exit_code(verify_suite())
+            } else {
+                let mut all_ok = true;
+                for f in &args[2..] {
+                    if !verify_one(Path::new(f)) {
+                        all_ok = false;
+                    }
+                }
+                exit_code(all_ok)
+            }
+        }
         "debug" => {
             if args.len() < 3 {
                 print_usage();
@@ -115,6 +128,7 @@ fn print_usage() {
   jrust check <文件.jrust> [更多文件...]   只做词法/语法/代码生成检查，不写文件
   jrust run <文件.jrust>                   直接解释执行（不经过 rustc）
   jrust debug <文件.jrust>                 命令行调试（断点按 .jrust 行号）
+  jrust verify [文件.jrust...]             转译 + rustc 编译校验；不带参数时跑一致性套件
   jrust dap                                以 DAP 适配器方式运行（供 IDE 连接）
 
 说明:
@@ -693,6 +707,162 @@ fn check_one(path: &Path) -> bool {
             false
         }
     }
+}
+
+/// 生成的 Rust 行号 → (.jrust 行号, 相对偏移)：取最近的 `// jrust:L<n>` 标记。
+fn map_to_jrust(gen: &str, gen_line: usize) -> (usize, usize) {
+    let mut jline = 0usize;
+    let mut marker_line = 0usize;
+    for (i, l) in gen.lines().enumerate() {
+        let no = i + 1;
+        if no > gen_line {
+            break;
+        }
+        if let Some(rest) = l.trim().strip_prefix("// jrust:L") {
+            if let Ok(n) = rest.trim().parse::<usize>() {
+                jline = n;
+                marker_line = no;
+            }
+        }
+    }
+    (jline, gen_line.saturating_sub(marker_line))
+}
+
+/// 提取 rustc 的 `error[..]` 消息及其后 `--> path:line:col` 的生成代码行号。
+fn scan_rustc_errors(stderr: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut pending: Option<String> = None;
+    for raw in stderr.lines() {
+        let line = raw.trim();
+        if let Some(pos) = line.strip_prefix("--> ") {
+            let mut parts = pos.rsplitn(3, ':');
+            let _col = parts.next();
+            let gen_line = parts.next().and_then(|s| s.trim().parse::<usize>().ok());
+            if let (Some(gen_line), Some(msg)) = (gen_line, pending.take()) {
+                out.push((gen_line, msg));
+            }
+        } else if line.starts_with("error[") || line.starts_with("error:") {
+            pending = Some(line.to_string());
+        }
+    }
+    out
+}
+
+/// `jrust verify <文件>`：转译后交给 rustc 编译（lib 模式，不要求 main），
+/// 再把 rustc 的报错映射回 `.jrust` 行（JR-C14 / JR-X2）。
+fn verify_one(path: &Path) -> bool {
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("无法读取 {}: {}", path.display(), e);
+            return false;
+        }
+    };
+    let prog = match parser::parse_file(&src) {
+        Ok(p) => p,
+        Err(diags) => {
+            print_diags(path, &diags);
+            return false;
+        }
+    };
+    let code = match codegen::generate(&prog, &path.display().to_string()) {
+        Ok(c) => c,
+        Err(diags) => {
+            print_diags(path, &diags);
+            return false;
+        }
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = std::env::temp_dir().join(format!("jrust-verify-{}-{}", std::process::id(), stamp));
+    let rs = base.with_extension("rs");
+    if let Err(e) = std::fs::write(&rs, &code) {
+        eprintln!("无法写入 {}: {}", rs.display(), e);
+        return false;
+    }
+    let out = std::process::Command::new("rustc")
+        .args([
+            "--edition",
+            "2021",
+            "-A",
+            "warnings",
+            "--crate-type",
+            "lib",
+            "--emit=metadata",
+            "-o",
+        ])
+        .arg(&base)
+        .arg(&rs)
+        .output();
+    let _ = std::fs::remove_file(&rs);
+    let _ = std::fs::remove_file(base.with_extension("rmeta"));
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("无法运行 rustc（{}）；请确认 rustc 在 PATH 里", e);
+            return false;
+        }
+    };
+    if out.status.success() {
+        println!("验证通过 {}", path.display());
+        return true;
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let errors = scan_rustc_errors(&stderr);
+    let mut reported = 0;
+    for (gen_line, rest) in errors {
+        let (jline, off) = map_to_jrust(&code, gen_line);
+        eprintln!("错误: {}:{} - rustc {}", path.display(), jline, rest);
+        if off > 0 {
+            eprintln!(
+                "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
+                gen_line,
+                jline + off,
+                off
+            );
+        }
+        if rest.contains("E0277") {
+            eprintln!(
+                "  提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
+            );
+        }
+        reported += 1;
+    }
+    if reported == 0 {
+        eprintln!("rustc 编译失败（未能定位到 .jrust 行）：\n{}", stderr);
+    }
+    false
+}
+
+/// `jrust verify`（无参数）：跑仓库里的一致性套件（JR-G5）。
+fn verify_suite() -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let scripts = [
+        "tests/l1_cases.sh",
+        "tests/move_cases.sh",
+        "tests/interp_parity.sh",
+    ];
+    let mut ok = true;
+    for s in scripts {
+        let p = root.join(s);
+        if !p.is_file() {
+            eprintln!("找不到一致性套件脚本 {}", p.display());
+            ok = false;
+            continue;
+        }
+        println!("== 运行 {} ==", s);
+        match std::process::Command::new("bash").arg(&p).status() {
+            Ok(st) if st.success() => {}
+            Ok(_) => ok = false,
+            Err(e) => {
+                eprintln!("无法运行 {}: {}", p.display(), e);
+                ok = false;
+            }
+        }
+    }
+    ok
 }
 
 fn load_program(path: &Path) -> Option<(String, ast::Program)> {

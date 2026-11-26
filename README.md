@@ -48,6 +48,9 @@ cargo build
 # 解释执行 vs 编译执行 输出对拍
 ./tests/interp_parity.sh
 
+# 转译 + rustc 编译校验，rustc 报错映射回 .jrust 行（不带参数时跑一致性套件）
+./target/debug/jrust verify examples/HelloWorld.jrust
+
 # move 的非法边界用例（每种都应报错并给出提示）
 ./tests/move_cases.sh
 ```

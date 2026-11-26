@@ -214,6 +214,31 @@ run_deps() {
     fi
 }
 
+# JR-C14 / JR-X2：verify 交给 rustc 编译，并把报错映射回 .jrust 行（raw 块内附原文行号）。
+run_verify() {
+    local base=$1
+    local expect=$2
+    local pattern=${3:-}
+    if $JRUST verify "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+        if [ "$expect" = ok ]; then
+            echo "PASS verify:$base"
+            pass=$((pass + 1))
+        else
+            echo "FAIL verify:$base：本应报错却通过了"
+            fail=$((fail + 1))
+        fi
+    else
+        if [ "$expect" = fail ] && grep -q 'error\[E0277\]' "$TMP/out" && grep -q -- "$pattern" "$TMP/out"; then
+            echo "PASS verify:$base"
+            pass=$((pass + 1))
+        else
+            echo "FAIL verify:$base：缺少 E0277 / $pattern"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+        fi
+    fi
+}
+
 run_ok ok_throws
 run_ok ok_enum_switch
 run_ok ok_bool_switch
@@ -276,6 +301,8 @@ run_multifile_neg
 run_deps tests/deps_bad/bad.jrust fail 'serde_json'
 run_deps tests/deps_ok/ok.jrust ok
 run_deps tests/deps_async/src/main.jrust fail 'tokio'
+run_verify verify_ok ok
+run_verify verify_raw_error fail 'raw 块内'
 
 echo "L1 用例：$pass 通过，$fail 失败"
 [ "$fail" -eq 0 ]

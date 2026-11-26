@@ -1,0 +1,8 @@
+public class RawBad {
+    raw {
+        fn needs_send<T: Send>(_v: T) {}
+        fn bad() {
+            needs_send(std::rc::Rc::new(1));
+        }
+    }
+}
