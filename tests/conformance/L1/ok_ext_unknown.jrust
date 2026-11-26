@@ -1,0 +1,8 @@
+public class Main {
+    public static void main(String[] args) {
+        Writer w = new Writer();
+        String text = "hello";
+        w.write(text);
+        System.out.println(w.size());
+    }
+}

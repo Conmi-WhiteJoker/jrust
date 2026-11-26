@@ -304,6 +304,25 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
     (sigs, diags)
 }
 
+/// 多文件（Stage C）：把工程内所有 `Program` 合成一份视图，做**一次**全局分析。
+///
+/// 诊断仍由各文件单独 `analyze`（行号才能归属到正确的 `.jrust`），这里只取签名表；
+/// 跨文件调用因此能看到对方方法的接收者、形参三态与返回来源。
+/// 已知限制：签名表以「类型名 + 方法名」为键，不同 package 下同名类会互相覆盖。
+pub fn analyze_all<'p, I>(programs: I) -> Sigs
+where
+    I: IntoIterator<Item = &'p Program>,
+{
+    let mut merged = Program::default();
+    for p in programs {
+        merged.interfaces.extend(p.interfaces.iter().cloned());
+        merged.classes.extend(p.classes.iter().cloned());
+        merged.enums.extend(p.enums.iter().cloned());
+    }
+    let (sigs, _diags) = analyze(&merged);
+    sigs
+}
+
 /// 返回值来源推断（B2 / §13.2.2）。
 ///
 /// 借用只可能来自 `&self` 与借用形参，因此不需要完整区域推断：对每个 `return`

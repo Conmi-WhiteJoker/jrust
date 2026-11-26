@@ -3,5 +3,8 @@ import app.greet.Greeter;
 public class Main {
     public static void main(String[] args) {
         System.out.println(Greeter.hi("jrust"));
+        Greeter g = Greeter.create();
+        String who = "world";
+        System.out.println(g.greet(who));
     }
 }

@@ -66,3 +66,11 @@
 - **JR3011**（新增）：来源不可统一时报错并降级 owned —— `&mut` 形参作来源、多个来源类型不一致、来源形参已被按值使用。`neg_borrow_field` 覆盖「借 `&mut` 形参的字段」。
 - **回归修正**：`return p` 不再直接判成 owned（改由来源推断决定）；借用返回方法体内的 `return` 不再被落地转换误加 `.to_string()`；借用返回落到 owned 上下文时的转换从「String 专用」推广到 `to_string` / `to_vec` / `clone`。
 - L1 84 通过 0 失败（新增 `ok_pick_lifetime`、`neg_borrow_field` 与三条产物形态断言）；`verify.sh`、move 12 例、解释一致全部通过。
+
+## v1.7 — 2026-11-26
+
+- **JR-O6**（多文件全局签名，✅）：`build_tree` 先收集全部 `Program`，用 `analysis::analyze_all` 合成一份视图做**一次**全局分析，再把 `Sigs` 通过 `codegen::generate_multi_with_sigs` 注入每个文件的生成；诊断仍按文件单独跑，保证行号归属正确。跨文件调用因此能拿到接收者、形参三态与返回来源，不再退化为 owned。
+- **JR-O6 / JR4101**（新增，warning 级）：接收者类型已知但本工程里没有源码（外部 crate）时，签名无法判定 → 实参默认按只读借用 `&T` 生成，并输出 `warning[JR4101]`（不阻断构建），提示用 `@ref`/`@mut` 覆盖。`diag::Diag` 新增 `Level::Warning` 与 `warning_code`，渲染为 `警告: path:line - warning[码]: 消息`。
+- **JR-O10**（跨文件无类型信息）：形参三态已知但形参类型不可见时按模式生成实参（`Ref` → `&x`，字面量 / 借用值原样；`MutRef` → `&mut x`）；`generate` 系列返回 `Generated { code, warnings }`，warning 与 error 分流。
+- 顺带修正：多文件模式零参静态调用的产物缺 `()`（`Greeter.create` → `Greeter::create()`）。
+- 用例：`tests/multifile` 增加跨文件借用方法 `Greeter.greet(String)`（生成 `pub fn greet(&self, name: &str) -> String`，调用点 `g.greet(&who)`）；L1 新增 `ok_ext_unknown`（`run_warn` 断言 `warning[JR4101]` 与 `w.write(&text)`）。L1 85 通过 0 失败，`verify.sh` / move 12 例 / 解释一致 / `jrust verify` 全通过。

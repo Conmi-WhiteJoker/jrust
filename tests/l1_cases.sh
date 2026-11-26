@@ -102,6 +102,31 @@ run_build_has() {
     fi
 }
 
+# warning 级诊断：转译成功（退出 0），但会提示未知签名（JR4101），实参按只读借用生成。
+run_warn() {
+    local base=$1
+    local pattern=$2
+    if ! $JRUST build "$DIR/$base.jrust" >"$TMP/out" 2>&1; then
+        echo "FAIL $base：转译失败"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'warning\[JR4101\]' "$TMP/out" || ! grep -q '@mut' "$TMP/out"; then
+        echo "FAIL $base：缺少 warning[JR4101] 或 @mut 提示"
+        cat "$TMP/out"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q -- "$pattern" "$DIR/$base.rs"; then
+        echo "FAIL $base：产物里没有预期写法（$pattern）"
+        fail=$((fail + 1))
+        return
+    fi
+    echo "PASS $base"
+    pass=$((pass + 1))
+}
+
 # `jrust check`：只做检查、不写产物；ok 期望退出 0，fail 期望非 0。
 run_check() {
     local base=$1
@@ -153,6 +178,19 @@ run_multifile() {
         fail=$((fail + 1))
         return
     fi
+    # Stage C：跨文件方法的借用形参 / 调用点按 `&T` 传参。
+    if ! grep -q 'pub fn greet(&self, name: &str) -> String' "$work/app/greet.rs"; then
+        echo "FAIL multifile：跨文件方法没有生成借用形参"
+        grep -n 'fn greet' "$work/app/greet.rs"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! grep -q 'g.greet(&who)' "$work/main.rs"; then
+        echo "FAIL multifile：跨文件调用点没有按借用传参"
+        grep -n 'greet' "$work/main.rs"
+        fail=$((fail + 1))
+        return
+    fi
     if ! rustc --edition 2021 -A warnings "$work/main.rs" -o "$TMP/mf" 2>"$TMP/err"; then
         echo "FAIL multifile：生成的 Rust 编译失败"
         cat "$TMP/err"
@@ -160,7 +198,7 @@ run_multifile() {
         return
     fi
     "$TMP/mf" >"$TMP/out"
-    if [ "$(cat "$TMP/out")" = "Hello, jrust" ]; then
+    if [ "$(cat "$TMP/out")" = "$(printf 'Hello, jrust\nHi, world')" ]; then
         echo "PASS multifile"
         pass=$((pass + 1))
     else
@@ -331,6 +369,7 @@ run_build_has ok_getter_ref 'fn age(&self) -> i32'
 run_build_has ok_pick_lifetime "fn pick<'a>(&self, x: &'a str, y: &str) -> &'a str"
 run_build_has ok_pick_lifetime "fn choose<'a>(&self, x: &'a str, y: &'a str) -> &'a str"
 run_build_has ok_pick_lifetime 'fn tag(&self) -> &str'
+run_warn ok_ext_unknown 'w.write(&text)'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"

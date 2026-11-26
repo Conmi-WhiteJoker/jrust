@@ -1,7 +1,21 @@
 package app.greet;
 
 public class Greeter {
+    private String prefix;
+
+    public Greeter(String prefix) {
+        this.prefix = prefix;
+    }
+
+    public static Greeter create() {
+        return new Greeter("Hi");
+    }
+
     public static String hi(String name) {
         return "Hello, " + name;
+    }
+
+    public String greet(String name) {
+        return this.prefix + ", " + name;
     }
 }

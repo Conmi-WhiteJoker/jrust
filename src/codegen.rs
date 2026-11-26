@@ -9,52 +9,52 @@ use crate::analysis::{self, Origin, PMode, Recv, RetMode, Sigs};
 use crate::ast::*;
 use crate::diag::Diag;
 
-pub fn generate(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
+/// 生成结果：产物 + 不阻断构建的警告（如 `JR4101`）。
+pub struct Generated {
+    pub code: String,
+    pub warnings: Vec<Diag>,
+}
+
+pub fn generate(prog: &Program, src_name: &str) -> Result<Generated, Vec<Diag>> {
     generate_opts(prog, src_name, false)
 }
 
 /// 多文件模式（JR-S4/M3）：跨模块的 `import a.b.C;` 需要写成 `use crate::a::b::C;`。
-pub fn generate_multi(prog: &Program, src_name: &str) -> Result<String, Vec<Diag>> {
+pub fn generate_multi(prog: &Program, src_name: &str) -> Result<Generated, Vec<Diag>> {
     let mut roots = HashSet::new();
     if let Some(p) = &prog.package {
         if let Some(first) = p.split('.').next() {
             roots.insert(first.to_string());
         }
     }
-    generate_multi_with_modules(prog, src_name, &roots)
+    let sigs = borrow_sigs(prog)?;
+    generate_multi_with_sigs(prog, src_name, &roots, sigs)
 }
 
-/// 多文件模式 + 已知工程里所有顶层模块名：只有这些模块才加 `crate::` 前缀，
-/// 其余（如 `serde_json`）仍按外部 crate 处理（JR-M4）。
-pub fn generate_multi_with_modules(
+/// 多文件模式（Stage C）：`Sigs` 由调用方对**全工程**做一次分析后传入，
+/// 这样跨文件调用也能拿到对方方法的形参三态与返回来源。
+/// `local_roots` 是工程里的顶层模块名：只有命中的 import 才加 `crate::`，其余按外部 crate（JR-M4）。
+pub fn generate_multi_with_sigs(
     prog: &Program,
     src_name: &str,
     local_roots: &HashSet<String>,
-) -> Result<String, Vec<Diag>> {
-    let sigs = borrow_sigs(prog)?;
+    sigs: Sigs,
+) -> Result<Generated, Vec<Diag>> {
     let mut g = Codegen::new(prog);
     g.multi_file = true;
     g.local_roots = local_roots.clone();
     g.sigs = sigs;
     g.run(src_name);
-    if g.diags.is_empty() {
-        Ok(g.out)
-    } else {
-        Err(g.diags)
-    }
+    g.into_result()
 }
 
-fn generate_opts(prog: &Program, src_name: &str, multi_file: bool) -> Result<String, Vec<Diag>> {
+fn generate_opts(prog: &Program, src_name: &str, multi_file: bool) -> Result<Generated, Vec<Diag>> {
     let sigs = borrow_sigs(prog)?;
     let mut g = Codegen::new(prog);
     g.multi_file = multi_file;
     g.sigs = sigs;
     g.run(src_name);
-    if g.diags.is_empty() {
-        Ok(g.out)
-    } else {
-        Err(g.diags)
-    }
+    g.into_result()
 }
 
 /// 先跑借用分析；硬错误（如 `JR4003`）直接阻断生成。
@@ -165,6 +165,8 @@ struct Codegen<'a> {
     local_roots: HashSet<String>,
     /// 借用推断结果：接收者 `&mut self` / 参数三态（JR-O4/O7）。
     sigs: Sigs,
+    /// warning 级诊断（如 `JR4101`）：只打印，不阻断生成。
+    warnings: Vec<Diag>,
 }
 
 impl<'a> Codegen<'a> {
@@ -256,6 +258,19 @@ impl<'a> Codegen<'a> {
             multi_file: false,
             local_roots: HashSet::new(),
             sigs: Sigs::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// 收尾：有 error 级诊断就失败，否则返回产物与 warning。
+    fn into_result(self) -> Result<Generated, Vec<Diag>> {
+        if self.diags.is_empty() {
+            Ok(Generated {
+                code: self.out,
+                warnings: self.warnings,
+            })
+        } else {
+            Err(self.diags)
         }
     }
 
@@ -300,6 +315,12 @@ impl<'a> Codegen<'a> {
         let line = self.cur_line;
         self.diags
             .push(Diag::error_code(line, code, msg).with_hint(hint));
+    }
+
+    fn warn_code(&mut self, code: &'static str, msg: impl Into<String>, hint: impl Into<String>) {
+        let line = self.cur_line;
+        self.warnings
+            .push(Diag::warning_code(line, code, msg).with_hint(hint));
     }
 
     /// `impl` 头部里的 trait 引用：接口**不要**包 `Box<dyn ...>`。
@@ -690,6 +711,37 @@ impl<'a> Codegen<'a> {
         }
         let s = self.gen_expr(a, env, None);
         format!("&mut {}", s)
+    }
+
+    /// `Ref` 实参（形参类型不可见）：变量 / 字段加 `&`；`&str` 字面量与借用值原样传。
+    fn gen_default_ref_arg(&mut self, a: &Expr, env: &mut Env) -> String {
+        let core = strip_parens_expr(a);
+        if matches!(core, Expr::Str(_)) || self.is_borrowed_value(a, env) {
+            return self.gen_expr(a, env, None);
+        }
+        format!("&{}", self.gen_expr(a, env, None))
+    }
+
+    /// 形参三态已知、但形参类型不可见（跨文件 / 外部 crate）：按模式生成实参。
+    fn gen_mode_arg_unknown(&mut self, a: &Expr, mode: PMode, env: &mut Env) -> String {
+        match mode {
+            PMode::Value => self.gen_expr(a, env, None),
+            PMode::Ref => self.gen_default_ref_arg(a, env),
+            PMode::MutRef => self.gen_mutref_arg(a, env),
+        }
+    }
+
+    /// 接收者是否「外部类型」：本文件既没有声明它，也不是内置映射类型（`JR4101` 的判定）。
+    fn is_external_recv_type(&self, t: Option<&Type>) -> bool {
+        let name = match t {
+            Some(Type::Named(n)) => n,
+            Some(Type::Generic(n, _)) => n,
+            _ => return false,
+        };
+        !self.classes.contains_key(name)
+            && !self.ifaces.contains(name)
+            && !self.enums.contains_key(name)
+            && !is_known_builtin_type(name)
     }
 
     /// 该类字段是否是 `@shared`（JR-C13）。
@@ -3000,7 +3052,7 @@ impl<'a> Codegen<'a> {
                         })
                         .collect();
                     if vals.is_empty() {
-                        return format!("{}::{}", cn, name);
+                        return format!("{}::{}()", cn, name);
                     }
                     return format!("{}::{}({})", cn, name, vals.join(", "));
                 }
@@ -3131,6 +3183,24 @@ impl<'a> Codegen<'a> {
         let param_types = self.call_param_types(recv, name, env);
         let sig = self.call_sig(recv, name, env);
 
+        // JR4101（D8）：接收者类型已知但本工程里没有它的源码（外部 crate）→ 签名无法判定。
+        // 实参按只读借用生成，并提示用 `@ref` / `@mut` 显式覆盖。
+        let unknown_external = sig.is_none() && self.is_external_recv_type(recv_ty.as_ref());
+        if unknown_external {
+            let tn = recv_ty
+                .as_ref()
+                .map(|t| self.rust_type(t))
+                .unwrap_or_else(|| "?".to_string());
+            self.warn_code(
+                "JR4101",
+                format!(
+                    "无法确定 `{}.{}` 的形参借用方式，实参按只读借用（`&T`）生成",
+                    tn, name
+                ),
+                "外部 crate 的类型没有源码签名：确认这些实参在 Rust 侧确实只需要 `&T`；需要可变借用时给对应形参标 `@mut`。",
+            );
+        }
+
         if is_list && name == "stream" {
             let r = self.gen_expr(recv.as_ref().unwrap(), env, None);
             // 值语义：`iter()` 产出 `&T`，`cloned()` 还原成 `T`；否则 `filter` 里是 `&&T`、
@@ -3165,7 +3235,14 @@ impl<'a> Codegen<'a> {
             match (pt, mode) {
                 (Some(pt), Some(mode)) => arg_strs.push(self.gen_mode_arg(a, mode, pt, env)),
                 (Some(pt), None) => arg_strs.push(self.gen_arg(a, pt, env)),
-                _ => arg_strs.push(self.gen_expr(a, env, None)),
+                (None, Some(mode)) => arg_strs.push(self.gen_mode_arg_unknown(a, mode, env)),
+                _ => {
+                    if unknown_external {
+                        arg_strs.push(self.gen_default_ref_arg(a, env));
+                    } else {
+                        arg_strs.push(self.gen_expr(a, env, None));
+                    }
+                }
             }
         }
 
@@ -3617,6 +3694,23 @@ fn type_cloneable(ty: &Type, named: &HashSet<String>, params: &HashSet<String>) 
 /// `java.io.IOException` → `IOException`
 fn simple_type_name(name: &str) -> String {
     name.rsplit('.').next().unwrap_or(name).to_string()
+}
+
+/// 内置映射类型（不是「外部 crate」）：它们的调用由 `gen_call` 特化处理，
+/// 不属于 `JR4101`（未知签名）的适用范围。
+fn is_known_builtin_type(name: &str) -> bool {
+    matches!(
+        name,
+        "String"
+            | "List"
+            | "ArrayList"
+            | "LinkedList"
+            | "Vector"
+            | "Map"
+            | "HashMap"
+            | "Set"
+            | "HashSet"
+    )
 }
 
 /// `throws` 里的常见异常名映射到标准库错误类型，用于生成 `impl From<...>`。

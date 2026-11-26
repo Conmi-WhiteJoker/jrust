@@ -409,9 +409,10 @@ fn build_one(path: &Path) -> bool {
         return false;
     }
     match codegen::generate(&prog, &path.display().to_string()) {
-        Ok(code) => {
+        Ok(gen) => {
+            print_warnings(path, &gen.warnings);
             let out = path.with_extension("rs");
-            if let Err(e) = std::fs::write(&out, code) {
+            if let Err(e) = std::fs::write(&out, gen.code) {
                 eprintln!("无法写入 {}: {}", out.display(), e);
                 return false;
             }
@@ -604,11 +605,33 @@ fn build_tree(dir: &Path) -> bool {
         return false;
     }
 
+    // Stage C：诊断按文件跑（行号归属清楚），签名表则对全工程做一次全局分析，
+    // 这样跨文件调用也能拿到对方方法的接收者 / 形参三态 / 返回来源。
+    for u in &units {
+        let (_sigs, diags) = analysis::analyze(&u.prog);
+        if !diags.is_empty() {
+            print_diags(Path::new(&u.src_name), &diags);
+            ok = false;
+        }
+    }
+    if !ok {
+        return false;
+    }
+    let global_sigs = analysis::analyze_all(units.iter().map(|u| &u.prog));
+
     let mut files_out: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut sources: BTreeMap<Vec<String>, PathBuf> = BTreeMap::new();
     for u in &units {
-        let code = match codegen::generate_multi_with_modules(&u.prog, &u.src_name, &local_roots) {
-            Ok(c) => c,
+        let code = match codegen::generate_multi_with_sigs(
+            &u.prog,
+            &u.src_name,
+            &local_roots,
+            global_sigs.clone(),
+        ) {
+            Ok(gen) => {
+                print_warnings(Path::new(&u.src_name), &gen.warnings);
+                gen.code
+            }
             Err(diags) => {
                 print_diags(Path::new(&u.src_name), &diags);
                 ok = false;
@@ -723,7 +746,8 @@ fn check_one(path: &Path) -> bool {
         return false;
     }
     match codegen::generate(&prog, &path.display().to_string()) {
-        Ok(_) => {
+        Ok(gen) => {
+            print_warnings(path, &gen.warnings);
             println!("检查通过 {}", path.display());
             true
         }
@@ -970,7 +994,10 @@ fn verify_one(path: &Path) -> bool {
         }
     };
     let code = match codegen::generate(&prog, &path.display().to_string()) {
-        Ok(c) => c,
+        Ok(gen) => {
+            print_warnings(path, &gen.warnings);
+            gen.code
+        }
         Err(diags) => {
             print_diags(path, &diags);
             return false;
@@ -1165,6 +1192,13 @@ fn dap_main() -> ExitCode {
 
 fn print_diags(path: &Path, diags: &[diag::Diag]) {
     for d in diags {
+        eprintln!("{}", d.render(&path.display().to_string()));
+    }
+}
+
+/// warning 级诊断只提示，不影响退出码。
+fn print_warnings(path: &Path, diags: &[diag::Diag]) {
+    for d in diags.iter().filter(|d| d.is_warning()) {
         eprintln!("{}", d.render(&path.display().to_string()));
     }
 }
