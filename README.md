@@ -118,6 +118,9 @@ stdout，要求逐字节一致——这是解释器没有跑偏的硬指标。
 | `interface Foo extends A, B` | `pub trait Foo: A + B` | 实现 `Foo` 的类会自动为 `A`、`B` 也生成 `impl`（祖先接口的 impl 一并补齐） | [L1 用例](tests/conformance/L1/ok_iface_extends.jrust) |
 | `implements Foo` | `impl Foo for Bar` | 方法自动分流到 trait impl / 固有 impl | [ClassInterface](examples/ClassInterface.jrust) |
 | 方法接收者（自动推断） | `&self` / `&mut self` | 方法体写非 `@shared` 字段 / 调集合可变方法（`add`、`put` 等）/ 调 `&mut self` 方法 → `&mut self`，否则 `&self`；接口与实现取并集；`@shared` 写字段走 `Arc` 锁不产生 `&mut self`；`return this` 报 `JR4003` | [L1 用例](tests/conformance/L1/ok_mut_receiver.jrust) |
+| 方法形参（自动推断） | `&T` / `&mut T` / `T` | 只读 → 借用；改字段 / 调 `&mut self` 方法 / 集合可变方法 → `&mut`；被 `move`、被返回、存进字段、交给 owned 形参、被 `spawn` 捕获 → owned。`String` 只读 → `&str`，`List` 只读 → `&[T]` / 可写 → `&mut Vec<T>`，`Map`/`Set` 同理，接口 → `&dyn I`；泛型参数与 Copy 标量恒按值；构造器形参仍按值 | [L1 用例](tests/conformance/L1/ok_borrow_param.jrust) |
+| 纯 getter `return this.f;` | `fn name(&self) -> &str` | 仅当 `f` 是非 `@shared` 的 `String` 字段；Copy 标量仍返回值；接口方法要所有实现都是纯 getter 才统一借出；调用点需要 owned 时自动 `.to_string()` | [L1 用例](tests/conformance/L1/ok_getter_ref.jrust) |
+| 调用点实参 | `&x` / `&mut x` / `x` | 按被调形参三态生成：owned 变量裸传（之后不能再用，否则 `JR4001`）、字段 `.clone()`、字面量 `.to_string()`；借用形参和 `&str` 字面量原样传；`&mut` 实参自动把变量补成 `let mut` | [L1 用例](tests/conformance/L1/ok_borrow_list.jrust) |
 | `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 | [ClassInterface](examples/ClassInterface.jrust) |
 | `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | | [RustTypes](examples/RustTypes.jrust) |
 | `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 | [RustTypes](examples/RustTypes.jrust) |

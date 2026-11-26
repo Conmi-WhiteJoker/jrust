@@ -1,0 +1,29 @@
+public class Lists {
+    public String first(List<String> xs) {
+        return xs.get(0);
+    }
+
+    public int size(List<String> xs) {
+        return xs.size();
+    }
+
+    public List<String> copyOf(List<String> xs) {
+        List<String> out = new ArrayList<>();
+        for (String x : xs) {
+            out.add(x);
+        }
+        return out;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Lists l = new Lists();
+        List<String> xs = new ArrayList<>();
+        xs.add("a");
+        xs.add("b");
+        println("{} {}", l.first(xs), l.size(xs));
+        List<String> ys = l.copyOf(xs);
+        println("{} {}", ys.size(), ys.get(1));
+    }
+}

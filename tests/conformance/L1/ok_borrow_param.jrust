@@ -1,0 +1,56 @@
+public class Counter {
+    private int n;
+
+    public Counter() {
+        this.n = 0;
+    }
+
+    public void inc() {
+        this.n = this.n + 1;
+    }
+
+    public int get() {
+        return this.n;
+    }
+}
+
+public class Util {
+    public void bump(List<Integer> xs) {
+        xs.add(1);
+    }
+
+    public int total(List<Integer> xs) {
+        int s = 0;
+        for (Integer x : xs) {
+            s = s + x;
+        }
+        return s;
+    }
+
+    public void twice(Counter c) {
+        c.inc();
+        c.inc();
+    }
+
+    public int read(Counter c) {
+        return c.get();
+    }
+
+    public String shout(String s) {
+        return s + "!";
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Util u = new Util();
+        List<Integer> xs = new ArrayList<>();
+        u.bump(xs);
+        xs.add(2);
+        println("total {}", u.total(xs));
+        Counter c = new Counter();
+        u.twice(c);
+        println("count {}", u.read(c));
+        println(u.shout("hi"));
+    }
+}

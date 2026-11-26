@@ -1,0 +1,20 @@
+public class Store {
+    private String v;
+
+    public Store(String v) {
+        this.v = v;
+    }
+
+    public void set(String v) {
+        this.v = v;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Store s = new Store("a");
+        String x = "b";
+        s.set(x);
+        println(x);
+    }
+}

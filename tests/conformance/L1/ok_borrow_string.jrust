@@ -1,0 +1,25 @@
+public class Named {
+    private String label;
+
+    public Named(String label) {
+        this.label = label;
+    }
+
+    public String name() {
+        return this.label;
+    }
+
+    public String greet(String who) {
+        return "hi " + who + ", " + this.label;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Named n = new Named("jrust");
+        println(n.name());
+        String s = n.name();
+        println(s);
+        println(n.greet("you"));
+    }
+}

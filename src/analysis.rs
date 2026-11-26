@@ -2,7 +2,8 @@
 //!
 //! 这一层只回答「方法签名怎么生成」，不参与解释执行：
 //! - 接收者两态：方法体是否真的改了 `this` 的状态 → `&mut self` / `&self`（O7）；
-//! - 参数三态 `Ref` / `MutRef` / `Value` 的骨架（本阶段统一 `Value`，B 阶段接入）；
+//! - 参数三态 `Ref` / `MutRef` / `Value`（O4/O5）；
+//! - 纯 getter 借出：`return this.f;` 且 `f` 是 `String` → 返回 `&str`（O9/T5）；
 //! - `return this` 在这里直接拦住，报 `JR4003`（builder 风格本版不做）。
 //!
 //! 分析结果进 `Sigs`，`codegen` 按 `(类型名, 方法名)` 查表渲染签名；
@@ -14,9 +15,6 @@ use crate::ast::*;
 use crate::diag::Diag;
 
 /// 参数三态。`join` 的偏序：`Ref < MutRef < Value`（owned 天然支持读写）。
-///
-/// B 阶段接入参数推断后 `Ref` / `MutRef` 才会真正被构造，当前先留好骨架。
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PMode {
     Ref,
@@ -24,7 +22,6 @@ pub enum PMode {
     Value,
 }
 
-#[allow(dead_code)]
 impl PMode {
     /// 合并两处用法：任何一处需要所有权就是 `Value`，否则取更强的借用。
     pub fn join(self, other: PMode) -> PMode {
@@ -49,20 +46,28 @@ pub enum Recv {
     Mut,
 }
 
+/// 返回值形态：owned，或「借出 `this` 的 String 字段」（→ `-> &str`，O9/T5）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RetMode {
+    Owned,
+    SelfStrRef,
+}
+
 /// 一个方法的签名推断结果。
 #[derive(Clone, Debug)]
 pub struct Sig {
     pub recv: Recv,
-    /// B 阶段接入参数三态；当前统一 `Value`。
-    #[allow(dead_code)]
     pub params: Vec<PMode>,
+    pub ret: RetMode,
 }
 
 impl Sig {
     fn new(n: usize) -> Self {
         Sig {
             recv: Recv::Ref,
-            params: vec![PMode::Value; n],
+            // 偏序的底：没人要求所有权就是只读借用（`Ref < MutRef < Value`）。
+            params: vec![PMode::Ref; n],
+            ret: RetMode::Owned,
         }
     }
 }
@@ -82,6 +87,14 @@ impl Sigs {
         self.get(ty, name).map_or(Recv::Ref, |s| s.recv)
     }
 
+    pub fn params(&self, ty: &str, name: &str) -> Option<Vec<PMode>> {
+        self.get(ty, name).map(|s| s.params.clone())
+    }
+
+    pub fn ret(&self, ty: &str, name: &str) -> RetMode {
+        self.get(ty, name).map_or(RetMode::Owned, |s| s.ret)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -93,6 +106,19 @@ impl Sigs {
             .filter(|(_, s)| s.recv == Recv::Mut)
             .map(|((_, name), _)| name.clone())
             .collect()
+    }
+
+    /// 方法名 → 需要 `&mut` 的实参位置（名字级并集：多写 `mut` 只产生警告）。
+    pub fn mutref_positions(&self) -> HashMap<String, HashSet<usize>> {
+        let mut out: HashMap<String, HashSet<usize>> = HashMap::new();
+        for ((_, name), sig) in &self.map {
+            for (i, m) in sig.params.iter().enumerate() {
+                if *m == PMode::MutRef {
+                    out.entry(name.clone()).or_default().insert(i);
+                }
+            }
+        }
+        out
     }
 
     fn entry(&mut self, ty: &str, name: &str, n: usize) -> &mut Sig {
@@ -134,7 +160,7 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
         return (Sigs::default(), Vec::new());
     }
 
-    // 不动点：接收者可能与「调用其它 `&mut self` 方法」「接口签名取并集」互相影响。
+    // 不动点：接收者 / 参数三态会与「调用其它方法」「接口签名并集」互相影响。
     loop {
         let mut changed = false;
         for c in &prog.classes {
@@ -156,6 +182,33 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                 if cur != target {
                     sigs.entry(&c.name, &m.name, m.params.len()).recv = target;
                     changed = true;
+                }
+
+                // 参数三态：自身用法 ∪（实现的）接口方法参数（D9 并集）。
+                let generics = generic_names(&c.type_params, &m.type_params);
+                let mut modes = infer_param_modes(
+                    prog, Some(c), &c.name, &m.params, &generics, &m.body, &sigs,
+                );
+                for ity in &c.implements {
+                    if let Some(name) = ty_name(ity) {
+                        if let Some(im) = iface_method_params(prog, &name, &m.name) {
+                            for (i, t) in im.iter().enumerate() {
+                                if let Some(x) = modes.get_mut(i) {
+                                    *x = x.join(*t);
+                                }
+                            }
+                        }
+                    }
+                }
+                let sig = sigs.entry(&c.name, &m.name, m.params.len());
+                for (i, t) in modes.into_iter().enumerate() {
+                    if let Some(cur) = sig.params.get_mut(i) {
+                        let n = cur.join(t);
+                        if *cur != n {
+                            *cur = n;
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
@@ -186,6 +239,45 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
                     sigs.entry(&i.name, &m.name, m.params.len()).recv = target;
                     changed = true;
                 }
+
+                // 参数三态：默认方法自身用法 ∪ 所有实现类（D9 并集）。
+                let mut modes = match &m.body {
+                    Some(body) => {
+                        let generics = generic_names(&i.type_params, &m.type_params);
+                        let params: Vec<Param> = m
+                            .params
+                            .iter()
+                            .map(|p| Param {
+                                ty: p.ty.clone(),
+                                name: p.name.clone(),
+                            })
+                            .collect();
+                        infer_param_modes(prog, None, &i.name, &params, &generics, body, &sigs)
+                    }
+                    None => vec![PMode::Value; m.params.len()],
+                };
+                for c in &prog.classes {
+                    if !implements_iface(c, &i.name, prog) {
+                        continue;
+                    }
+                    if let Some(im) = sigs.params(&c.name, &m.name) {
+                        for (k, t) in im.iter().enumerate() {
+                            if let Some(x) = modes.get_mut(k) {
+                                *x = x.join(*t);
+                            }
+                        }
+                    }
+                }
+                let sig = sigs.entry(&i.name, &m.name, m.params.len());
+                for (k, t) in modes.into_iter().enumerate() {
+                    if let Some(cur) = sig.params.get_mut(k) {
+                        let n = cur.join(t);
+                        if *cur != n {
+                            *cur = n;
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
         if !changed {
@@ -193,7 +285,486 @@ pub fn analyze(prog: &Program) -> (Sigs, Vec<Diag>) {
         }
     }
 
+    infer_ret_modes(prog, &mut sigs);
     (sigs, diags)
+}
+
+/// 返回值模式（D4）：纯 getter 且字段是 `String` → `&str`。
+///
+/// 接口方法取「所有实现类都是纯 getter」：只要有一个实现返回计算值，整组降级 owned，
+/// 否则 trait 与 impl 的签名会对不上。
+fn infer_ret_modes(prog: &Program, sigs: &mut Sigs) {
+    let mut cand: HashMap<(String, String), bool> = HashMap::new();
+    for c in &prog.classes {
+        for m in &c.methods {
+            if m.is_static {
+                continue;
+            }
+            let ok = is_pure_str_getter(c, m, sigs.recv(&c.name, &m.name));
+            cand.insert((c.name.clone(), m.name.clone()), ok);
+        }
+    }
+    // 接口：所有实现类都是纯 getter 才借出。
+    for i in &prog.interfaces {
+        for m in &i.methods {
+            if m.is_static {
+                continue;
+            }
+            let mut impls = 0usize;
+            let mut all_getter = m.body.is_none();
+            for c in &prog.classes {
+                if !implements_iface(c, &i.name, prog) {
+                    continue;
+                }
+                if c.methods.iter().any(|x| x.name == m.name && !x.is_static) {
+                    impls += 1;
+                    all_getter &= cand
+                        .get(&(c.name.clone(), m.name.clone()))
+                        .copied()
+                        .unwrap_or(false);
+                }
+            }
+            let want = impls > 0 && all_getter;
+            let sig = sigs.entry(&i.name, &m.name, m.params.len());
+            sig.ret = if want { RetMode::SelfStrRef } else { RetMode::Owned };
+        }
+    }
+    // 实现类：自己是纯 getter，且所实现接口的同一方法也借出。
+    for c in &prog.classes {
+        for m in &c.methods {
+            if m.is_static {
+                continue;
+            }
+            let mut want = cand
+                .get(&(c.name.clone(), m.name.clone()))
+                .copied()
+                .unwrap_or(false);
+            for t in &c.implements {
+                let mut seen = HashSet::new();
+                let mut names = HashSet::new();
+                iface_closure(t, prog, &mut names);
+                seen.extend(names);
+                for name in seen {
+                    if prog
+                        .interfaces
+                        .iter()
+                        .find(|x| x.name == name)
+                        .map_or(false, |x| x.methods.iter().any(|mm| mm.name == m.name))
+                        && sigs.ret(&name, &m.name) != RetMode::SelfStrRef
+                    {
+                        want = false;
+                    }
+                }
+            }
+            let sig = sigs.entry(&c.name, &m.name, m.params.len());
+            sig.ret = if want { RetMode::SelfStrRef } else { RetMode::Owned };
+        }
+    }
+}
+
+/// 方法体恰好是 `return this.f;`，`f` 是 String 字段（非 `@shared`），且接收者是 `&self`。
+fn is_pure_str_getter(c: &ClassDecl, m: &Method, recv: Recv) -> bool {
+    if m.is_static || m.is_async || !m.throws.is_empty() || recv != Recv::Ref {
+        return false;
+    }
+    if m.ret != Type::String {
+        return false;
+    }
+    let field = match m.body.as_slice() {
+        [Stmt::Return {
+            value: Some(Expr::Field(base, f)),
+            ..
+        }] if matches!(**base, Expr::This) => f.clone(),
+        _ => return false,
+    };
+    c.fields.iter().any(|fd| {
+        fd.name == field && fd.ty == Type::String && !is_shared_field(fd)
+    })
+}
+
+/// 接口方法的形参三态（供实现类求并集）。
+fn iface_method_params(prog: &Program, iface: &str, name: &str) -> Option<Vec<PMode>> {
+    prog.interfaces
+        .iter()
+        .find(|i| i.name == iface)
+        .and_then(|i| i.methods.iter().find(|m| m.name == name))
+        .map(|m| m.params.iter().map(|_| PMode::Value).collect())
+}
+
+/// 泛型类型参数名（类 + 方法）：这类形参一律按 `Value`，避免给 `&T` 引入额外 trait 上界。
+fn generic_names(c: &[TypeParam], m: &[TypeParam]) -> HashSet<String> {
+    c.iter().chain(m.iter()).map(|p| p.name.clone()).collect()
+}
+
+/// 参数三态推断（D1–D3 / §13.4）。
+fn infer_param_modes(
+    prog: &Program,
+    class: Option<&ClassDecl>,
+    self_name: &str,
+    params: &[Param],
+    generics: &HashSet<String>,
+    body: &[Stmt],
+    sigs: &Sigs,
+) -> Vec<PMode> {
+    let n = params.len();
+    let mut u = PUsage {
+        names: params.iter().map(|p| p.name.clone()).collect(),
+        types: params.iter().map(|p| p.ty.clone()).collect(),
+        value: vec![false; n],
+        mutref: vec![false; n],
+        generics,
+        prog,
+        class,
+        self_name,
+        sigs,
+    };
+    // Copy 标量 / 泛型：直接 Value。
+    for i in 0..n {
+        if u.types[i].is_copy_scalar() || contains_generic(&u.types[i], generics) {
+            u.value[i] = true;
+        }
+    }
+    u.stmts(body, false);
+    (0..n)
+        .map(|i| {
+            if u.value[i] {
+                PMode::Value
+            } else if u.mutref[i] {
+                PMode::MutRef
+            } else {
+                PMode::Ref
+            }
+        })
+        .collect()
+}
+
+fn contains_generic(t: &Type, generics: &HashSet<String>) -> bool {
+    match t {
+        Type::Named(n) => generics.contains(n),
+        Type::Generic(n, _) => generics.contains(n),
+        Type::List(x) | Type::Array(x) | Type::Set(x) => contains_generic(x, generics),
+        Type::Map(k, v) => contains_generic(k, generics) || contains_generic(v, generics),
+        Type::Nullable(x) => contains_generic(x, generics),
+        _ => false,
+    }
+}
+
+/// 形参用法收集器：一次扫描累计 `Value` / `MutRef` 两类用法。
+struct PUsage<'a> {
+    names: Vec<String>,
+    types: Vec<Type>,
+    value: Vec<bool>,
+    mutref: Vec<bool>,
+    generics: &'a HashSet<String>,
+    prog: &'a Program,
+    class: Option<&'a ClassDecl>,
+    self_name: &'a str,
+    sigs: &'a Sigs,
+}
+
+impl<'a> PUsage<'a> {
+    fn idx(&self, n: &str) -> Option<usize> {
+        self.names.iter().position(|x| x == n)
+    }
+
+    fn mark(&mut self, i: usize, m: PMode) {
+        match m {
+            PMode::Value => self.value[i] = true,
+            PMode::MutRef => self.mutref[i] = true,
+            PMode::Ref => {}
+        }
+    }
+
+    fn stmts(&mut self, stmts: &[Stmt], in_spawn: bool) {
+        for s in stmts {
+            self.stmt(s, in_spawn);
+        }
+    }
+
+    fn stmt(&mut self, s: &Stmt, in_spawn: bool) {
+        match s {
+            Stmt::Let { init, .. } => self.expr(init, in_spawn),
+            Stmt::Assign { target, value, .. } => {
+                // `p = ..` 需要 owned 形参（&T 不能整体重新赋值）。
+                if let Expr::Ident(n) = unparen(target) {
+                    if let Some(i) = self.idx(n) {
+                        self.mark(i, PMode::Value);
+                    }
+                }
+                // `p.f = ..` / `p[i] = ..` 改的是形参内部 → MutRef。
+                if let Some(root) = place_root(target) {
+                    if let Some(i) = self.idx(&root) {
+                        if !matches!(unparen(target), Expr::Ident(_)) {
+                            self.mark(i, PMode::MutRef);
+                        }
+                    }
+                }
+                // 把形参直接存进字段（`this.f = p`）→ 字段是 owned，形参必须 Value。
+                if let Expr::Ident(n) = unparen(value) {
+                    if is_field_place(target) {
+                        if let Some(i) = self.idx(n) {
+                            self.mark(i, PMode::Value);
+                        }
+                    }
+                }
+                self.expr(target, in_spawn);
+                self.expr(value, in_spawn);
+            }
+            Stmt::Return { value: Some(e), .. } => {
+                if let Expr::Ident(n) = unparen(e) {
+                    if let Some(i) = self.idx(n) {
+                        self.mark(i, PMode::Value);
+                    }
+                }
+                self.expr(e, in_spawn);
+            }
+            Stmt::Expr { expr, .. } => self.expr(expr, in_spawn),
+            Stmt::If {
+                cond, then, els, ..
+            } => {
+                self.expr(cond, in_spawn);
+                self.stmts(then, in_spawn);
+                if let Some(e) = els {
+                    self.stmts(e, in_spawn);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                self.expr(cond, in_spawn);
+                self.stmts(body, in_spawn);
+            }
+            Stmt::ForEach { iter, body, .. } => {
+                if let Expr::Call {
+                    recv: Some(b),
+                    name,
+                    args,
+                } = unparen(iter)
+                {
+                    if name == "mutable" && args.is_empty() {
+                        if let Expr::Ident(n) = unparen(b) {
+                            if let Some(i) = self.idx(n) {
+                                self.mark(i, PMode::MutRef);
+                            }
+                        }
+                    }
+                }
+                self.expr(iter, in_spawn);
+                self.stmts(body, in_spawn);
+            }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                self.expr(start, in_spawn);
+                self.expr(end, in_spawn);
+                self.stmts(body, in_spawn);
+            }
+            Stmt::Switch {
+                subject,
+                cases,
+                default,
+                ..
+            } => {
+                self.expr(subject, in_spawn);
+                for c in cases {
+                    if let Some(g) = &c.guard {
+                        self.expr(g, in_spawn);
+                    }
+                    self.stmts(&c.body, in_spawn);
+                }
+                if let Some(d) = default {
+                    self.stmts(d, in_spawn);
+                }
+            }
+            Stmt::Throw { expr, .. } => self.expr(expr, in_spawn),
+            Stmt::Sync { lock, body, .. } => {
+                self.expr(lock, in_spawn);
+                self.stmts(body, in_spawn);
+            }
+            // `spawn` 闭包 `async move` 按值捕获：被捕获的形参一律 owned。
+            Stmt::Spawn { body, .. } => self.stmts(body, true),
+            _ => {}
+        }
+    }
+
+    fn expr(&mut self, e: &Expr, in_spawn: bool) {
+        match e {
+            Expr::Ident(n) => {
+                if in_spawn {
+                    if let Some(i) = self.idx(n) {
+                        self.mark(i, PMode::Value);
+                    }
+                }
+            }
+            Expr::Unary {
+                op: UnOp::Move,
+                expr,
+            } => {
+                if let Expr::Ident(n) = unparen(expr) {
+                    if let Some(i) = self.idx(n) {
+                        self.mark(i, PMode::Value);
+                    }
+                }
+                self.expr(expr, in_spawn);
+            }
+            Expr::Call { recv, name, args } => {
+                if let Some(modes) = self.callee_modes(recv, name) {
+                    for (i, a) in args.iter().enumerate() {
+                        if let (Some(m), Expr::Ident(n)) = (modes.get(i), unparen(a)) {
+                            if let Some(k) = self.idx(n) {
+                                self.mark(k, *m);
+                            }
+                        }
+                    }
+                }
+                if let Some(r) = recv {
+                    match unparen(r) {
+                        Expr::Ident(n) => {
+                            if let Some(i) = self.idx(n) {
+                                if self.receiver_mut(&self.types[i].clone(), name) {
+                                    self.mark(i, PMode::MutRef);
+                                }
+                                if in_spawn {
+                                    self.mark(i, PMode::Value);
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(root) = place_root(r) {
+                                if let Some(i) = self.idx(&root) {
+                                    let ok = self
+                                        .static_type(r)
+                                        .map_or(false, |t| self.receiver_mut(&t, name));
+                                    if ok {
+                                        self.mark(i, PMode::MutRef);
+                                    }
+                                    if in_spawn {
+                                        self.mark(i, PMode::Value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.expr(r, in_spawn);
+                }
+                for a in args {
+                    self.expr(a, in_spawn);
+                }
+            }
+            Expr::New { args, .. } => {
+                // 构造器形参当前一律 Value：把形参交给构造器也算 Value 用法。
+                for a in args {
+                    if let Expr::Ident(n) = unparen(a) {
+                        if let Some(i) = self.idx(n) {
+                            self.mark(i, PMode::Value);
+                        }
+                    }
+                    self.expr(a, in_spawn);
+                }
+            }
+            Expr::Field(r, _) | Expr::Paren(r) | Expr::Await(r) | Expr::Try(r) => {
+                self.expr(r, in_spawn)
+            }
+            Expr::Unary { expr, .. } => self.expr(expr, in_spawn),
+            Expr::Index(a, b) | Expr::Binary { lhs: a, rhs: b, .. } => {
+                self.expr(a, in_spawn);
+                self.expr(b, in_spawn);
+            }
+            Expr::NewArray { len, .. } => self.expr(len, in_spawn),
+            Expr::Closure { body, .. } => self.expr(body, in_spawn),
+            _ => {}
+        }
+    }
+
+    /// 被调用方法各形参的三态（只解析能静态确定的情形）。
+    fn callee_modes(&self, recv: &Option<Box<Expr>>, name: &str) -> Option<Vec<PMode>> {
+        match recv {
+            None => self
+                .sigs
+                .params(self.self_name, name)
+                .or_else(|| self.iface_params(name)),
+            Some(r) => match unparen(r) {
+                Expr::This => self
+                    .sigs
+                    .params(self.self_name, name)
+                    .or_else(|| self.iface_params(name)),
+                Expr::Ident(n) if self.is_type_name(n) => self.sigs.params(n, name),
+                _ => self
+                    .static_type(r)
+                    .and_then(|t| ty_name(&t))
+                    .and_then(|n| self.sigs.params(&n, name)),
+            },
+        }
+    }
+
+    fn iface_params(&self, name: &str) -> Option<Vec<PMode>> {
+        self.prog
+            .interfaces
+            .iter()
+            .find_map(|i| self.sigs.params(&i.name, name))
+    }
+
+    fn is_type_name(&self, n: &str) -> bool {
+        self.prog.classes.iter().any(|c| c.name == n)
+            || self.prog.interfaces.iter().any(|i| i.name == n)
+    }
+
+    /// 类型 `ty` 上调用 `name` 是否需要 `&mut`（集合可变方法 / `&mut self` 方法）。
+    fn receiver_mut(&self, ty: &Type, name: &str) -> bool {
+        let coll = matches!(
+            ty,
+            Type::List(_) | Type::Array(_) | Type::Map(..) | Type::Set(_)
+        );
+        if coll && is_mut_builtin(name) {
+            return true;
+        }
+        match ty {
+            Type::Named(n) | Type::Generic(n, _) => self.sigs.recv(n, name) == Recv::Mut,
+            Type::Nullable(inner) => self.receiver_mut(inner, name),
+            _ => false,
+        }
+    }
+
+    /// 表达式在 `.jrust` 声明层面的静态类型（形参 / `this` / `this.字段` / 形参字段）。
+    fn static_type(&self, e: &Expr) -> Option<Type> {
+        match unparen(e) {
+            Expr::Ident(n) => self.idx(n).map(|i| self.types[i].clone()),
+            Expr::This => self.class.map(|c| Type::Named(c.name.clone())),
+            Expr::Field(base, f) => {
+                if matches!(unparen(base), Expr::This) {
+                    self.class
+                        .and_then(|c| c.fields.iter().find(|x| &x.name == f).map(|x| x.ty.clone()))
+                } else {
+                    let n = ty_name(&self.static_type(base)?)?;
+                    self.prog
+                        .classes
+                        .iter()
+                        .find(|c| c.name == n)
+                        .and_then(|c| c.fields.iter().find(|x| &x.name == f).map(|x| x.ty.clone()))
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+fn unparen(e: &Expr) -> &Expr {
+    match e {
+        Expr::Paren(inner) => unparen(inner),
+        _ => e,
+    }
+}
+
+/// 赋值 / 访问目标的最左根标识符（`p.f[i]` → `p`）。
+fn place_root(e: &Expr) -> Option<String> {
+    match unparen(e) {
+        Expr::Ident(n) => Some(n.clone()),
+        Expr::Field(b, _) | Expr::Index(b, _) => place_root(b),
+        _ => None,
+    }
+}
+
+/// 赋值目标是否是字段访问（`x.f = ..` / `this.f = ..`）。
+fn is_field_place(e: &Expr) -> bool {
+    matches!(unparen(e), Expr::Field(..) | Expr::Index(..))
 }
 
 /// 方法体是否必须 `&mut self`。
@@ -220,15 +791,63 @@ fn body_needs_mut(
             }
         }
     });
-    // 调用会改状态的集合方法 / 本类或接口的 `&mut self` 方法。
+    // 调用会改状态的集合方法 / 本类或接口的 `&mut self` 方法；
+    // 把 `this` / `this.f` 交给 `&mut` 形参同样要求 `&mut self`。
     each_stmt_expr(body, &mut |e| {
-        if let Expr::Call { recv, name, .. } = e {
+        if let Expr::Call { recv, name, args } = e {
             if call_needs_mut(prog, class, self_name, recv, name, sigs) {
                 hit = true;
+            }
+            let callee = call_callee_params(prog, class, self_name, recv, name, sigs);
+            if let Some(modes) = callee {
+                for (i, a) in args.iter().enumerate() {
+                    if modes.get(i) == Some(&PMode::MutRef) && this_rooted(a) {
+                        hit = true;
+                    }
+                }
             }
         }
     });
     hit
+}
+
+/// 实参是否以 `this` 为根（`this`、`this.f`、`this.f[i]`）。
+fn this_rooted(e: &Expr) -> bool {
+    match unparen(e) {
+        Expr::This => true,
+        Expr::Field(b, _) | Expr::Index(b, _) => this_rooted(b),
+        _ => false,
+    }
+}
+
+/// 调用点被调方法的形参三态（只在能静态确定接收者类型时返回）。
+fn call_callee_params(
+    prog: &Program,
+    class: Option<&ClassDecl>,
+    self_name: &str,
+    recv: &Option<Box<Expr>>,
+    name: &str,
+    sigs: &Sigs,
+) -> Option<Vec<PMode>> {
+    let ty = match recv {
+        None => Some(self_name.to_string()),
+        Some(r) => match unparen(r) {
+            Expr::This => Some(self_name.to_string()),
+            Expr::Field(base, f) if matches!(unparen(base), Expr::This) => class.and_then(|c| {
+                c.fields
+                    .iter()
+                    .find(|x| &x.name == f)
+                    .and_then(|x| ty_name(&x.ty))
+            }),
+            _ => None,
+        },
+    }?;
+    if let Some(p) = sigs.params(&ty, name) {
+        return Some(p);
+    }
+    prog.interfaces
+        .iter()
+        .find_map(|i| sigs.params(&i.name, name))
 }
 
 fn call_needs_mut(

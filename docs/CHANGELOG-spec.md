@@ -47,3 +47,14 @@
 - 调用点可变性传播（接收者部分）：`x.inc()` 中 `inc` 为 `&mut self` 时，`let x` 自动补 `mut`，形参自动写成 `mut p`，避免把编译错误推给用户。
 - 过渡开关：`JRUST_BORROW=legacy` 回退到「全 `&self`」的旧行为（F 阶段删除）。
 - 诊断码新增：`JR4003`。
+
+## v1.5 — 2026-11-26
+
+- **JR-O4**（参数三态，✅）：`analysis.rs` 在不动点里按方法体对每个形参的用法推断 `Ref` / `MutRef` / `Value`（偏序 `Ref < MutRef < Value`，改为从 `Ref` 起步向上合并）。只读 → 借用；写字段 / 调 `&mut self` 方法 / 调集合可变方法 / 自身被重新赋值以外的改写 → `&mut`；被 `move`、被返回、存进字段、交给 owned 形参、被 `spawn` 捕获、整体重新赋值 → owned。
+- **JR-O4**（类型特化）：`String` 只读 → `&str`（可变用法按值，不生成 `&mut String`）；`List`/数组只读 → `&[T]`、可写 → `&mut Vec<T>`；`Map` → `&HashMap` / `&mut HashMap`；`Set` → `&HashSet` / `&mut HashSet`；接口 → `&dyn I` / `&mut dyn I`；泛型类型参数（`T`、`List<T>`…）与 Copy 标量恒按值。构造器形参本版仍全部按值。
+- **JR-O10**（调用点，✅）：按被调方法形参三态发实参 —— owned 变量裸传（登记为已移动）、字段 `.clone()`、字面量 `.to_string()`；借用加 `&`（借用形参 / `&str` 字面量原样）；`&mut` 加 `&mut x`（名字级并集补齐 `let mut`）。落地转换：借用形参的 String → `.to_string()`、List → `.to_vec()`、Map/Set/类 → `.clone()`，下标 / `get()` 取出非 Copy 元素同样补转换；有借用形参的 `for (T x : c)` 生成 `c.iter()`；`map.get` 的字符串键对 `&str` 直接传。
+- **JR-O5**（部分，✅）：调用点把 owned 实参移动后又使用同一变量时报 `JR4001`；隐式推断本身按 D7「所有权优先」不报冲突。显式 `@ref`/`@mut` 的冲突校验留到 D 阶段。
+- **JR-O9**（getter 借出，✅）：方法体恰为 `return this.f;` 且 `f` 是非 `@shared` 的 `String` 字段 → `-> &str`（返回处补 `&`），接口方法取「所有实现都是纯 getter」才统一借出，否则整组降级 owned；调用点落到 owned 上下文补 `.to_string()`。
+- 顺带修正：`size()`/`length()` 落回 `int` / `long` 上下文时补 `as i32` / `as i64`（`len()` 是 `usize`）。
+- L1 新增用例：`ok_borrow_param`、`ok_borrow_string`、`ok_borrow_list`、`ok_getter_ref`、`neg_conflict`（`JR4001`），并加产物形态断言（`&mut Vec<i32>`、`&[String]`、`-> &str` 等）。L1 79 通过 0 失败，`verify.sh` / move 12 例 / 解释一致全部通过。
+- 诊断码新增：`JR4001`。

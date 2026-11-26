@@ -307,6 +307,10 @@ run_ok ok_iface_extends
 run_ok ok_illegal_arg
 run_ok ok_custom_exception
 run_ok ok_mut_receiver
+run_ok ok_borrow_param
+run_ok ok_borrow_string
+run_ok ok_borrow_list
+run_ok ok_getter_ref
 run_closure
 run_build_has ok_spawn 'tokio::spawn(async move {'
 run_build_has ok_async_main '#\[tokio::main\]'
@@ -316,6 +320,13 @@ run_build_has ok_custom_exception 'pub struct AppError'
 run_build_has ok_custom_exception 'impl std::error::Error for AppError'
 run_build_has ok_mut_receiver 'fn inc(&mut self)'
 run_build_has ok_mut_receiver 'fn get(&self)'
+run_build_has ok_borrow_param 'xs: &mut Vec<i32>'
+run_build_has ok_borrow_param 'c: &mut Counter'
+run_build_has ok_borrow_param 'xs: &\[i32\]'
+run_build_has ok_borrow_string 'who: &str'
+run_build_has ok_borrow_list 'xs: &\[String\]'
+run_build_has ok_getter_ref 'fn name(&self) -> &str'
+run_build_has ok_getter_ref 'fn age(&self) -> i32'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加"
 run_neg neg_switch_int JR3019 "int / String"
@@ -339,6 +350,7 @@ run_neg neg_labeled JR2004 "不支持带标签"
 run_neg neg_raw_nested JR3027 "不能嵌套"
 run_neg neg_mutable_set JR3028 "只适用于 List"
 run_neg neg_return_this JR4003 "静态工厂"
+run_neg neg_conflict JR4001 "所有权已经移走"
 
 run_check ok_shared ok
 run_check neg_labeled fail
