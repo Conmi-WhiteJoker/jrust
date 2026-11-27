@@ -1660,11 +1660,24 @@ impl<'a> Codegen<'a> {
         for (line, from, to, kind) in bad {
             self.cur_line = line;
             let code = if kind == "return" { "JR6008" } else { "JR6007" };
-            let what = if kind == "return" { "返回值" } else { "赋值" };
+            let what = match kind {
+                "return" => "返回值",
+                "arg" => "实参",
+                _ => "赋值",
+            };
+            // D：`Option<T> → T` 是 2.0 的新破坏性规则，通用提示（「窄化请显式转换」）
+            // 对用户毫无指导性——这里给 SPEC-v2 §3 的迁移写法。
+            let hint = if from.starts_with("Option<") && !to.starts_with("Option<") {
+                "`map.get` / `getOrNull` 返回可空值（`Option<T>`）：把目标写成 `T?`，或放进 `if (x != null) { T v = x; ... }` 判空分支内再取值。2.0 不再自动解包（见 SPEC-v2 §3）。".to_string()
+            } else if kind == "arg" {
+                format!("形参期望 `{}`，实参是 `{}`；检查类型或补转换。", to, from)
+            } else {
+                "Java 只允许「同级或加宽」的隐式转换；窄化请显式转换，类型不同请改用对应类型或补转换方法。".to_string()
+            };
             self.err_code(
                 code,
                 format!("{}的类型不匹配：`{}` 不能赋给 `{}`", what, from, to),
-                "Java 只允许「同级或加宽」的隐式转换；窄化请显式转换，类型不同请改用对应类型或补转换方法。",
+                hint,
             );
         }
     }
@@ -4876,6 +4889,94 @@ fn is_generic_param(n: &str) -> bool {
     n.starts_with('T') && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
+/// 递归检查表达式里所有方法调用的实参类型（A / JR-V3）。
+///
+/// `Util.add(x)` / `new Box(x)` 这类调用此前完全不做类型检查，
+/// `Integer?` 传给 `int` 形参时产物是 `add(x)`（`Option<i32>` 传给 `i32`），
+/// 直到 cargo 才报 E0308——正面违反 JR-V3。
+///
+/// 形参类型从 `call_param_types` 取（与 codegen 调用点用的是同一个函数，
+/// 因此检查边界与生成边界天然一致）。构造器的 `Expr::New` 走 `classes[class].ctor.params`。
+fn check_call_args(
+    e: &Expr,
+    env: &Env,
+    g: &Codegen,
+    line: usize,
+    bad: &mut Vec<(usize, String, String, &'static str)>,
+) {
+    match e {
+        Expr::Call { recv, name, args, .. } => {
+            // 先递归子表达式，再检查本调用的实参。
+            if let Some(r) = recv {
+                check_call_args(r, env, g, line, bad);
+            }
+            for a in args {
+                check_call_args(a, env, g, line, bad);
+            }
+            // `call_param_types` 需要 &Option<Box<Expr>>，这里 recv 正是该类型。
+            let params = g.call_param_types(recv, name, env);
+            if let Some(params) = params {
+                for (a, pt) in args.iter().zip(params.iter()) {
+                    if let Some(from) = g.scalar_source_type(a, env) {
+                        if !g.assignable_expr(&from, pt, a, env) {
+                            bad.push((line, g.rust_type(&from), g.rust_type(pt), "arg"));
+                        }
+                    }
+                }
+            }
+        }
+        Expr::New { class, args, .. } => {
+            for a in args {
+                check_call_args(a, env, g, line, bad);
+            }
+            if let Some(cd) = g.classes.get(class) {
+                if let Some(ctor) = &cd.ctor {
+                    for (a, p) in args.iter().zip(ctor.params.iter()) {
+                        if let Some(from) = g.scalar_source_type(a, env) {
+                            if !g.assignable_expr(&from, &p.ty, a, env) {
+                                bad.push((line, g.rust_type(&from), g.rust_type(&p.ty), "arg"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            check_call_args(lhs, env, g, line, bad);
+            check_call_args(rhs, env, g, line, bad);
+        }
+        Expr::Unary { expr, .. } | Expr::Paren(expr) | Expr::Try(expr) | Expr::Await(expr) => {
+            check_call_args(expr, env, g, line, bad)
+        }
+        Expr::Field(base, _) => check_call_args(base, env, g, line, bad),
+        Expr::Index(base, idx) => {
+            check_call_args(base, env, g, line, bad);
+            check_call_args(idx, env, g, line, bad);
+        }
+        _ => {}
+    }
+}
+
+/// 语句块是否「必然终止」（最后一条是 `return` 或 `panic(...)`）。
+///
+/// 用于 B：`if (x == null) { return; }` 之后的语句里 x 必然非空，
+/// 因此可把 x 记入 `env.nonnull`，允许 `int v = x;`。
+/// 只认块尾终止——`if (x == null) { return; } else { ... }` 的 then 分支
+/// 是终止的，收窄对 if 之后的语句生效。
+fn block_always_terminates(stmts: &[Stmt]) -> bool {
+    let Some(last) = stmts.last() else {
+        return false;
+    };
+    match last {
+        Stmt::Return { .. } => true,
+        Stmt::Expr { expr, .. } => matches!(
+            strip_parens_expr(expr),
+            Expr::Call { name, recv: None, .. } if name == "panic"
+        ),
+        _ => false,
+    }
+}
+
 /// 递归收集赋值 / 返回的类型不匹配（阶段 C / JR6007 / JR6008）。
 ///
 /// 边扫描边把 `Stmt::Let` 的声明写进 `env`，保证后续语句能解析变量类型。
@@ -4889,6 +4990,8 @@ fn collect_assign_mismatches(
     for s in stmts {
         match s {
             Stmt::Raw { .. } => {}
+            Stmt::Expr { expr, line } => check_call_args(expr, env, g, *line, bad),
+            Stmt::Throw { expr, line } => check_call_args(expr, env, g, *line, bad),
             Stmt::Let { ty, name, init, line } => {
                 if let Some(from) = g.scalar_source_type(init, env) {
                     // 字面量可以自适应：`float f = 1.5;` 里的 `1.5` 在 Rust 里
@@ -4902,6 +5005,7 @@ fn collect_assign_mismatches(
                         ));
                     }
                 }
+                check_call_args(init, env, g, *line, bad);
                 env.vars.declare(name.clone(), ty.clone());
             }
             Stmt::Assign { target, value, line } => {
@@ -4918,6 +5022,7 @@ fn collect_assign_mismatches(
                     }
                     _ => None,
                 };
+                check_call_args(value, env, g, *line, bad);
                 if let (Some(tt), Some(from)) = (target_ty, g.scalar_source_type(value, env)) {
                     if !g.assignable_expr(&from, &tt, value, env) {
                         bad.push((*line, g.rust_type(&from), g.rust_type(&tt), "assign"));
@@ -4925,6 +5030,7 @@ fn collect_assign_mismatches(
                 }
             }
             Stmt::Return { value: Some(e), line } => {
+                check_call_args(e, env, g, *line, bad);
                 let ret = env.ret.clone();
                 if let Some(from) = g.scalar_source_type(e, env) {
                     if !g.assignable_expr(&from, &ret, e, env) {
@@ -4947,11 +5053,20 @@ fn collect_assign_mismatches(
                         }
                     } else {
                         collect_assign_mismatches(then, env, g, bad);
-                        env.nonnull.insert(name.clone());
-                        if let Some(e) = els {
-                            collect_assign_mismatches(e, env, g, bad);
+                        // `== null` 分支若必然终止（return / panic），则 if 之后的
+                        // 语句里 x 必然非空（B：提前返回判空）。否则只在 else 分支收窄。
+                        if block_always_terminates(then) {
+                            env.nonnull.insert(name.clone());
+                            if let Some(e) = els {
+                                collect_assign_mismatches(e, env, g, bad);
+                            }
+                        } else {
+                            env.nonnull.insert(name.clone());
+                            if let Some(e) = els {
+                                collect_assign_mismatches(e, env, g, bad);
+                            }
+                            env.nonnull.remove(&name);
                         }
-                        env.nonnull.remove(&name);
                     }
                 } else {
                     collect_assign_mismatches(then, env, g, bad);

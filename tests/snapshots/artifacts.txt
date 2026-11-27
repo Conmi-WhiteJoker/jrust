@@ -19,6 +19,7 @@ d26b0f1ba626a5235853c46c2a9a39b4022c43a7f9d991742a0063f2ebc60cfd  examples/VecIm
 FAILED  tests/conformance/L1/neg_assign_mismatch/main.jrust
 FAILED  tests/conformance/L1/neg_await_sync/main.jrust
 FAILED  tests/conformance/L1/neg_borrow_field/main.jrust
+FAILED  tests/conformance/L1/neg_call_arg_nullable/main.jrust
 FAILED  tests/conformance/L1/neg_cfor_dir/main.jrust
 FAILED  tests/conformance/L1/neg_cfor_step/main.jrust
 FAILED  tests/conformance/L1/neg_cond_not_bool/main.jrust
@@ -68,6 +69,7 @@ a9d1bb9b294a46ff28937255ecdfcbbf53160b6cea13abae17e2c0941528a9a2  tests/conforma
 772448803c61dc9548b17d83e0e9eb3a0d79761a98271108349e29c41337bb77  tests/conformance/L1/ok_borrow_list/main.jrust
 a97ebda62c5f8cfe8f8a460dc6ae1a246e2ef3a3cff29134ae25f33ee3567570  tests/conformance/L1/ok_borrow_param/main.jrust
 9366eac84ead848fccba1bbaf24d307f2f7a73fa34de9736a63cb40602d50c5f  tests/conformance/L1/ok_borrow_string/main.jrust
+d3a0bec161882f153c0f20bb986b40764742cd1d92258632ca212136a47408f9  tests/conformance/L1/ok_call_arg_narrow/main.jrust
 ffbb02dc70b030dec830be4f6714260648c4b120d1c2d15570a6820adb4e8a51  tests/conformance/L1/ok_cfor/main.jrust
 d7605c10a5d8c25a2bd9c6bff1fec448fd24b372a0ef39cc3be163c788651601  tests/conformance/L1/ok_closure_capture/main.jrust
 d49e458a9e1f62d6e0a84d5fd10507b15dc75b1c604bf16d100ada0583916f76  tests/conformance/L1/ok_closure_transpile/main.jrust

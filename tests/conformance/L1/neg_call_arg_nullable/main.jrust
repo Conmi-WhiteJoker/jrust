@@ -1,0 +1,18 @@
+/// A：可空值传给非可空形参（普通方法与构造器）必须报 JR6007，
+/// 不得留到 cargo 才报 E0308（SPEC-v2 JR-V3）。
+public class Util {
+    public static void add(int a) { println(a); }
+}
+public class Box {
+    private int v;
+    public Box(int v) { this.v = v; }
+    public int get() { return this.v; }
+}
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 1);
+        Integer? x = m.get("a");
+        Util.add(x);
+    }
+}

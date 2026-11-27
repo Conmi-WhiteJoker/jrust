@@ -952,3 +952,30 @@ build 产物 panic」。P1 修复后两者虽都阻断，但**诊断码仍不同
 
 验收：`./verify.sh` 十一步全绿（L1 174、解释对拍 15 + 38、快照 118 项、覆盖率 58/58）；
 三个入口对 P1 用例均报 `JR6007` 且退出码 1；rustc 1.85.0 基线通过。
+
+## v1.52 — 2026-11-27
+
+### A–D 一轮修复：实参类型检查、提前返回收窄、破坏性变更勘误、专属提示
+
+用户报四个问题，按 A→D 修完：
+
+- **A（高）可空实参漏检**：`Integer? x = m.get("a"); Util.add(x); new Box(x);`
+  此前 `check`/`build` 都通过，产物 `Util::add(x)` / `Box::new(x)` 交 cargo 报 E0308，
+  正面违反 JR-V3。新增 `check_call_args`：复用 `call_param_types`（与 codegen 调用点同一个
+  函数）检查方法调用实参，`Expr::New` 查 `ctor.params`；接进 `Stmt::Expr` / `Throw` /
+  `Let` / `Assign` / `Return` 五个语句出口。新增 `neg_call_arg_nullable`（负向）与
+  `ok_call_arg_narrow`（正向）夹具，L1 174 → **175**。
+- **B（中）提前返回判空不认**：`if (x == null) { return; } int v = x;` 此前报 JR6007。
+  新增 `block_always_terminates`（块尾是 return 或 `panic()`），`== null` 分支必然终止时
+  把 x 记入 `env.nonnull`，其后的语句可安全取值。做成了流敏感收窄而非在规范里限制写法。
+- **C（中，文档）「唯一一项破坏性变更」不成立**：SPEC-v2 §3 原写「2.0 唯一一项」，
+  但 `T? → T` 不再隐式 unwrap 影响所有 `T v = nullable;`，是独立第二项。
+  改为「共两项，同属『可空值显式化』家族」，分别列出并给迁移示例；
+  发布说明已按两项结构书写，补充实参覆盖说明；新增 JR-V8（实参必须 JR6007）。
+  CHANGELOG 中旧条目的「唯一」表述是当时的历史认知，保留并以上述勘误为准。
+- **D（低）JR6007 提示不具指导性**：`Option<T> → T` 此前给通用「窄化请显式转换」，
+  现改为 SPEC-v2 §3 的迁移写法（改成 `T?` / 放进 `if (x != null)` 分支），
+  并按错误种类显示「实参 / 返回值 / 赋值」。
+
+验收：`./verify.sh` 十一步全绿（L1 175、解释对拍 15 + 38、快照 119 项、覆盖率 58/58）；
+rustc 1.85.0 基线通过。

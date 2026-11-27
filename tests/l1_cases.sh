@@ -1092,6 +1092,8 @@ run_neg neg_unknown_method JR6004 "没有方法" 11
 run_neg neg_cond_not_bool JR6009 "不是 \`boolean\`" 5
 # 2.0 / JR-T1 修订：T? → 非可空 T 必须显式判空，不再静默 unwrap。
 run_neg neg_nullable_unwrap JR6007 "不能赋给" 7
+# A：可空实参（普通方法 / 构造器）必须报 JR6007，不得留给 cargo。
+run_neg neg_call_arg_nullable JR6007 "实参的类型不匹配" 16
 # 阶段 C / 赋值与返回的类型兼容。
 run_neg neg_assign_mismatch JR6007 "不能赋给" 4
 run_neg neg_ret_type JR6008 "不能赋给" 4

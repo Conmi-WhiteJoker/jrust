@@ -1,0 +1,31 @@
+/// A/B：判空收窄后的可空值可作实参 / 构造器实参；提前返回判空也支持。
+public class Util {
+    public static void add(int a) { println(a); }
+}
+public class Box {
+    private int v;
+    public Box(int v) { this.v = v; }
+    public int get() { return this.v; }
+}
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 7);
+        Integer? x = m.get("a");
+
+        // B：提前返回判空
+        if (x == null) {
+            return;
+        }
+        // x 在此必然非空
+        Util.add(x);
+        Box b = new Box(x);
+        println(b.get());
+
+        // 方法调用形式的判空收窄
+        Integer? y = m.get("a");
+        if (y != null) {
+            Util.add(y);
+        }
+    }
+}
