@@ -547,7 +547,7 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
   提示行去掉缩进；`l1_cases.sh` 的行号断言同步为新格式。
 - **JR-G10**：新增 `.github/workflows/ci.yml`，matrix `1.85.0` + `stable`；
   基线跑构建 + 单测，`stable` 跑九步全量验收（安装 `apache2-utils` 提供 `ab`）。
-- **JR-G15**：按决定推迟到 V2 双轨期；SPEC 标注现状与待办，cairn 设计文档 §12.42
+- **JR-G15**：按决定推迟到 V2 双轨期；SPEC 标注现状与待办，cairn 设计文档 §12.43 第 5 条
   记录最小机制草案（`JR9xxx` 警告码 + 旧行为/新写法并存 + 弃用提示）。
 - `./verify.sh` 九步全绿（L1 133 项、L3 12.8k QPS、L4 11.95k / 11.95k QPS）。
 
@@ -562,3 +562,17 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 - 修复：离线失败时回退一次联网构建（仍保留“先离线”的快路径）；空 `CARGO_HOME` 下实测
   离线失败 → 联网成功，产物输出正常。
 - 验证：`./verify.sh` 九步全绿（L1 133、L3 12.7k QPS、L4 12.1k/10.6k QPS）。
+
+## v1.38 — 2026-11-27
+
+### 错误输出格式全线统一到 JR-G7（补齐 v1.37 遗留）
+
+- **JR-G7**（扩展）：v1.37 只统一了编译期诊断（`check` / `build`），`verify` 转发的 rustc 报错与
+  解释器运行时错误仍是旧形态。本版统一为 `path:line:0: error[码]: 消息`：
+  - `verify` 单文件 / 目录模式：`错误: path:4 - rustc error[E0599]: …` → `path:4:0: error[E0599]: …`；
+    无源行映射时 `错误: path - rustc …` → `path:0:0: …`。
+  - 解释器运行时错误：`运行时错误: path:5 - …` → `path:5:0: error: …`（无诊断码，不带方括号）。
+  - 全部提示行去掉两空格缩进，统一 `提示: ` 前缀。
+- `tests/l1_cases.sh` 两处 rustc 错误映射断言同步为 `:<行>:0: error[E…]`（`run_verify_tree_bad` /
+  `run_verify_tree_lib`）。
+- 验证：`./verify.sh` 九步全绿（L1 133、L3 10.1k QPS、L4 11.7k/10.1k QPS）。

@@ -746,7 +746,7 @@ run_verify_tree_bad() {
         fail=$((fail + 1))
         return
     fi
-    if ! grep -qE 'main\.jrust:[0-9]+ - rustc error\[E[0-9]+\]' "$TMP/out"; then
+    if ! grep -qE 'main\.jrust:[0-9]+:0: error\[E[0-9]+\]' "$TMP/out"; then
         echo "FAIL vtree_bad：缺少映射到 main.jrust 的错误行"
         cat "$TMP/out"
         fail=$((fail + 1))
@@ -895,7 +895,7 @@ EOF
         fail=$((fail + 1))
         return
     fi
-    if ! grep -qE 'shape\.jrust:[0-9]+ - rustc error\[E[0-9]+\]' "$TMP/out"; then
+    if ! grep -qE 'shape\.jrust:[0-9]+:0: error\[E[0-9]+\]' "$TMP/out"; then
         echo "FAIL vtree_lib_bad：错误没有映射回 shape.jrust 行"
         cat "$TMP/out"
         fail=$((fail + 1))

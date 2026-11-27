@@ -51,9 +51,10 @@ impl RuntimeError {
     }
 
     pub fn render(&self, path: &str) -> String {
-        let mut s = format!("运行时错误: {}:{} - {}", path, self.line, self.message);
+        // 与 JR-G7 统一：`path:line:0: error: 消息`（运行时错误没有诊断码，故不带方括号）。
+        let mut s = format!("{}:{}:0: error: {}", path, self.line, self.message);
         if let Some(h) = &self.hint {
-            s.push_str(&format!("\n  提示: {}", h));
+            s.push_str(&format!("\n提示: {}", h));
         }
         s
     }

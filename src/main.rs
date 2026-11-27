@@ -1472,10 +1472,12 @@ fn verify_one(path: &Path) -> bool {
     let mut reported = 0;
     for (gen_line, rest) in errors {
         let (jline, off) = map_to_jrust(&code, gen_line);
-        eprintln!("错误: {}:{} - rustc {}", path.display(), jline, rest);
+        // 与 JR-G7 统一：`path:line:0: error[码]: 消息`。`rest` 本身就是 rustc 的
+        // `error[E0599]: …` 行，直接接在位置后面即得同一形态。
+        eprintln!("{}:{}:0: {}", path.display(), jline, rest);
         if off > 0 {
             eprintln!(
-                "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
+                "提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
                 gen_line,
                 jline + off,
                 off
@@ -1483,7 +1485,7 @@ fn verify_one(path: &Path) -> bool {
         }
         if rest.contains("E0277") {
             eprintln!(
-                "  提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
+                "提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
             );
         }
         reported += 1;
@@ -1635,20 +1637,20 @@ fn verify_tree(dir: &Path) -> bool {
             continue;
         }
         // 定位不到源行（生成代码开头没有 `// jrust:L` 标记，如 import 行）时说明清楚，
-        // 不要只报一个 `:0`。
+        // 不要只报一个 `:0`。格式与 JR-G7 一致（`path:line:0: error[码]: 消息`）。
         if jline == 0 {
             eprintln!(
-                "错误: {} - rustc {}（生成代码第 {} 行，位于文件头部的 import / 属性区，无源行映射）",
+                "{}:0:0: {}（生成代码第 {} 行，位于文件头部的 import / 属性区，无源行映射）",
                 jpath.display(),
                 msg,
                 gen_line
             );
         } else {
-            eprintln!("错误: {}:{} - rustc {}", jpath.display(), jline, msg);
+            eprintln!("{}:{}:0: {}", jpath.display(), jline, msg);
         }
         if off > 0 {
             eprintln!(
-                "  提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
+                "提示: 该错误在生成代码第 {} 行，对应原 .jrust 第 {} 行附近（raw 块内第 {} 行）",
                 gen_line,
                 jline + off,
                 off
@@ -1656,7 +1658,7 @@ fn verify_tree(dir: &Path) -> bool {
         }
         if msg.contains("E0277") {
             eprintln!(
-                "  提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
+                "提示: 类型不满足 trait 约束（如 Send / Sync）。跨线程共享状态用 @shared（Arc<Mutex<T>>），spawn 只能捕获 Send + 'static 的值。"
             );
         }
         reported += 1;
