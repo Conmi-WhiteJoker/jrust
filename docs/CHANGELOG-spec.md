@@ -550,3 +550,15 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 - **JR-G15**：按决定推迟到 V2 双轨期；SPEC 标注现状与待办，cairn 设计文档 §12.42
   记录最小机制草案（`JR9xxx` 警告码 + 旧行为/新写法并存 + 弃用提示）。
 - `./verify.sh` 九步全绿（L1 133 项、L3 12.8k QPS、L4 11.95k / 11.95k QPS）。
+
+## v1.37.1 — 2026-11-27
+
+### 修复 CI 首个红：L2 用例在空缓存机器上离线编译失败
+
+- 现象：GitHub Actions `stable` 作业第 6 步（九步全量验收）挂在 `FAIL l2：cargo 编译失败`，
+  `error: no matching package named serde_json found ... offline mode`。
+- 原因：`run_l2` 固定用 `cargo build --offline`；本地 `~/.cargo` 已有 `serde_json` 缓存所以一直绿，
+  CI 是全新缓存、又没预取该依赖，离线解析必然失败（与代码/转译无关）。
+- 修复：离线失败时回退一次联网构建（仍保留“先离线”的快路径）；空 `CARGO_HOME` 下实测
+  离线失败 → 联网成功，产物输出正常。
+- 验证：`./verify.sh` 九步全绿（L1 133、L3 12.7k QPS、L4 12.1k/10.6k QPS）。

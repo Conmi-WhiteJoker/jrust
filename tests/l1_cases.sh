@@ -565,11 +565,14 @@ run_l2() {
         fail=$((fail + 1))
         return
     fi
+    # 先离线（本地缓存通常已有 serde_json）；CI 首次运行没有缓存，回退联网拉取一次。
     if ! cargo build --quiet --offline --manifest-path "$work/Cargo.toml" >"$TMP/out" 2>&1; then
-        echo "FAIL l2：cargo 编译失败"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
+        if ! cargo build --quiet --manifest-path "$work/Cargo.toml" >>"$TMP/out" 2>&1; then
+            echo "FAIL l2：cargo 编译失败"
+            cat "$TMP/out"
+            fail=$((fail + 1))
+            return
+        fi
     fi
     "$work/target/debug/generated" >"$TMP/gen_out" 2>&1
     if ! diff -u "$work/expected.txt" "$TMP/gen_out" >"$TMP/diff"; then
