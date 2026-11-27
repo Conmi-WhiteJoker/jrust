@@ -1096,6 +1096,9 @@ run_neg neg_nullable_unwrap JR6007 "不能赋给" 7
 run_neg neg_call_arg_nullable JR6007 "实参的类型不匹配" 16
 # 收窄状态在重新赋值后失效（v1.53）。
 run_neg neg_nullable_reassign JR6007 "不能赋给" 13
+# 字段判空收窄：支持 `this.f`，且字段重新赋值后收窄失效。
+run_build_has ok_field_narrow 'self.boxed.clone().unwrap()'
+run_neg neg_field_reassign JR6007 "不能赋给" 15
 # 阶段 C / 赋值与返回的类型兼容。
 run_neg neg_assign_mismatch JR6007 "不能赋给" 4
 run_neg neg_ret_type JR6008 "不能赋给" 4

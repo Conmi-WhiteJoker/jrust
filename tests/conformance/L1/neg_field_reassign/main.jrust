@@ -1,0 +1,20 @@
+public class Holder {
+    private Integer? boxed;
+    public Holder(Integer? v) { this.boxed = v; }
+    public void reset(Integer? v) { this.boxed = v; }
+    public int read() {
+        if (this.boxed != null) {
+            int v = this.boxed;
+            return v;
+        }
+        return -1;
+    }
+    public int bad(Map<String, Integer> m) {
+        if (this.boxed != null) {
+            this.boxed = m.get("zzz");
+            int v = this.boxed;
+            return v;
+        }
+        return -1;
+    }
+}

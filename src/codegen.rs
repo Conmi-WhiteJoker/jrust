@@ -1668,7 +1668,9 @@ impl<'a> Codegen<'a> {
             // D：`Option<T> → T` 是 2.0 的新破坏性规则，通用提示（「窄化请显式转换」）
             // 对用户毫无指导性——这里给 SPEC-v2 §3 的迁移写法。
             let hint = if from.starts_with("Option<") && !to.starts_with("Option<") {
-                "`map.get` / `getOrNull` 返回可空值（`Option<T>`）：把目标写成 `T?`，或放进 `if (x != null) { T v = x; ... }` 判空分支内再取值。2.0 不再自动解包（见 SPEC-v2 §3）。".to_string()
+                // 来源可能是 map.get/getOrNull、可空字段、可空形参或返回 T? 的方法——
+                // 不要硬编码 `map.get`（字段场景下归因不准）。给通用且可操作的迁移写法。
+                "可空值（`Option<T>`）不能直接赋给非可空类型：把目标写成 `T?`，或放进 `if (x != null) { T v = x; ... }` 判空分支内再取值；字段可先拷到局部变量再判空。2.0 不再自动解包（见 SPEC-v2 §3）。".to_string()
             } else if kind == "arg" {
                 format!("形参期望 `{}`，实参是 `{}`；检查类型或补转换。", to, from)
             } else {
@@ -4751,10 +4753,22 @@ fn unknown_named_in(
 /// 变量名 → 名字本身；方法调用 → 完整调用串（`a.getTag()`）。
 /// 用文本签名而非指针，是因为收窄条件与后续取值是两个独立的 AST 节点。
 fn nullable_expr_key(e: &Expr) -> Option<String> {
-    match strip_parens_expr(e) {
-        Expr::Ident(n) => Some(n.clone()),
-        other => Some(format!("{:?}", other)),
+    fn key(e: &Expr) -> String {
+        match strip_parens_expr(e) {
+            Expr::Ident(n) => format!("i:{}", n),
+            // `Expr::This` 携带行号，不能用 Debug 串（同一 this 在不同行会得到不同 key）。
+            Expr::This(_) => "this".to_string(),
+            Expr::Field(base, f) => format!("{}.{}", key(base), f),
+            Expr::Call { recv, name, .. } => match recv {
+                Some(r) => format!("{}.{}()", key(r), name),
+                None => format!("{}()", name),
+            },
+            Expr::Index(base, idx) => format!("{}[{}]", key(base), key(idx)),
+            // 其它表达式用 Debug 兜底；若将来发现行号污染，按上面模式补分支即可。
+            other => format!("{:?}", other),
+        }
     }
+    Some(key(e))
 }
 
 /// 识别 `expr != null` / `expr == null` 条件里的可判空表达式。
@@ -5007,15 +5021,17 @@ fn collect_assign_mismatches(
                 }
                 check_call_args(init, env, g, *line, bad);
                 // 同名重新声明（新作用域或遮蔽）也要清除旧的收窄状态。
-                env.nonnull.remove(name);
+                // key 必须与 nullable_expr_key 的格式一致（Ident 是 `i:<name>`）。
+                env.nonnull.remove(&format!("i:{}", name));
                 env.vars.declare(name.clone(), ty.clone());
             }
             Stmt::Assign { target, value, line } => {
                 // 收窄失效（v1.53）：`if (x == null) { return; } x = ...;` 后 x 不再是
                 // 已判空的值。赋值前先清除该变量的 nonnull 标记，否则后续
                 // `int v = x;` 会带着过期的收窄通过检查，产物 `.unwrap()` 在 None 时 panic。
-                if let Expr::Ident(n) = strip_parens_expr(target) {
-                    env.nonnull.remove(n);
+                // 用与 nullable_expr_key 一致的 key 清除，包括 `this.field` 等字段写法。
+                if let Some(k) = nullable_expr_key(target) {
+                    env.nonnull.remove(&k);
                 }
                 // 只检查目标类型能静态确定的赋值（局部变量 / `this.字段`）。
                 let target_ty = match strip_parens_expr(target) {

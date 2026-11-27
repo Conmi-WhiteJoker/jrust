@@ -994,3 +994,26 @@ rustc 1.85.0 基线通过。
 - 新增 `neg_nullable_reassign` 夹具（`x = m.get("zzz")` 变体），L1 175 → **176**。
 - 验证：`./verify.sh` 十一步全绿（快照 121 项、覆盖率 58/58）；
   `x = null` 变体手测也报 JR6007；合法的提前返回判空用例不回归。
+
+## v1.54 — 2026-11-27
+
+### 字段判空收窄 + JR6007 提示去硬编码
+
+用户报两个体验缺口：
+
+1. **字段不参与判空收窄**：`if (this.boxed != null) { int v = this.boxed; }` 报 JR6007，
+   需先拷到局部变量。根因：`nullable_expr_key` 对 `Expr::Field` 用 `format!("{:?}", e)`，
+   而 `Expr::This` 携带行号——判空条件里的 `This(5)` 与取值处的 `This(6)` 生成不同 key。
+   修法：改为递归生成稳定签名（`Ident → i:<name>`、`This → this`、`Field → <base>.<f>`、
+   `Call → <recv>.<name>()`），不使用 Debug 串。
+2. **JR6007 提示硬编码 `map.get`**：字段 / 方法返回 / 可空形参场景下归因不准。
+   改为通用的「可空值不能直接赋给非可空类型」+ 迁移写法，并点出「字段可先拷到局部变量」。
+
+**修 key 格式时发现并修复一处回归**：key 前缀改成 `i:x` 后，赋值清除逻辑仍用裸 `x`，
+导致 `if (x == null) { return; } x = ...; int v = x;` 再次静默通过（v1.53 刚修的漏洞复活）。
+统一清除逻辑也走 `nullable_expr_key`——顺带支持了 `this.field = ...` 的失效清除。
+
+新增夹具 `ok_field_narrow`（字段判空可用）/ `neg_field_reassign`（字段重赋值后失效），
+L1 176 → **178**。README 明确判空支持局部变量 / 方法调用 / 字段三种形式。
+
+验收：`./verify.sh` 十一步全绿（快照 123 项、覆盖率 58/58）、rustc 1.85.0 基线通过。

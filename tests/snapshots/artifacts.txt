@@ -25,6 +25,7 @@ FAILED  tests/conformance/L1/neg_cfor_step/main.jrust
 FAILED  tests/conformance/L1/neg_cond_not_bool/main.jrust
 FAILED  tests/conformance/L1/neg_conflict/main.jrust
 FAILED  tests/conformance/L1/neg_fallthrough/main.jrust
+FAILED  tests/conformance/L1/neg_field_reassign/main.jrust
 FAILED  tests/conformance/L1/neg_iface_static_no_body/main.jrust
 FAILED  tests/conformance/L1/neg_iter_unknown/main.jrust
 FAILED  tests/conformance/L1/neg_labeled/main.jrust
@@ -80,6 +81,7 @@ a86e1a9e6b6fcfccb24188fe3c2d36fcce50b60d2bbc173df7396b6952ea1929  tests/conforma
 7d08d9dceb1d112bfe4ce6ebc01206b14087b936dd3bc4a0b68ca7cc6fb5c3f6  tests/conformance/L1/ok_docs/main.jrust
 0b2f3a80307ebf87ddfb682d268453afe9ca9ac516bbfbbdec198262c2cf8aa2  tests/conformance/L1/ok_enum_switch/main.jrust
 5e7d58690d646a7fde40b11d20a29c98f51d2039a3af201ec78104144f2dc185  tests/conformance/L1/ok_ext_unknown/main.jrust
+39ba31b03657d3488a37db1d8e1a1ed78b356c33174715d68a4a1f57614f3fe7  tests/conformance/L1/ok_field_narrow/main.jrust
 3f12a89aeef571137eb808f8301c272842a11d78c3c0a0bf681510e471810640  tests/conformance/L1/ok_for_mutable/main.jrust
 1845d029e9918f81b86f10ea37cfb80f517ae2616aeb1bafa2e66129bd802ccd  tests/conformance/L1/ok_generic/main.jrust
 0fffe5a76ba0677567fd576350ddc3c9302df6dc414f126f6100a8c546b4a96f  tests/conformance/L1/ok_generic_bounds/main.jrust

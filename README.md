@@ -276,7 +276,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 不支持（解析期报 `JR3031`，提示用 `?` 传播、清理交给 `Drop`）。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
-- `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 判空分支内取值；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。**`T?` 赋给非可空 `T` 必须显式判空**（`JR6007`），这是 2.0 破坏性变更。
+- `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 判空分支内取值；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。**`T?` 赋给非可空 `T` 必须显式判空**（`JR6007`），这是 2.0 破坏性变更。判空支持局部变量、方法调用（如 `a.getTag()`）与字段（如 `this.boxed`）；字段重新赋值后先前的判空结论自动失效。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）支持 `throws` + `?` 的向上传播（throw 直接终止并报「未捕获异常」），但暂不支持 try / catch / finally 与 raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
 - `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`jrust verify` 报告会把 raw 单列为 `raw: N 块 / M 行（原样内联，不计入 jrust 诊断覆盖率）`（`JR-X3`，v1.36）；`raw` 不能嵌套（`JR3027`）。

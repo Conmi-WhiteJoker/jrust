@@ -1,0 +1,11 @@
+public class Holder {
+    private Integer? boxed;
+    public Holder(Integer? v) { this.boxed = v; }
+    public int read() {
+        if (this.boxed != null) {
+            int v = this.boxed;
+            return v;
+        }
+        return -1;
+    }
+}
