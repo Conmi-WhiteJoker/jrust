@@ -603,3 +603,37 @@ V2 类型信息层（cairn §14）的阶段 0，独立于后续 A–F 阶段。
 - **零回归**：原有全部夹具与 examples 的产物**逐字节未变**（`git status` 仅新增夹具目录）。
 - 验证：`./verify.sh` 九步全绿（L1 142、解释对拍 15 + 35、L3 12.8k QPS、L4 11.5k/10.9k QPS）；
   rustc 1.85.0 基线 `cargo build --locked` 通过。
+
+## v1.40 — 2026-11-27
+
+### 阶段 A：类型信息层骨架 + 块作用域修复 + 产物快照门槛
+
+V2 类型信息层（cairn §14）的阶段 A，硬门槛是**产物逐字节不变**。
+
+- **新增 `src/types.rs`**（约 330 行）：`Ty` / `Scalar` / `TypeEnv` / `SymbolTable` 四组结构。
+  - `Ty` 比 `ast::Type` 严格：`TyVar` 与 `Named` 分开、`Unknown` **显式**（只允许表示外部
+    crate 类型，不允许再出现"推断失败就 None"）。阶段 A 只立骨架，`codegen` 仍用 `ast::Type`。
+  - `TypeEnv` 带作用域（`scopes: Vec<HashMap>`），替换 `codegen::Env` 里那张扁平表。
+  - `SymbolTable` 立骨架（class / interface / enum 的字段表、方法表），阶段 B 启用。
+- **块作用域修复**：`codegen` 在 `if` / `else` / `while` / `for` / `spawn` / `synchronized`
+  六个块位置成对 `push_scope` / `pop_scope`（共 7 对，含 `for` 的两种形态）。
+  **这修的是一个真实语义 bug**：修复前内层同名变量会覆盖外层类型，
+  ```java
+  int s = 1;
+  if (flag) { String s = "inner"; println(s); }
+  println(s + 1);          // ← 修复前生成 format!("{}{}", s, 1)，输出 "11"
+  ```
+  修复后生成 `s + 1`，输出 `2`。该用例固化为 `ok_shadow_scope` 夹具（含 `for` 循环变量、
+  两层嵌套遮蔽），产物形态断言锁死 `run_build_lacks 'format!("{}{}", s, 1)'`。
+- **产物快照门槛**：新增 `tests/snapshot.sh` + `tests/snapshots/artifacts.txt`
+  （108 项 sha256，覆盖 15 个例程 + 83 个 L1 夹具 + 4 个多文件工程）。产物头部含源路径，
+  快照先归一化路径再取指纹，否则临时目录每次不同会让指纹漂移。`verify.sh` 扩为**十步**，
+  第 10 步跑 `snapshot.sh --check`。
+- **附录 A 覆盖率盘点**：新增 `tests/coverage_audit.sh`，对 53 个 ✅ 需求逐条给可判定 grep 判据，
+  在夹具语料里找证据。**做了变异验证**（删掉全部 spawn 夹具 → `JR-C11` 报警），确认不是假绿。
+  这是 §14.9「验收盲区」的落地工具——标量加宽就是这么藏了一整版。
+- 验收：`./verify.sh` 十步全绿（L1 145、解释对拍 15 + 36、L3 12.9k QPS、L4 10.0k/9.1k QPS、
+  快照 108 项零漂移）；`cargo test` 13 项（原 8 + 新增 5 项 TypeEnv 单测）；
+  rustc 1.85.0 基线通过。
+- **零漂移证据**：替换 `TypeEnv` 后立即跑 `snapshot.sh --check`，107 项全等；
+  加作用域后再次校验，仍全等（说明现有夹具没有踩到遮蔽 bug，该 bug 只在新夹具里暴露）。

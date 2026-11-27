@@ -62,7 +62,8 @@ fn borrow_sigs(prog: &Program) -> Result<Sigs, Vec<Diag>> {
 }
 
 struct Env {
-    vars: HashMap<String, Type>,
+    /// 局部变量 → 类型。带作用域（阶段 A）：块退出后内层声明不再可见。
+    vars: crate::types::TypeEnv,
     mutated: HashSet<String>,
     ret: Type,
     /// 当前函数是否声明了 `throws`（决定 `?` 是否合法、`return` 是否包 `Ok(...)`）。
@@ -80,7 +81,7 @@ struct Env {
 impl Env {
     fn new(ret: Type) -> Self {
         Env {
-            vars: HashMap::new(),
+            vars: crate::types::TypeEnv::new(),
             mutated: HashSet::new(),
             ret,
             in_throws: false,
@@ -444,7 +445,7 @@ impl<'a> Codegen<'a> {
     /// 赋值目标 / 声明处的静态类型（用于判断是否要 clone）。
     fn target_type(&self, expr: &Expr, env: &Env) -> Option<Type> {
         match expr {
-            Expr::Ident(n) => env.vars.get(n).cloned(),
+            Expr::Ident(n) => env.vars.lookup(n).cloned(),
             Expr::Index(base, _) => match self.infer_type(base, env) {
                 Some(Type::Array(inner)) => Some(*inner),
                 Some(Type::List(inner)) => Some(*inner),
@@ -748,7 +749,7 @@ impl<'a> Codegen<'a> {
         if let Expr::Ident(n) = core {
             let s = self.gen_arg(a, pt, env);
             // 生成之后再登记移动，否则本次使用会被自己误判为 use-after-move。
-            let owned = env.vars.get(n).map_or(true, |t| !t.is_copy_scalar());
+            let owned = env.vars.lookup(n).map_or(true, |t| !t.is_copy_scalar());
             if owned && !env.borrowed.contains_key(n) {
                 env.moved.insert(n.clone());
             }
@@ -1348,7 +1349,7 @@ impl<'a> Codegen<'a> {
                         .extend(m.type_params.iter().map(|p| p.name.clone()));
                     let mut env = Env::new(m.ret.clone());
                     for (i, p) in m.params.iter().enumerate() {
-                        env.vars.insert(p.name.clone(), p.ty.clone());
+                        env.vars.declare(p.name.clone(), p.ty.clone());
                         let raw = modes.get(i).copied().unwrap_or(PMode::Value);
                         let mode = self.effective_mode(raw, &p.ty);
                         if !mode.is_value() {
@@ -1413,7 +1414,7 @@ impl<'a> Codegen<'a> {
                         .extend(m.type_params.iter().map(|p| p.name.clone()));
                     let mut env = Env::new(m.ret.clone());
                     for p in &m.params {
-                        env.vars.insert(p.name.clone(), p.ty.clone());
+                        env.vars.declare(p.name.clone(), p.ty.clone());
                     }
                     env.mutated = mutated.clone().unwrap_or_default();
                     env.self_class = Some(iface.name.clone());
@@ -1820,7 +1821,7 @@ impl<'a> Codegen<'a> {
         }
         let mut env = Env::new(Type::Void);
         for p in &main.params {
-            env.vars.insert(p.name.clone(), p.ty.clone());
+            env.vars.declare(p.name.clone(), p.ty.clone());
         }
         env.mutated = self.collect_mutated_with_sigs(&main.body);
         env.in_throws = throws;
@@ -1852,7 +1853,7 @@ impl<'a> Codegen<'a> {
         self.indent += 1;
         let mut env = Env::new(Type::Void);
         for p in &ctor.params {
-            env.vars.insert(p.name.clone(), p.ty.clone());
+            env.vars.declare(p.name.clone(), p.ty.clone());
         }
         let mut fields: Vec<String> = Vec::new();
         for st in &ctor.body {
@@ -1991,7 +1992,7 @@ impl<'a> Codegen<'a> {
         self.generic_params.extend(m.type_params.iter().map(|p| p.name.clone()));
         let mut env = Env::new(m.ret.clone());
         for (i, p) in m.params.iter().enumerate() {
-            env.vars.insert(p.name.clone(), p.ty.clone());
+            env.vars.declare(p.name.clone(), p.ty.clone());
             let raw = modes.get(i).copied().unwrap_or(PMode::Value);
             let mode = self.effective_mode(raw, &p.ty);
             if !mode.is_value() {
@@ -2108,7 +2109,7 @@ impl<'a> Codegen<'a> {
                     ty_str,
                     init_str
                 ));
-                env.vars.insert(name.clone(), ty.clone());
+                env.vars.declare(name.clone(), ty.clone());
             }
             Stmt::Assign {
                 target,
@@ -2217,12 +2218,16 @@ impl<'a> Codegen<'a> {
                 let c = self.gen_expr(cond, env, None);
                 self.emit(&format!("if {} {{", c));
                 self.indent += 1;
+                env.vars.push_scope();
                 self.gen_stmts(then, env);
+                env.vars.pop_scope();
                 self.indent -= 1;
                 if let Some(else_body) = els {
                     self.emit("} else {");
                     self.indent += 1;
+                    env.vars.push_scope();
                     self.gen_stmts(else_body, env);
+                    env.vars.pop_scope();
                     self.indent -= 1;
                     self.emit("}");
                 } else {
@@ -2235,7 +2240,9 @@ impl<'a> Codegen<'a> {
                 let c = self.gen_expr(cond, env, None);
                 self.emit(&format!("while {} {{", c));
                 self.indent += 1;
+                env.vars.push_scope();
                 self.gen_stmts(body, env);
+                env.vars.pop_scope();
                 self.indent -= 1;
                 self.emit("}");
             }
@@ -2285,8 +2292,10 @@ impl<'a> Codegen<'a> {
                 };
                 self.emit(&format!("for {} in {} {{", name, it));
                 self.indent += 1;
-                env.vars.insert(name.clone(), ty.clone());
+                env.vars.push_scope();
+                env.vars.declare(name.clone(), ty.clone());
                 self.gen_stmts(body, env);
+                env.vars.pop_scope();
                 self.indent -= 1;
                 self.emit("}");
             }
@@ -2318,8 +2327,10 @@ impl<'a> Codegen<'a> {
                 };
                 self.emit(&format!("for {} in {} {{", name, range));
                 self.indent += 1;
-                env.vars.insert(name.clone(), ty.clone());
+                env.vars.push_scope();
+                env.vars.declare(name.clone(), ty.clone());
                 self.gen_stmts(body, env);
+                env.vars.pop_scope();
                 self.indent -= 1;
                 self.emit("}");
             }
@@ -2342,11 +2353,11 @@ impl<'a> Codegen<'a> {
                 // 捕获的是副本，外层原值仍在（与 Java lambda 捕获局部变量是副本一致）。
                 // 注意不能用 `let x = x.clone();` 的同名 shadowing —— 那只是给同一块内存
                 // 起了第二个名字，`async move` 照样把外层 `x` 移走。
-                let outer: Vec<String> = env.vars.keys().cloned().collect();
+                let outer: Vec<String> = env.vars.visible_names();
                 let captures = spawn_free_vars(body, &outer);
                 let mut rebind: Vec<(String, String)> = Vec::new();
                 for name in captures.iter() {
-                    let ty = env.vars.get(name).cloned();
+                    let ty = env.vars.lookup(name).cloned();
                     // Copy 标量由 `async move` 直接复制，不需要（也不该）clone。
                     if ty.as_ref().map_or(false, |t| t.is_copy_scalar()) {
                         continue;
@@ -2376,7 +2387,9 @@ impl<'a> Codegen<'a> {
                 for (name, tmp) in &rebind {
                     self.emit(&format!("let {} = {};", name, tmp));
                 }
+                env.vars.push_scope();
                 self.gen_stmts(body, env);
+                env.vars.pop_scope();
                 self.indent -= 1;
                 self.emit("});");
                 self.in_async = prev_async;
@@ -2414,7 +2427,9 @@ impl<'a> Codegen<'a> {
                         self.indent += 1;
                         self.emit(&format!("let mut _g = self.{}.lock().unwrap();", f));
                         self.guarded.insert(f.clone(), "_g".to_string());
+                        env.vars.push_scope();
                         self.gen_stmts(body, env);
+                        env.vars.pop_scope();
                         self.guarded.remove(&f);
                         self.indent -= 1;
                         self.emit("}");
@@ -2925,7 +2940,7 @@ impl<'a> Codegen<'a> {
             Expr::Ident(n) => {
                 let info = env
                     .vars
-                    .get(n)
+                    .lookup(n)
                     .map(|t| (t.is_copy_scalar(), self.rust_type(t)));
                 match info {
                     Some((true, tn)) => {
@@ -3295,7 +3310,7 @@ impl<'a> Codegen<'a> {
         if self.multi_file {
             if let Some(Expr::Ident(cn)) = recv.as_deref() {
                 let type_like = cn.chars().next().map_or(false, |c| c.is_ascii_uppercase())
-                    && !env.vars.contains_key(cn);
+                    && !env.vars.contains(cn);
                 if type_like {
                     let vals: Vec<String> = args
                         .iter()
@@ -3670,7 +3685,7 @@ impl<'a> Codegen<'a> {
 
     fn infer_type(&self, e: &Expr, env: &Env) -> Option<Type> {
         match e {
-            Expr::Ident(n) => env.vars.get(n).cloned(),
+            Expr::Ident(n) => env.vars.lookup(n).cloned(),
             Expr::This(_) => env.self_class.clone().map(Type::Named),
             Expr::New {
                 class, type_args, ..

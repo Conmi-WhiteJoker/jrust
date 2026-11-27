@@ -1042,6 +1042,11 @@ run_build_has ok_widen 'c.twice(n as f64)'
 run_build_has ok_widen 'return x as f64;'
 run_build_lacks ok_widen 'let dl: f64 = 1;'
 run_build_lacks ok_widen 'let d: f64 = n;'
+# 阶段 A / 块作用域：内层同名变量不得污染外层类型。
+# 修复前 `s + 1` 会被当成字符串拼接生成 `format!("{}{}", s, 1)`（语义错误）。
+run_build_lacks ok_shadow_scope 'format!("{}{}", s, 1)'
+run_build_has ok_shadow_scope 'println!("{}", s + 1);'
+run_build_has ok_shadow_scope 'println!("{}", i + 1);'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加" 4
 run_neg neg_switch_int JR3019 "int / String" 4

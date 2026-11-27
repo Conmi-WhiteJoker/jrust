@@ -9,6 +9,7 @@ mod interp;
 mod json;
 mod lexer;
 mod parser;
+mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};

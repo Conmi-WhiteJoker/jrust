@@ -1,0 +1,33 @@
+/// 块作用域（阶段 A）：内层块声明的同名变量不得覆盖外层的类型。
+///
+/// 修复前 `Env.vars` 是单张扁平表，`if` 分支里的 `String s` 会把外层的 `int s`
+/// 覆盖掉，`if` 之后的 `s + 1` 就被当成字符串拼接，生成 `format!("{}{}", s, 1)`
+/// ——产物仍能编译，但**语义错了**（Java 里 `s` 还是 int，结果应是 2）。
+/// 修复后每个 `{}` 块有独立作用域，块退出即恢复外层视图。
+public class Main {
+    public static void main(String[] args) {
+        int s = 1;
+        boolean flag = true;
+        if (flag) {
+            String s = "inner";
+            println(s);
+        }
+        // 关键断言：这里 s 必须仍是 int，`s + 1` 走数值加法得 2，而不是拼接成 "11"。
+        println(s + 1);
+
+        // 循环变量同理：退出循环后同名外层变量类型不变。
+        int i = 100;
+        for (int i = 0; i < 2; i++) {
+            println(i);
+        }
+        println(i + 1);
+
+        // 嵌套两层同名：退出后逐层恢复。
+        String t = "outer";
+        if (flag) {
+            int t = 5;
+            println(t);
+        }
+        println(t);
+    }
+}

@@ -36,8 +36,8 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证（九步）：cargo test → 转译 15 个例程 → cargo build →
-# l1_cases → move_cases → 解释/编译对拍 → L3 服务 → L4 双实现对拍（压测 ≥1k QPS）
+# 端到端验证（十步）：cargo test → 转译 15 个例程 → cargo build →
+# l1_cases → move_cases → 解释/编译对拍 → L3 服务 → L4 双实现对拍 → 产物快照
 ./verify.sh
 
 # 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
@@ -66,7 +66,7 @@ cargo build
 ./target/debug/jrust --version
 ```
 
-CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构建 + 单测，`stable` 上再跑九步全量验收（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)）。
+CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构建 + 单测，`stable` 上再跑十步全量验收（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)）。
 
 ## 解释执行与调试（方案 C）
 
@@ -99,7 +99,7 @@ CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构�
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 35 个），
+`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 36 个），
 比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
 解释器唯一不支持的写法是 `raw`（解释器不执行 Rust 代码，属设计边界），列在
 `tests/interp_unsupported.txt`；清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
@@ -280,6 +280,7 @@ src/lexer.rs    手写词法分析（不引解析框架，便于阅读）
 src/parser.rs   递归下降语法分析 + 解释性诊断
 src/ast.rs      Java 风格的 AST（不含任何 Rust 概念）
 src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推断）
+src/types.rs    V2 类型信息层骨架（Ty / TypeEnv / SymbolTable；阶段 A 已启用 TypeEnv）
 src/interp.rs   树遍历解释器（run / debug 共用，赋值复制 + 显式 move）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
@@ -301,6 +302,9 @@ tests/l3_smoke.sh  L3 验收：端点 smoke + ab 压测（≥1k QPS、0 失败�
 tests/l4/       独立 cargo 工程：中型服务双 bin（jrust 产物 / 手写 `ref/reference.rs`），
                 多模块 `app.gate` + `app.store` + `spawn` 后台心跳 + 三条失败路径（JR-G13）
 tests/l4_cases.sh  L4 验收：功能逐字节对拍 + 稳定性基线 + 后台任务 + ab 压测 + 优雅退出
+tests/snapshot.sh  产物快照：生成 / `--check` 校验全部产物的 sha256（重构防漂移门槛）
+tests/snapshots/artifacts.txt  快照基线（108 项：例程 + L1 夹具 + 多文件工程）
+tests/coverage_audit.sh  附录 A 覆盖率盘点：逐条确认每个 ✅ 需求都有夹具覆盖
 ```
 
 ## 为什么不用 proc macro
