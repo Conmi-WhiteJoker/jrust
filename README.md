@@ -152,8 +152,8 @@ CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构�
 | `Map<K, V>` / `HashMap<K, V>` | `HashMap<K, V>` | 自动补 `use std::collections::HashMap;`；`Integer`/`Long`/`Double`/`Boolean`/`Character` 按对应标量处理 | [MapDemo](examples/MapDemo/main.jrust) |
 | `new HashMap<>()` | `HashMap::new()` | 无参构造 | [MapDemo](examples/MapDemo/main.jrust) |
 | `map.put(k, v)` / `map.size()` / `map.containsKey(k)` | `insert(k, v)` / `len()` / `contains_key(&k)` | | [MapDemo](examples/MapDemo/main.jrust) |
-| `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断 | [MapDemo](examples/MapDemo/main.jrust) |
-| `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic | [Nullable](examples/Nullable/main.jrust) |
+| `map.get(k)` | `map.get(k).cloned().unwrap()` | 键缺失会 panic（Java 返回 `null`）；字符串键字面量直接传、变量生成 `.as_str()`，其它键加 `&`；先用 `containsKey` 判断。**⚠️ 弃用中（`JR9001`）**：2.0 起改为返回 `Option<V>`，请迁移到 `getOrNull` | [MapDemo](examples/MapDemo/main.jrust) · [迁移用例](tests/conformance/L1/ok_map_get_deprecated/main.jrust) |
+| `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic。**这是 `map.get` 迁移的官方出口**（SPEC-v2 §3-1） | [Nullable](examples/Nullable/main.jrust) |
 | `Set<T>` / `HashSet<T>` | `HashSet<T>` | `new HashSet<>()` → `HashSet::new()`；`add`→`insert`、`size`→`len`、`isEmpty`→`is_empty`；`contains` / `remove` 自动取引用（`String` 元素走 `.as_str()`） | [L1 用例](tests/conformance/L1/ok_set/main.jrust) |
 | `T? x` | `Option<T>` | `T? x = null;` → `None`；`T? x = v;` → `Some(v)`；`x == null` / `x != null` → `is_none()` / `is_some()`；对 `T?` 直接调用 `T` 的方法报 `JR3006` | [Nullable](examples/Nullable/main.jrust) |
 | `T v = x;`（`x` 是 `T?`） | `let v: T = x.clone().unwrap();` | 显式解包：`None` 会 panic（等价于 Java 的 NPE）；先用 `if (x != null)` 判空 | [Nullable](examples/Nullable/main.jrust) |
@@ -280,7 +280,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）支持 `throws` + `?` 的向上传播（throw 直接终止并报「未捕获异常」），但暂不支持 try / catch / finally 与 raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
 - `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`jrust verify` 报告会把 raw 单列为 `raw: N 块 / M 行（原样内联，不计入 jrust 诊断覆盖率）`（`JR-X3`，v1.36）；`raw` 不能嵌套（`JR3027`）。
-- `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
+- `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。`get` 正在弃用（`JR9001` 警告）：2.0 起返回 `Option<V>`，新代码请用 `getOrNull`。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。
 - `synchronized` 只能锁定 `@shared` 可变字段（`synchronized (this.f)`），不支持锁定任意对象；`synchronized` 方法按字段名排序加锁，多个 `@shared` 可变字段时顺序固定以防交叉死锁。

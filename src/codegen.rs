@@ -4064,6 +4064,18 @@ impl<'a> Codegen<'a> {
                     if args.len() != 1 {
                         self.err("get 需要一个键", "例如 `m.get(\"a\")`。");
                     }
+                    // JR9001（双轨期第一步，SPEC-v2 §3-1）：`map.get(k)` 在 2.0 将改为返回
+                    // `Option<V>`（键缺失为 None，不再 panic）。当前语义仍是 `.unwrap()`，
+                    // **不提前切换**（JR-V7 禁止「文档写 None、实现仍 panic」的反向不一致，
+                    // 同样也禁止实现先跑）。
+                    //
+                    // 这里只发弃用警告，产物形态完全不变——双轨期的意义是给用户迁移时间，
+                    // 不是提前改变行为。2.0 才切换 `get` 语义并删除本分支。
+                    self.warn_code(
+                        "JR9001",
+                        "`map.get(k)` 将在 2.0 改为返回 `Option<V>`（键缺失为 `None`，不再 panic）",
+                        "迁移到 `getOrNull(k)`：它现在就是 `Option<V>` 语义（产物 `get(&k).cloned()`）。写成 `V? v = m.getOrNull(\"k\");`，2.0 之后两种写法等价。",
+                    );
                     let k = self.gen_map_key(args.first(), k_ty, env);
                     // Rust 的 get 返回 Option<&V>；键缺失时 Java 得到 null，jrust 没有 null，
                     // 这里取拥有所有权的值，缺失即 panic（可用 containsKey 先判断）。

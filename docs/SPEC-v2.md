@@ -20,9 +20,9 @@
 - **JR-V3** 检查阶段与转译共用同一份类型信息：`jrust check` 报出的 error 必须在 `jrust build`
   之前复现，不允许「check 通过、靠 rustc 兜底报错」。✅（v1.41–v1.45 六阶段）
 - **JR-V4** 破坏性映射必须先经过**双轨期**：在一个 MINOR 版本里保留旧行为、同时提供新写法并发出
-  `JR9xxx` 弃用 warning；下个 MAJOR 才删除旧行为。（🚧 机制尚未实现，首个适用对象见 §3）
+  `JR9xxx` 弃用 warning；下个 MAJOR 才删除旧行为。（✅ v1.46：`JR9001` 已落地，首个适用对象见 §3）
 - **JR-V5** 产物形态稳定性：任何阶段/版本都不得改变既有产物，除非该变更明确列入 §3；
-  由 `tests/snapshot.sh --check`（116 项 sha256）守住。✅ v1.40
+  由 `tests/snapshot.sh --check`（117 项 sha256）守住。✅ v1.40
 
 ## 2. 类型检查（规范性）
 
@@ -74,7 +74,7 @@
 
 | # | 变更 | 现状 | 双轨计划 |
 |---|---|---|---|
-| 1 | `map.get(k)` 返回 `Option<V>`（键缺失为 `None`，不再 panic） | 🚧 v1 语义仍是 `.cloned().unwrap()`；`getOrNull` 已可用（✅） | 先在一个 MINOR 发 `JR9001`（提示改 `getOrNull`），2.0 切换 `get` 语义并删除旧分支 |
+| 1 | `map.get(k)` 返回 `Option<V>`（键缺失为 `None`，不再 panic） | 🚧 v1 语义仍是 `.cloned().unwrap()`；`getOrNull` 已可用（✅） | **双轨第一步已落地 ✅ v1.46**：`JR9001` 弃用 warning（产物形态不变）；2.0 切换 `get` 语义并删除旧分支 |
 
 - **JR-V6** `getOrNull(k)` 是本次迁移的官方出口（产物 `get(&k).cloned()`），语义稳定。
 - **JR-V7** 切换完成前，§3-1 的状态必须保持 🚧；不允许「文档写 None、实现仍 panic」。
@@ -102,7 +102,7 @@
 | V2-A2 | 既有产物零漂移 | `tests/snapshot.sh --check`（116 项） | ✅ |
 | V2-A3 | 解释执行与编译产物行为一致 | `tests/interp_parity.sh`（examples 15 + L1 37） | ✅ |
 | V2-A4 | 附录 A 覆盖率盘点可执行且进入验收 | `tests/coverage_audit.sh`（58 项） | 🚧 脚本已有，未接入 verify/CI |
-| V2-A5 | 双轨机制可用，`map.get` 按 §3 切换 | `JR9xxx` 警告 + 迁移用例 | 🚧 |
+| V2-A5 | 双轨机制可用，`map.get` 按 §3 切换 | `JR9xxx` 警告 + 迁移用例 | 🚧 **机制 ✅ v1.46**（`JR9001` + `run_deprecated` 检查器 + 变异验证）；2.0 的语义切换待做 |
 | V2-A6 | CI 覆盖 rustc 基线 1.85 与最新 stable | `.github/workflows/ci.yml` | ✅ v1.37 |
 | V2-A7 | §4 全部定案 | 决策记录进 CHANGELOG | 🚧 0 / 7 |
 

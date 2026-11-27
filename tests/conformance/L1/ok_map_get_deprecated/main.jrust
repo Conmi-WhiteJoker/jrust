@@ -1,0 +1,29 @@
+/// `map.get(k)` 的双轨期状态（SPEC-v2 §3-1 / JR9001）。
+///
+/// 2.0 起 `get` 将返回 `Option<V>`（键缺失为 None，不再 panic）。**当前仍是 v1 语义**：
+/// 产物 `.cloned().unwrap()`、键缺失 panic。本夹具锁定两件事：
+/// 1. 用 `get` 会收到 `JR9001` 弃用警告（提示迁移到 `getOrNull`）；
+/// 2. 产物形态**不变**（双轨期不提前改行为，JR-V7）。
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 1);
+        m.put("b", 2);
+        // 旧写法：仍可用，但会收到 JR9001。
+        int v = m.get("a");
+        println(v);
+        // 官方迁移出口：getOrNull 返回 Option<V>，键缺失为 null。
+        Integer? missing = m.getOrNull("zzz");
+        if (missing != null) {
+            int got = missing;
+            println(got);
+        } else {
+            println(-1);
+        }
+        Integer? hit = m.getOrNull("b");
+        if (hit != null) {
+            int got = hit;
+            println(got);
+        }
+    }
+}
