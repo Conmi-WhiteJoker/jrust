@@ -1032,6 +1032,16 @@ run_build_has ok_spawn_raw 'println!("{}", s);'
 run_build_lacks ok_spawn_raw '__jr_sp0_s'
 # 缺口 3：外部 crate 构造器的实参按 owned 生成，不做借用推断。
 run_deps_ctor
+# 阶段 0 / JR-T9：标量加宽转换的产物形态（锁住四个落点，防止回退成无 `as` 的代码）。
+run_build_has ok_widen 'let l: i64 = n as i64;'
+run_build_has ok_widen 'let d: f64 = n as f64;'
+run_build_has ok_widen 'let dl: f64 = 1.0;'
+run_build_has ok_widen 'let fl: f32 = 2.0;'
+run_build_has ok_widen 'l2 = n as i64;'
+run_build_has ok_widen 'c.twice(n as f64)'
+run_build_has ok_widen 'return x as f64;'
+run_build_lacks ok_widen 'let dl: f64 = 1;'
+run_build_lacks ok_widen 'let d: f64 = n;'
 
 run_neg neg_try_without_throws JR3018 "给当前方法签名加" 4
 run_neg neg_switch_int JR3019 "int / String" 4

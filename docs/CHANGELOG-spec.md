@@ -576,3 +576,30 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 - `tests/l1_cases.sh` 两处 rustc 错误映射断言同步为 `:<行>:0: error[E…]`（`run_verify_tree_bad` /
   `run_verify_tree_lib`）。
 - 验证：`./verify.sh` 九步全绿（L1 133、L3 10.1k QPS、L4 11.7k/10.1k QPS）。
+
+## v1.39 — 2026-11-27
+
+### 阶段 0：标量加宽转换（JR-T9）
+
+V2 类型信息层（cairn §14）的阶段 0，独立于后续 A–F 阶段。
+
+- **问题**：Java 的隐式加宽（`int` → `long` / `float` / `double`）在 jrust 里完全没实现，
+  `long m = n;` 生成 `let m: i64 = n;` 直接 E0308；`h.twice(n)`（形参 `double`）同样失败；
+  连 `double d = 1;` 这种字面量写法也编不过。而**解释器早已是 Java 语义**
+  （`n * d` 出 4.5、`int/int` 出 3），导致编译产物与解释执行语义分叉。
+- **为什么一直没发现**：全仓只有 1 个文件出现 `i64`（`examples/RustTypes`），且是
+  `i64 big = 9000000000;` 字面量直赋，不走加宽路径。属「语法项已实现 ≠ 有夹具覆盖」的验收盲区。
+- **实现**：`codegen` 新增 `scalar_rank` / `coerce_scalar` / `scalar_literal_rewrite` /
+  `scalar_source_type` 四个辅助，接在 `gen_assigned_value`（let / 赋值 / 字段 / return 共用）
+  与 `gen_arg`（方法实参）两个出口：
+  - 变量或表达式 → 补 `as <目标>`：`let m: i64 = n as i64;`、`return x as f64;`、`c.twice(n as f64)`；
+  - 整数字面量 → 浮点目标：改写为 `1.0` / `2.0`（Rust 不接受 `let d: f64 = 1;`）；
+  - 整数字面量 → 整数目标：原样输出（Rust 字面量类型由上下文推断，`let m: i64 = 5;` 合法）。
+- **范围**：只做 let 初始化 / 普通赋值 / 方法实参 / return 四个落点。
+  二元运算内的标量提升（`int + double`）**不在本版**，记入 SPEC §16-8，随阶段 C 做。
+- **新增夹具** `tests/conformance/L1/ok_widen`（覆盖四个落点 + 字面量两种形态），
+  自动纳入 `interp_parity.sh`（解释对拍 34 → 35）；`l1_cases.sh` 新增 9 条产物形态断言
+  （7 条「必须出现」+ 2 条「不得出现」），L1 133 → **142**。
+- **零回归**：原有全部夹具与 examples 的产物**逐字节未变**（`git status` 仅新增夹具目录）。
+- 验证：`./verify.sh` 九步全绿（L1 142、解释对拍 15 + 35、L3 12.8k QPS、L4 11.5k/10.9k QPS）；
+  rustc 1.85.0 基线 `cargo build --locked` 通过。

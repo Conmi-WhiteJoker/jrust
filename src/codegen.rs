@@ -516,10 +516,16 @@ impl<'a> Codegen<'a> {
                 }
                 let s = self.gen_expr(init, env, Some(other));
                 // 借用形参派生出的位置即使目标处不要求复制，也要做落地转换（搬不走）。
-                if copy || self.needs_owned_landing(core, env) {
+                let s = if copy || self.needs_owned_landing(core, env) {
                     self.clone_if_needed(s, other, core, hint_target, env)
                 } else {
                     s
+                };
+                // 标量加宽（阶段 0 / JR-T9）：`long m = n;` → `let m: i64 = n as i64;`。
+                // 源类型只有能从表达式静态拿到时才补；拿不到就原样（交给 rustc / verify）。
+                match self.scalar_source_type(core, env) {
+                    Some(from) => self.coerce_scalar(s, &from, other),
+                    None => s,
                 }
             }
         }
@@ -684,10 +690,22 @@ impl<'a> Codegen<'a> {
                 if matches!(strip_parens_expr(a), Expr::Null) || self.expr_is_nullable(a, env) {
                     self.gen_expr(a, env, Some(pt))
                 } else {
-                    format!("Some({})", self.gen_expr(a, env, Some(inner)))
+                    let s = self.gen_expr(a, env, Some(inner));
+                    let s = match self.scalar_source_type(a, env) {
+                        Some(from) => self.coerce_scalar(s, &from, inner),
+                        None => s,
+                    };
+                    format!("Some({})", s)
                 }
             }
-            _ => self.gen_expr(a, env, Some(pt)),
+            _ => {
+                let s = self.gen_expr(a, env, Some(pt));
+                // 标量加宽（阶段 0 / JR-T9）：`h.twice(n)`（形参 double）→ `h.twice(n as f64)`。
+                match self.scalar_source_type(a, env) {
+                    Some(from) => self.coerce_scalar(s, &from, pt),
+                    None => s,
+                }
+            }
         }
     }
 
@@ -891,6 +909,85 @@ impl<'a> Codegen<'a> {
             return PMode::Value;
         }
         mode
+    }
+
+    // ---------- 标量加宽转换（阶段 0 / SPEC JR-T9） ----------
+
+    /// 标量的「加宽等级」：Java 的 `byte<short<int<long<float<double>` 简化版
+    /// （jrust 无 byte/short，从 `int` 起）。`None` 表示不是可加宽的数值标量。
+    ///
+    /// `char` 按 Java 语义可加宽到 `int` 及以上，但 jrust 目前没有 char 参与算术的
+    /// 用例，先不纳入，避免引入未验证的产物形态。
+    fn scalar_rank(t: &Type) -> Option<u8> {
+        match t {
+            Type::Int => Some(1),
+            Type::Long => Some(2),
+            Type::Float => Some(3),
+            Type::Double => Some(4),
+            Type::RustPrim(n) => match n.as_str() {
+                "i8" | "i16" | "i32" => Some(1),
+                "i64" | "isize" => Some(2),
+                "u8" | "u16" | "u32" => Some(1),
+                "u64" | "u128" | "usize" => Some(2),
+                "f32" => Some(3),
+                "f64" => Some(4),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// 把已生成的表达式串 `s` 从标量类型 `from` 加宽到 `to`。
+    ///
+    /// 只在**确实需要**时插 `as`：同级 / 窄化 / 任一非数值标量都原样返回。
+    /// 窄化（`double` → `int`）不在本函数处理——那属于阶段 C 的 `assignable` 报错范围。
+    fn coerce_scalar(&self, s: String, from: &Type, to: &Type) -> String {
+        let (Some(a), Some(b)) = (Self::scalar_rank(from), Self::scalar_rank(to)) else {
+            return s;
+        };
+        if a >= b {
+            return s;
+        }
+        // 字面量直接改写比 `as` 更贴近手写 Rust：`double d = 1;` → `let d: f64 = 1.0;`。
+        if let Some(lit) = self.scalar_literal_rewrite(&s, to) {
+            return lit;
+        }
+        format!("{} as {}", s, self.rust_type(to))
+    }
+
+    /// 标量加宽的字面量特化：能靠 Rust 的字面量推断直接落地的，就不要 `as`。
+    ///
+    /// - 整数字面量 → 浮点目标：补 `.0`（`1` → `1.0`）。Rust 不接受 `let d: f64 = 1;`。
+    /// - 整数字面量 → 整数目标：**原样返回**（Rust 字面量类型由上下文推断，`let m: i64 = 5;` 合法）。
+    ///
+    /// 只处理纯数字串（允许 `_` 分隔）：带负号、已含小数点、或含任何其他字符的一律不碰，
+    /// 避免误改变量名与复合表达式。
+    fn scalar_literal_rewrite(&self, s: &str, to: &Type) -> Option<String> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit() || b == b'_') {
+            return None;
+        }
+        let to_float = matches!(to, Type::Double | Type::Float)
+            || matches!(to, Type::RustPrim(n) if n == "f32" || n == "f64");
+        if to_float {
+            return Some(format!("{}.0", s));
+        }
+        // 整数目标：字面量本身就能被推断成目标整数类型，无需任何改写。
+        Some(s.to_string())
+    }
+
+    /// 标量加宽用的源类型：比 `infer_type` 多认字面量。
+    ///
+    /// `infer_type` 对字面量返回 `None`（它服务的是"这个表达式的类型"这类结构性判断），
+    /// 但加宽需要知道 `1` 是整数字面量、`1.5` 是浮点字面量。字面量在 Java 里
+    /// 有明确默认类型（整数 → `int`，小数 → `double`），这里按该语义补齐。
+    fn scalar_source_type(&self, e: &Expr, env: &Env) -> Option<Type> {
+        match strip_parens_expr(e) {
+            Expr::Int(_) => Some(Type::Int),
+            Expr::Float(_) => Some(Type::Double),
+            Expr::Char(_) => Some(Type::Char),
+            Expr::Bool(_) => Some(Type::Boolean),
+            other => self.infer_type(other, env),
+        }
     }
 
     /// 按三态渲染形参类型（D1–D3）。

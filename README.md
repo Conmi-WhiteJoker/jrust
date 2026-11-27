@@ -99,7 +99,7 @@ CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构�
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 34 个），
+`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 35 个），
 比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
 解释器唯一不支持的写法是 `raw`（解释器不执行 Rust 代码，属设计边界），列在
 `tests/interp_unsupported.txt`；清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
@@ -138,6 +138,7 @@ CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构�
 | 多文件借用（全局分析） | 跨文件方法的 `&str` / `&self` / `-> &T` | `jrust build <目录>` 对全工程做一次签名分析，跨文件调用也能拿到形参三态与返回来源；外部 crate 的类型没有源码签名时按 `&T` 传参并输出 `warning[JR4101]`（不阻断构建，可用 `@ref`/`@mut` 覆盖） | [multifile](tests/multifile/app/greet.jrust) · [ok_ext_unknown](tests/conformance/L1/ok_ext_unknown/main.jrust) |
 | `public Circle(double r) { this.r = r; }` | `pub fn new(r: f64) -> Self { Self { r } }` | 构造器 → 关联函数 | [ClassInterface](examples/ClassInterface/main.jrust) |
 | `int / long / double / float / boolean / char` | `i32 / i64 / f64 / f32 / bool / char` | | [RustTypes](examples/RustTypes/main.jrust) |
+| 标量隐式加宽 | 补 `as 目标类型` | Java 的 `int` → `long` → `float` → `double` 加宽，在 let 初始化 / 普通赋值 / 方法实参 / `return` 四处自动补转换（`long m = n;` → `let m: i64 = n as i64;`）；整数字面量给浮点目标改写为 `1.0`，给整数目标原样输出。**二元运算内的提升**（`int + double`）暂不支持，见 SPEC §16-8 | [ok_widen](tests/conformance/L1/ok_widen/main.jrust) |
 | `i32 / i64 / i128 / isize / u8 ... u128 / usize / f32 / f64 / bool` | 同名原样输出 | Rust 原生标量类型名可直接写；解释器内部按 i64/f64 存储，i128/u128 仅支持 i64 范围内的字面量 | [RustTypes](examples/RustTypes/main.jrust) |
 | `1_000_000` | `1000000` | Java 7+ 的下划线分隔符；`_` 只能夹在数字之间，否则报诊断。Rust 的 `42u8` 类型后缀不支持，类型写在声明上即可（`u8 b = 42;`） | [RustTypes](examples/RustTypes/main.jrust) |
 | `String` | `String` | 字符串字面量自动补 `.to_string()` | [HelloWorld](examples/HelloWorld/main.jrust) |

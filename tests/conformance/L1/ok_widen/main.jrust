@@ -1,0 +1,46 @@
+/// 标量加宽转换（SPEC JR-T9 / 阶段 0）：Java 允许 int → long → float → double 的隐式加宽，
+/// 产物必须补 `as`（或把整数字面量改写成 `1.0`），否则 rustc 报 E0308 / E0277。
+/// 本夹具覆盖四个落点：let 初始化、普通赋值、方法实参、return。
+public class Conv {
+    /// return 位置：`int` 形参直接返回给 `double` 返回类型。
+    public double widen(int x) {
+        return x;
+    }
+
+    /// 方法实参位置：`double` 形参收 `int` 实参。
+    public double twice(double v) {
+        return v * 2.0;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Conv c = new Conv();
+
+        // let 初始化：变量加宽
+        int n = 7;
+        long l = n;
+        double d = n;
+        println(l);
+        println(d);
+
+        // let 初始化：字面量加宽（整数字面量 → 浮点目标要补 .0）
+        double dl = 1;
+        float fl = 2;
+        long ll = 5;
+        println(dl);
+        println(fl);
+        println(ll);
+
+        // 普通赋值：已声明变量再赋值
+        long l2 = 0;
+        l2 = n;
+        println(l2);
+
+        // 方法实参加宽
+        println(c.twice(n));
+
+        // return 加宽
+        println(c.widen(3));
+    }
+}
