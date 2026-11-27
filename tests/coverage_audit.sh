@@ -15,6 +15,8 @@ cd "$(dirname "$0")/.."
 # 语料：所有可能包含需求写法的 .jrust 源（不含负向夹具，它们本就该报错）。
 corpus_files() {
     ls tests/conformance/L1/ok_*/main.jrust 2>/dev/null
+    # 负向夹具也是覆盖证据：类型检查类需求（JR-T10/T12/T13/T14）只能靠负向夹具证明。
+    ls tests/conformance/L1/neg_*/main.jrust 2>/dev/null
     ls examples/*/main.jrust 2>/dev/null
     find tests/multifile tests/l2/src tests/l2_cross -name '*.jrust' 2>/dev/null
 }
@@ -104,6 +106,14 @@ check JR-E18  '迭代器链 stream/map/filter'                  '\.(stream|colle
 check JR-M3   'package 声明'                                '^package [a-z]'
 check JR-X1   'raw 内联'                                    '\braw\s*\{'
 check JR-T2   '借用形参 @ref / @mut'                        '@(ref|mut)\s+[A-Z]'
+
+# ---- 类型检查（v1.41–v1.44）----
+# 这些检查的「证据」是负向夹具——它们的存在即证明规则被跑到。
+check JR-T10   '未知类型名报 JR6001'                        '^\s*var\s+[a-zA-Z]+\s*='
+check JR-T12   '未知方法报 JR6004'                          '\.substring\('
+check JR-T13   '非 bool 条件报 JR6009'                      'if\s*\(\s*[a-z][a-zA-Z]*\s*\)'
+check JR-T14   '赋值/返回类型不匹配报 JR6007/8'              'int\s+[a-z]+\s*=\s*"'
+check JR-T16   '二元运算标量提升'                            '[a-z]\s*[+*]\s*[0-9]+\.[0-9]'
 
 echo
 echo "覆盖：$ok 项有夹具 / $miss 项无夹具"

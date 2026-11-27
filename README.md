@@ -257,10 +257,11 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 
 - 单文件与多文件两种模式：单文件一个 `.jrust` 对应一个 crate 根；多文件用 `package a.b;` 生成模块树（`jrust build <目录>`）。没有包管理与依赖解析——外部 crate 必须在最近的 `Cargo.toml` 里声明（缺失报 `JR5001`），jrust 从不生成或改写 `Cargo.toml`。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
-- **名称与类型检查**（v1.41 起，`jrust check` 就会报）：未知类型名（含 `var`，报 `JR6001`；
-  找不到相近拼写时降级为 `JR6102` warning）、未知方法（`JR6004`，仅限接收者类型在本工程有源码时）、
-  条件必须 `boolean`（`JR6009`）。内置类型的方法名（`String` / `List` / `Map` / `Set`）仍是
-  原样透传，由 `jrust verify` 暴露——Java 与 Rust 方法名不同，白名单留待后续阶段。
+- **名称与类型检查**（v1.41–v1.44，`jrust check` 就会报，规范见 SPEC §13.5）：
+  未知类型名（`JR6001`；找不到相近拼写时降级为 `JR6102` warning）、未知方法（`JR6004`，
+  仅限接收者类型在本工程有源码时；内置类型列支持清单 + `raw` 逃生口）、
+  条件必须 `boolean`（`JR6009`）。**外部 crate 类型是显式的「不可知」状态**——
+  依赖它的判断一律降级为放行 + `JR4101` warning，不静默猜也不武断判错。
 - **赋值 / 返回的类型兼容**（v1.42 起，`JR6007` / `JR6008`）：数值只允许同级或加宽（窄化报错），
   `T?` 与泛型参数放行，类 → 接口按 `implements` / `extends` 链判定。集合的元素类型不检查
   （`collectList` 按基座类型推断是已知局限）。
