@@ -4467,3 +4467,53 @@ fn expr_uses_ident(e: &Expr, want: &str) -> bool {
         _ => false,
     }
 }
+
+/// 统计 raw 块（JR-X3）：返回 `(块数, 内容行数)`。
+///
+/// `raw` 内容原样内联、不参与 jrust 语义分析，因此不计入诊断覆盖率；`jrust verify`
+/// 用这组数字在报告里单列。覆盖类级 `raw` 成员、构造器 / 方法体、接口默认方法体；
+/// 单行 `raw { ... }` 按 1 行计。
+pub fn raw_usage(prog: &Program) -> (usize, usize) {
+    let mut blocks = 0usize;
+    let mut lines = 0usize;
+    let mut add = |code: &str| {
+        blocks += 1;
+        lines += code.lines().count().max(1);
+    };
+    for c in &prog.classes {
+        for r in &c.raw_members {
+            add(&r.code);
+        }
+        if let Some(ctor) = &c.ctor {
+            scan_body_raw(&ctor.body, &mut add);
+        }
+        for m in &c.methods {
+            scan_body_raw(&m.body, &mut add);
+        }
+    }
+    for i in &prog.interfaces {
+        for m in &i.methods {
+            if let Some(body) = &m.body {
+                scan_body_raw(body, &mut add);
+            }
+        }
+    }
+    (blocks, lines)
+}
+
+fn scan_body_raw(body: &[Stmt], add: &mut impl FnMut(&str)) {
+    each_stmt(body, &mut |s| {
+        if let Stmt::Raw { code, .. } = s {
+            add(code);
+        }
+    });
+    each_stmt_expr(body, &mut |e| scan_expr_raw(e, add));
+}
+
+fn scan_expr_raw(e: &Expr, add: &mut impl FnMut(&str)) {
+    each_expr(e, &mut |e| {
+        if let Expr::Raw { code, .. } = e {
+            add(code);
+        }
+    });
+}

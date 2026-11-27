@@ -441,6 +441,25 @@ run_verify() {
     fi
 }
 
+# JR-X3：raw 内容原样内联、不参与 jrust 诊断，verify 报告里单列块数与行数。
+run_verify_raw() {
+    local out
+    if ! out=$($JRUST verify tests/conformance/L1/ok_raw/main.jrust 2>&1); then
+        echo "FAIL verify_raw：ok_raw 应通过"
+        echo "$out"
+        fail=$((fail + 1))
+        return
+    fi
+    if echo "$out" | grep -Eq '^  raw: [0-9]+ 块 / [0-9]+ 行（原样内联，不计入 jrust 诊断覆盖率）$'; then
+        echo "PASS verify_raw"
+        pass=$((pass + 1))
+    else
+        echo "FAIL verify_raw：报告缺少 raw 统计行"
+        echo "$out"
+        fail=$((fail + 1))
+    fi
+}
+
 # JR-G5 fmt：统一 4 空格缩进，raw 块逐字保留；格式化后仍能编译运行。
 run_fmt() {
     local work="$TMP/fmt"
@@ -1063,6 +1082,7 @@ run_deps tests/deps_ok/ok.jrust ok
 run_deps tests/deps_async/src/main.jrust fail 'tokio'
 run_verify verify_ok ok
 run_verify verify_raw_error fail 'raw 块内'
+run_verify_raw
 run_fmt
 run_spawn_capture
 # SPEC §15 L2：多文件 + 外部 crate，cargo 编译 + 与手写实现行为对拍。

@@ -258,7 +258,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）支持 `throws` + `?` 的向上传播（throw 直接终止并报「未捕获异常」），但暂不支持 try / catch / finally 与 raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
-- `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`raw` 不能嵌套（`JR3027`）。
+- `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`jrust verify` 报告会把 raw 单列为 `raw: N 块 / M 行（原样内联，不计入 jrust 诊断覆盖率）`（`JR-X3`，v1.36）；`raw` 不能嵌套（`JR3027`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
 - `@shared` 按「类内方法是否写该字段」决定 `Arc<T>` 还是 `Arc<Mutex<T>>`；不能在同一表达式里重复读同一个 `Arc<Mutex<T>>` 字段（两次加锁会死锁），把值先取到局部变量再运算。

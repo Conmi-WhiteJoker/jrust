@@ -798,6 +798,9 @@ struct TreePlan {
     root_out: PathBuf,
     /// 没有含 `main` 的根，按 lib crate 处理（根产物 `lib.rs`）。
     lib_mode: bool,
+    /// JR-X3：工程内 raw 块数与内容行数（verify 报告单列，不计入诊断覆盖率）。
+    raw_blocks: usize,
+    raw_lines: usize,
 }
 
 /// 多文件模式构建（JR-S4/M3）：
@@ -1105,10 +1108,17 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
         insert_mod_block(entry, &block);
     }
 
+    let (raw_blocks, raw_lines) = units.iter().fold((0usize, 0usize), |(b, l), u| {
+        let (ub, ul) = codegen::raw_usage(&u.prog);
+        (b + ub, l + ul)
+    });
+
     Some(TreePlan {
         files: files_out,
         root_out,
         lib_mode,
+        raw_blocks,
+        raw_lines,
     })
 }
 
@@ -1363,6 +1373,16 @@ fn scan_rustc_errors(stderr: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// JR-X3：raw 内容原样内联、不参与 jrust 诊断，verify 报告里单列块数与行数。
+fn print_raw_usage(blocks: usize, lines: usize) {
+    if blocks > 0 {
+        println!(
+            "  raw: {} 块 / {} 行（原样内联，不计入 jrust 诊断覆盖率）",
+            blocks, lines
+        );
+    }
+}
+
 /// `jrust verify <文件>`：转译后交给 rustc 编译（lib 模式，不要求 main），
 /// 再把 rustc 的报错映射回 `.jrust` 行（JR-C14 / JR-X2）。
 fn verify_one(path: &Path) -> bool {
@@ -1394,6 +1414,7 @@ fn verify_one(path: &Path) -> bool {
             return false;
         }
     };
+    let (raw_blocks, raw_lines) = codegen::raw_usage(&prog);
     let code = match codegen::generate(&prog, &path.display().to_string()) {
         Ok(gen) => {
             print_warnings(path, &gen.warnings);
@@ -1439,6 +1460,7 @@ fn verify_one(path: &Path) -> bool {
     };
     if out.status.success() {
         println!("验证通过 {}", path.display());
+        print_raw_usage(raw_blocks, raw_lines);
         return true;
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1583,6 +1605,7 @@ fn verify_tree(dir: &Path) -> bool {
     }
     if out.status.success() {
         println!("验证通过 {}", dir.display());
+        print_raw_usage(plan.raw_blocks, plan.raw_lines);
         cleanup();
         return true;
     }
