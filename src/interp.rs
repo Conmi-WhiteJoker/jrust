@@ -353,6 +353,7 @@ pub struct VarView {
 pub struct Interp<'a> {
     prog: &'a Program,
     classes: HashMap<&'a str, &'a ClassDecl>,
+    interfaces: HashMap<&'a str, &'a InterfaceDecl>,
     enums: HashMap<&'a str, &'a EnumDecl>,
     frames: Vec<Frame>,
     pub debug: Option<Debugger>,
@@ -370,9 +371,14 @@ impl<'a> Interp<'a> {
         for e in &prog.enums {
             enums.insert(e.name.as_str(), e);
         }
+        let mut interfaces = HashMap::new();
+        for i in &prog.interfaces {
+            interfaces.insert(i.name.as_str(), i);
+        }
         Interp {
             prog,
             classes,
+            interfaces,
             enums,
             frames: Vec::new(),
             debug: None,
@@ -968,6 +974,37 @@ impl<'a> Interp<'a> {
         })
     }
 
+    /// 读取 `static final` 常量（JR-D8）；`None` 表示该名字不是静态常量。
+    fn eval_static_field(
+        &mut self,
+        class_name: &str,
+        field: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let decl = match self.classes.get(class_name) {
+            Some(d) => *d,
+            None => return Ok(None),
+        };
+        let init = match decl
+            .fields
+            .iter()
+            .find(|f| f.is_static && f.name == field)
+            .and_then(|f| f.init.as_ref())
+        {
+            Some(e) => e,
+            None => return Ok(None),
+        };
+        Ok(Some(self.eval(init)?))
+    }
+
+    /// 当前类内的裸静态常量引用：`x * N` 里的 `N`。
+    fn eval_current_static(&mut self, field: &str) -> Result<Option<Value>, RuntimeError> {
+        let class = match self.frames.last() {
+            Some(f) => f.class.clone(),
+            None => return Ok(None),
+        };
+        self.eval_static_field(&class, field)
+    }
+
     fn find_slot(&mut self, name: &str) -> Result<&mut Slot, RuntimeError> {
         let line = self.cur_line;
         if let Some(f) = self.frames.last_mut() {
@@ -1046,6 +1083,12 @@ impl<'a> Interp<'a> {
                 Ok(v)
             }
             Expr::Field(recv, name) => {
+                // `Limits.NAME` 是静态常量，按值读取，不搬所有权。
+                if let Expr::Ident(en) = strip_paren(recv) {
+                    if let Some(v) = self.eval_static_field(en, name)? {
+                        return Ok(v);
+                    }
+                }
                 // `Shape.Empty` 是无数据枚举常量，不是字段访问：交给普通求值。
                 if let Expr::Ident(en) = strip_paren(recv) {
                     if let Some(ed) = self.enums.get(en.as_str()) {
@@ -1151,9 +1194,22 @@ impl<'a> Interp<'a> {
             Expr::Char(c) => Ok(Value::Char(*c)),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Null => Ok(Value::Option(None)),
-            Expr::Ident(name) => self.read_var(name),
+            Expr::Ident(name) => match self.read_var(name) {
+                Ok(v) => Ok(v),
+                // 类内裸引用静态常量：`x * N` 里的 `N` 是 `Limits.N`（JR-D8）。
+                Err(e) => match self.eval_current_static(name)? {
+                    Some(v) => Ok(v),
+                    None => Err(e),
+                },
+            },
             Expr::This(_) => self.read_this(),
             Expr::Field(recv, name) => {
+                // `Limits.N`：类名 + static final 常量（JR-D8）。
+                if let Expr::Ident(en) = strip_paren(recv) {
+                    if let Some(v) = self.eval_static_field(en, name)? {
+                        return Ok(v);
+                    }
+                }
                 // `Shape.Empty`：不带数据的枚举分支当常量用。
                 if let Expr::Ident(en) = strip_paren(recv) {
                     if let Some(ed) = self.enums.get(en.as_str()) {
@@ -1416,7 +1472,9 @@ impl<'a> Interp<'a> {
     fn eval_args(&mut self, args: &[Expr]) -> Result<Vec<Value>, RuntimeError> {
         let mut out = Vec::new();
         for a in args {
-            out.push(self.eval_place_take(a)?);
+            // 实参默认按借用传递：普通变量不会因「传进方法」被标记为已移动（JR-O11 / @ref）。
+            // 想搬走所有权必须显式写 `move x`，`eval` 的 Unary::Move 分支仍会调用 take。
+            out.push(self.eval(a)?);
         }
         Ok(out)
     }
@@ -1629,6 +1687,17 @@ impl<'a> Interp<'a> {
                             self.check_arity(name, m.params.len(), argv.len(), line)?;
                             return self.call_method(cname, m, None, argv);
                         }
+                    } else if let Some(iface) = self.interfaces.get(cname.as_str()).copied() {
+                        // 接口 static 方法（JR-D10）：`Greeter.tag()`。
+                        if let Some(sig) = iface
+                            .methods
+                            .iter()
+                            .find(|m| m.name == name && m.is_static)
+                        {
+                            let argv = self.eval_args(args)?;
+                            self.check_arity(name, sig.params.len(), argv.len(), line)?;
+                            return self.call_iface_method(cname, sig, None, argv);
+                        }
                     }
                 }
             }
@@ -1805,18 +1874,21 @@ impl<'a> Interp<'a> {
                         Some(d) => *d,
                         None => return Err(RuntimeError::new(line, format!("未知的类 `{}`", class))),
                     };
-                    let method = match decl.methods.iter().find(|m| m.name == name) {
-                        Some(m) => m,
-                        None => {
-                            return Err(RuntimeError::new(
-                                line,
-                                format!("{} 没有方法 `{}`", class, name),
-                            ))
-                        }
-                    };
-                    let argv = self.eval_args(args)?;
-                    self.check_arity(name, method.params.len(), argv.len(), line)?;
-                    self.call_method(&class, method, Some(rv.clone()), argv)
+                    if let Some(method) = decl.methods.iter().find(|m| m.name == name) {
+                        let argv = self.eval_args(args)?;
+                        self.check_arity(name, method.params.len(), argv.len(), line)?;
+                        return self.call_method(&class, method, Some(rv.clone()), argv);
+                    }
+                    // 接口默认方法（JR-D10）：类里没实现时回退到接口的默认实现。
+                    if let Some(sig) = self.find_iface_method(decl, name) {
+                        let argv = self.eval_args(args)?;
+                        self.check_arity(name, sig.params.len(), argv.len(), line)?;
+                        return self.call_iface_method(&class, sig, Some(rv.clone()), argv);
+                    }
+                    Err(RuntimeError::new(
+                        line,
+                        format!("{} 没有方法 `{}`", class, name),
+                    ))
                 }
                 other => Err(RuntimeError::new(
                     line,
@@ -1937,6 +2009,89 @@ impl<'a> Interp<'a> {
             ret_ty: method.ret.clone(),
         });
         let r = self.exec_block(&method.body);
+        self.frames.pop();
+        match r? {
+            Flow::Return(v) => Ok(v),
+            _ => Ok(Value::Unit),
+        }
+    }
+
+    /// 接口方法（含父接口）的默认实现：类里没写该方法时回退到这里。
+    fn find_iface_method(&self, class: &'a ClassDecl, name: &str) -> Option<&'a MethodSig> {
+        let mut stack: Vec<&'a InterfaceDecl> = Vec::new();
+        for t in &class.implements {
+            if let Some(i) = self.interface_decl(t) {
+                stack.push(i);
+            }
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        while let Some(i) = stack.pop() {
+            if seen.contains(&i.name.as_str()) {
+                continue;
+            }
+            seen.push(i.name.as_str());
+            if let Some(sig) = i
+                .methods
+                .iter()
+                .find(|m| m.name == name && !m.is_static && m.body.is_some())
+            {
+                return Some(sig);
+            }
+            for t in &i.extends {
+                if let Some(p) = self.interface_decl(t) {
+                    stack.push(p);
+                }
+            }
+        }
+        None
+    }
+
+    fn interface_decl(&self, t: &Type) -> Option<&'a InterfaceDecl> {
+        let name = match t {
+            Type::Named(n) => n.as_str(),
+            Type::Generic(n, _) => n.as_str(),
+            _ => return None,
+        };
+        self.interfaces.get(name).copied()
+    }
+
+    fn call_iface_method(
+        &mut self,
+        class: &str,
+        sig: &MethodSig,
+        this: Option<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let body = match &sig.body {
+            Some(b) => b,
+            None => {
+                return Err(RuntimeError::new(
+                    sig.line,
+                    format!("接口方法 `{}` 只有签名，没有默认实现", sig.name),
+                ))
+            }
+        };
+        let mut scope = Vec::new();
+        for (p, v) in sig.params.iter().zip(args.into_iter()) {
+            let v = self.coerce_value(v, &p.ty, sig.line)?;
+            scope.push((
+                p.name.clone(),
+                Slot {
+                    value: v,
+                    moved: false,
+                    ty: p.ty.clone(),
+                },
+            ));
+        }
+        self.frames.push(Frame {
+            class: class.to_string(),
+            method: sig.name.clone(),
+            line: sig.line,
+            scopes: vec![scope],
+            this,
+            ret_ty: sig.ret.clone(),
+        });
+        let r = self.exec_block(body);
         self.frames.pop();
         match r? {
             Flow::Return(v) => Ok(v),

@@ -36,8 +36,8 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证（七步）：cargo test → 转译 15 个例程 → cargo build →
-# l1_cases → move_cases → 解释/编译对拍
+# 端到端验证（八步）：cargo test → 转译 15 个例程 → cargo build →
+# l1_cases → move_cases → 解释/编译对拍 → L3 服务（压测 ≥1k QPS）
 ./verify.sh
 
 # 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
@@ -94,10 +94,10 @@ cargo build
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 29 个），
+`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 34 个），
 比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
-解释器暂不支持的字形列在 `tests/interp_unsupported.txt`（raw、`@ref`、
-接口默认方法、类内 const 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
+解释器唯一不支持的写法是 `raw`（解释器不执行 Rust 代码，属设计边界），列在
+`tests/interp_unsupported.txt`；清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
 「不支持」静默跳过；反过来，清单里的用例哪天能跑了会提示把它移除。
 
 ## 设计原则
@@ -283,13 +283,15 @@ examples/       15 个独立 cargo 工程（examples/Cargo.toml 是 workspace，
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain（唯一带 tokio 依赖）、ShapeSwitch（enum + switch）、
                 Exceptions（throws + `?`）
-tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate）+ verify 脚本
+tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate、L3 async 服务）+ verify 脚本
 tests/conformance/L1/  单文件夹具，全部目录式 `<case>/{main.jrust, expected.txt}`
                 （runner 仍兼容扁平 `<case>.jrust` 的历史写法，见 tests/l1_cases.sh 的 case_paths）
 tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
 tests/l2_cross/ 跨文件矩阵：构造器 / 实例方法 / 静态方法 / 可空返回 / enum /
                 接口作类型 / 字符串拼接 × 字面量/变量，双 bin 对拍
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
+tests/l3/       独立 cargo 工程：axum async 小服务（`@shared` 计数 + `/health` `/hit` + SIGINT 优雅退出）
+tests/l3_smoke.sh  L3 验收：端点 smoke + ab 压测（≥1k QPS、0 失败）+ 优雅退出
 ```
 
 ## 为什么不用 proc macro

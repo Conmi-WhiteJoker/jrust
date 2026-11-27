@@ -4,6 +4,11 @@
 /tests/spawn_capture/target/
 /tests/l2/target/
 /tests/l2_cross/target/
+/tests/l3/target/
+
+# L3 的转译产物与 lockfile（约定同 tests/l2：产物不入库）
+/tests/l3/src/main.rs
+/tests/l3/Cargo.lock
 
 # 一致性用例转译产物
 /tests/conformance/**/*.rs

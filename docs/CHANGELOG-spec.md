@@ -448,3 +448,50 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 
 `./verify.sh` 七步全绿：examples **15 个**解释/编译对拍全部一致，L1 仍 131 项，
 解释对拍 L1 29 通过、清单跳过 7。
+
+## v1.32 — 2026-11-27
+
+### 解释器能力（批次 4/5：类内 const 与接口默认方法）
+
+- **`static final` 常量（JR-D8）**：`Limits.N` / `Limits.NAME` 按值读取（不搬所有权），
+  类内裸引用 `x * N` 回退到当前类的静态常量；常量初值按需求值，可互相引用。
+- **接口默认方法与 static 方法（JR-D10）**：类里没实现的接口方法回退到 trait 默认实现
+  （沿 `implements` / `extends` 递归查找，带环去重），默认方法里的 `this` 指向具体实例；
+  `Greeter.tag()` 走接口静态方法分派。
+
+### 验收
+
+`tests/interp_unsupported.txt` 移除 `ok_const` / `ok_iface_default`；解释/编译对拍由
+「L1 29 通过、清单跳过 7」变为 **L1 31 通过、清单跳过 5**（仅剩 `@ref` 三条与 `raw` 两条）；
+`./verify.sh` 七步全绿（L1 仍 131 项）。
+
+## v1.33 — 2026-11-27
+
+### 解释器能力（批次 6：实参借用语义）
+
+- **实参默认按借用传递**：`eval_args` 不再对每个实参调用 `eval_place_take`，普通变量传入方法
+  后不会被标记为「已移动」，对齐 codegen 的借用推断与 `@ref` / `@mut` 覆盖（JR-O11）；
+  需要转移所有权时仍写显式 `move x`（走 `Unary::Move` → `take`）。
+- 修复的典型场景：`l.first(xs)` 之后继续 `l.size(xs)`、`u.bump(xs)` 之后 `xs.add(2)`、
+  `u.say(who)` 之后继续使用 `who`。
+
+### 验收
+
+`tests/interp_unsupported.txt` 移除 `ok_borrow_list` / `ok_borrow_param` / `ok_override_ref`；
+解释/编译对拍由「L1 31 通过、清单跳过 5」变为 **L1 34 通过、清单跳过 2**——**只剩 `raw`
+两条（设计边界）**；`./verify.sh` 七步全绿（L1 仍 131 项）。
+
+## v1.34 — 2026-11-27
+
+### L3 验收：async 小服务（axum + 共享状态 + 优雅退出）
+
+- 新增 `tests/l3/`：`src/main.jrust` 里 `Counter` 用 jrust 的 `@shared` / `synchronized`
+  表达共享计数；axum 路由、提取器与信号处理按 L2 边界放在 `raw`（外部 crate 签名不可知）。
+  `/health` 返回 `ok`，`/hit` 递增并返回计数。
+- 新增 `tests/l3_smoke.sh`：转译 + 编译 → 端点 smoke（`/hit` 1→2）→ `ab -n 3000 -c 32`
+  实测 **≈11.7k QPS、0 失败** → SIGINT 后退出码 0 且打印 `shutdown clean`。
+- `verify.sh` 扩为 **八步**，第 8 步跑 L3 验收；`.gitignore` 忽略 `tests/l3/target`、
+  `tests/l3/src/main.rs`、`tests/l3/Cargo.lock`。
+- 踩坑：`tests/<名字>/main.rs` 会被 cargo 自动发现成集成测试目标并参与 `cargo test` 编译，
+  因此 L3 源码放在 `tests/l3/src/`（与 `tests/l2` 一致）。
+- SPEC §15：**L3 由 🚧 转 ✅**；L4（中型服务）与 L5（附录 A 收尾）仍为 🚧。

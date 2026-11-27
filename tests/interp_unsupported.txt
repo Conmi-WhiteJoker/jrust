@@ -9,10 +9,5 @@
 # 不会被当成「不支持」静默跳过。
 
 # 缺少的具体能力见每行注释。
-ok_borrow_list         # @ref / 借用语义（使用已移动的值）
-ok_borrow_param        # @ref / 借用语义（使用已移动的值）
-ok_const               # 类内 const 常量
-ok_iface_default       # 接口默认方法
-ok_override_ref        # @ref 覆盖 + 借用语义
 ok_raw                 # raw 块
 ok_raw_multiline       # raw 块

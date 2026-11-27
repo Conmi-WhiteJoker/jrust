@@ -1,0 +1,66 @@
+/// L3 验收：async 小服务——axum + 共享状态 + 优雅退出（SPEC §15）。
+///
+/// `Counter` 用 jrust 的 `@shared` / `synchronized` 表达共享状态；axum 的路由、
+/// 提取器与信号处理都是外部 crate 的类型，按 L2 边界放在 `raw` 里直接写 Rust。
+public class Counter {
+    /// 命中计数：类内方法会写 → `Arc<Mutex<i64>>`。
+    @shared int hits;
+
+    public Counter() {
+        this.hits = 0;
+    }
+
+    public synchronized void hit() {
+        this.hits += 1;
+    }
+
+    public int total() {
+        return this.hits;
+    }
+}
+
+public class Main {
+    raw {
+        use std::sync::Arc;
+
+        #[derive(Clone)]
+        pub struct AppState {
+            hits: Arc<Counter>,
+        }
+
+        pub fn build_app() -> axum::Router {
+            let state = AppState {
+                hits: Arc::new(Counter::new()),
+            };
+            axum::Router::new()
+                .route("/health", axum::routing::get(health))
+                .route("/hit", axum::routing::get(hit))
+                .with_state(state)
+        }
+
+        pub async fn health() -> &'static str {
+            "ok"
+        }
+
+        pub async fn hit(axum::extract::State(st): axum::extract::State<AppState>) -> String {
+            st.hits.hit();
+            format!("{}", st.hits.total())
+        }
+    }
+
+    public static async void main(String[] args) {
+        String addr = "127.0.0.1:18080";
+        println("l3 service binding {}", addr);
+        raw {
+            let listener = tokio::net::TcpListener::bind(addr.as_str()).await.unwrap();
+            println!("l3 service listening on {}", addr);
+            axum::serve(listener, build_app())
+                .with_graceful_shutdown(async {
+                    let _ = tokio::signal::ctrl_c().await;
+                })
+                .await
+                .unwrap();
+            println!("l3 service shutdown clean");
+        }
+    }
+}
