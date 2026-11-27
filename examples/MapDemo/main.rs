@@ -19,7 +19,6 @@ fn main() {
     // jrust:L20
     if alice.is_some() {
         // jrust:L21
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let v: i32 = alice.clone().unwrap();
         // jrust:L22
         println!("alice={}", v);
@@ -36,7 +35,6 @@ fn main() {
     // jrust:L31
     if bob.is_some() {
         // jrust:L32
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let v: i32 = bob.clone().unwrap();
         // jrust:L33
         println!("bob={} size={}", v, ages.len());
@@ -52,7 +50,6 @@ fn main() {
     // jrust:L41
     if tea.is_some() {
         // jrust:L42
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let v: f64 = tea.clone().unwrap();
         // jrust:L43
         println!("tea={}", v);
@@ -66,7 +63,6 @@ fn main() {
     // jrust:L50
     if one.is_some() {
         // jrust:L51
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let v: String = one.clone().unwrap();
         // jrust:L52
         println!("{} -> {}", 1, v);
@@ -88,7 +84,6 @@ fn main() {
         // jrust:L63
         if got.is_some() {
             // jrust:L64
-            // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
             let v: i32 = got.clone().unwrap();
             // jrust:L65
             total = total + v;

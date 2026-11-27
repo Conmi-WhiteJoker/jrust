@@ -895,3 +895,33 @@ SPEC-v2 §3-1 是 2.0 唯一的破坏性变更。v1.47 完成了双轨期（`JR9
   这是 2.0 发布的唯一阻塞项，属于产品决策而非代码工作。
 - 验收：`./verify.sh` 十一步全绿（L1 173、解释对拍 15 + 38、快照 117 项、覆盖率 58/58）；
   rustc 1.85.0 基线通过。
+
+## v1.50 — 2026-11-27
+
+### 破坏性变更续：`T?` → 非可空 `T` 不再静默 unwrap（修复用户报的 P1）
+
+用户报 P1：`int bad = m.get("zzz");` 仍 `check` 通过，产物
+`let bad: i32 = m.get("zzz").cloned().unwrap()`，键缺失照旧 panic。
+
+**根因不是 `map.get` 没切干净**，而是 v1 JR-T1 的既定规则「`T?` 赋给非可空 `T` →
+`.unwrap()`」——`getOrNull` 也一样。用户选择「改成编译期报错」。
+
+- **检查器新增收窄分析**：`Env.nonnull` 记录已在 `if (x != null)` 的 then 分支
+  （或 `== null` 的 else 分支）判空的表达式；`nullable_expr_key` 既认变量名也认
+  方法调用串（`a.getTag()`），因为现有夹具两种写法都有。
+- **`assignable` 规则 2 改写**：`T? → T?` / `T → T?` 放行；`T? → 非可空 T` 只有
+  `assignable_expr` 在 `env.nonnull` 里找到该表达式时才放行，其余报 **`JR6007`**，
+  提示显式判空。
+- **codegen 移除误导性提示注释**：判空分支内的取值仍生成 `.unwrap()`（此时已确认
+  非空，语义安全），但不再输出「None 会 panic」注释——那条注释对已判空代码是噪音。
+- **SPEC 同步**：v1 JR-T1 标注旧规则废止、JR-E16/JR-C8/附录 A 同步到 2.0 语义
+  （此前仍写着「`map.get` 是 `.unwrap()`」，与 v1.48 实现冲突）；v2 §2 的 JR-T14
+  规则 2 改写、§4 第 3 项「可空语法」定案 ✅；V2-A7 1/7。
+- **夹具迁移**：`tests/l4/src/app/store.jrust` 改为
+  `if (found != null) { return found; } panic("missing-config-key");`，
+  把「缺键 panic → 500」（JR-G13 失败路径）的意图显式写出来，不依赖隐式解包。
+  新增 `neg_nullable_unwrap` 锁定 P1 用例必须报 `JR6007`。L1 173 → **174**。
+- **恢复事故**：中途用 `git stash` 做变异验证时误删了 L4 的三个 `.jrust` 源文件，
+  已从 HEAD 恢复并重新应用 store 改动——L4 全绿。
+- 验收：`./verify.sh` 十一步全绿（L1 174、解释对拍 15 + 38、快照 118 项、覆盖率 58/58）；
+  rustc 1.85.0 基线通过。

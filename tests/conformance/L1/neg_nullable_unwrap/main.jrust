@@ -1,0 +1,10 @@
+/// 2.0 / JR-T1 修订：`T?` 赋给非可空 `T` 必须显式判空，
+/// 不再静默生成 `.unwrap()`（键缺失会 panic，用户报的 P1）。
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 1);
+        int bad = m.get("zzz");
+        println(bad);
+    }
+}

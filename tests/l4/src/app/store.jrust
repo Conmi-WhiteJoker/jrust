@@ -23,10 +23,14 @@ public class Store {
         this.config.put(key, value);
     }
 
-    /// 2.0 起 `Map.get` 返回 `V?`；本服务故意让缺键 panic（L4 的 JR-G13 失败路径
-    /// 要求「键缺失 → 500」），所以这里显式解包而不是依赖隐式转换。
+    /// 2.0 起 `Map.get` 返回 `V?`。本服务故意让缺键 panic（L4 的 JR-G13 失败路径
+    /// 要求「键缺失 → 500」）：用 `panic("missing-config-key")` 显式表达，
+    /// 不再依赖 `T? → T` 的隐式解包（2.0 已删除，见 SPEC-v2 §2）。
     public String get(String key) {
         String? found = this.config.get(key);
-        return found;
+        if (found != null) {
+            return found;
+        }
+        panic("missing-config-key");
     }
 }

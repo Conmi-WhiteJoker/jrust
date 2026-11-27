@@ -156,7 +156,7 @@ CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构�
 | `map.getOrNull(k)` | `map.get(&k).cloned()` | 返回 `V?`（→ `Option<V>`），键缺失得到 `None`，不会 panic。**2.0 起与 `get` 产物完全相同**，保留为显式别名 | [Nullable](examples/Nullable/main.jrust) |
 | `Set<T>` / `HashSet<T>` | `HashSet<T>` | `new HashSet<>()` → `HashSet::new()`；`add`→`insert`、`size`→`len`、`isEmpty`→`is_empty`；`contains` / `remove` 自动取引用（`String` 元素走 `.as_str()`） | [L1 用例](tests/conformance/L1/ok_set/main.jrust) |
 | `T? x` | `Option<T>` | `T? x = null;` → `None`；`T? x = v;` → `Some(v)`；`x == null` / `x != null` → `is_none()` / `is_some()`；对 `T?` 直接调用 `T` 的方法报 `JR3006` | [Nullable](examples/Nullable/main.jrust) |
-| `T v = x;`（`x` 是 `T?`） | `let v: T = x.clone().unwrap();` | 显式解包：`None` 会 panic（等价于 Java 的 NPE）；先用 `if (x != null)` 判空 | [Nullable](examples/Nullable/main.jrust) |
+| `T v = x;`（`x` 是 `T?`） | 判空分支内 `let v: T = x.unwrap();` | **2.0 破坏性变更**：未判空的写法报 `JR6007`，不再静默 `.unwrap()`；必须在 `if (x != null) { T v = x; }` 内取值 | [Nullable](examples/Nullable/main.jrust) · [负向用例](tests/conformance/L1/neg_nullable_unwrap/main.jrust) |
 | `class Box<T> { T value; ... }` | `pub struct Box<T>` + `impl<T: Clone> Box<T>` | 字段未使用的类型参数补 `PhantomData` 占位（`class Tag<T> {}`） | [Generics](examples/Generics/main.jrust) |
 | `new Box<Integer>(v)` / `new Box<>(v)` | `Box::<i32>::new(v)` / `Box::new(v)` | 钻石写法由左侧声明类型推断实参；构造器形参里的 `T` 按实参替换（字符串字面量自动 `.to_string()`） | [Generics](examples/Generics/main.jrust) |
 | `public <T> T id(T x)` | `pub fn id<T: Clone>(x: T) -> T` | 方法级类型参数写在方法名后；v1 统一要求 `T: Clone` | [Generics](examples/Generics/main.jrust) |
@@ -276,7 +276,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 不支持（解析期报 `JR3031`，提示用 `?` 传播、清理交给 `Drop`）。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
-- `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
+- `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 判空分支内取值；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。**`T?` 赋给非可空 `T` 必须显式判空**（`JR6007`），这是 2.0 破坏性变更。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
 - 解释器（`jrust run`）支持 `throws` + `?` 的向上传播（throw 直接终止并报「未捕获异常」），但暂不支持 try / catch / finally 与 raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
 - `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`jrust verify` 报告会把 raw 单列为 `raw: N 块 / M 行（原样内联，不计入 jrust 诊断覆盖率）`（`JR-X3`，v1.36）；`raw` 不能嵌套（`JR3027`）。

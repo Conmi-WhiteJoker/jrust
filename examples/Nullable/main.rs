@@ -32,7 +32,6 @@ fn main() {
     // jrust:L18
     if a.getTag().is_some() {
         // jrust:L19
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let t: String = a.getTag().unwrap();
         // jrust:L20
         println!("{}", t);
@@ -53,7 +52,6 @@ fn main() {
     // jrust:L30
     if hit.is_some() {
         // jrust:L31
-        // jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。
         let s: String = hit.clone().unwrap();
         // jrust:L32
         println!("{}", s);

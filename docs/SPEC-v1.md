@@ -74,7 +74,7 @@
   - `T? x = v;` → `let x: Option<T> = Some(v);`
   - `x != null` / `x == null` → `x.is_some()` / `x.is_none()`
   - 对 `T?` 直接调用 `T` 的方法必须报 `JR3006`，并提示 `if (x != null) { T v = x; ... }`（→ `if let Some(v) = x`）。
-  - 把 `T?` 赋给非可空 `T`（`T v = x;`）→ `x.clone().unwrap()`，`None` 会 panic，并在产物里给出判空提示。
+  - ~~把 `T?` 赋给非可空 `T`（`T v = x;`）→ `x.clone().unwrap()`，`None` 会 panic，并在产物里给出判空提示。~~ **v1.50 起废止（2.0 破坏性变更）**：`T?` 赋给非可空 `T` 必须显式判空（`if (x != null) { T v = x; }`），未判空的写法报 `JR6007`。判空分支内的取值仍生成 `.unwrap()`（此时已确认非空，语义安全）。
   - 形参 / 返回值 / 构造器字段同样适用：`T?` 位置传非空值自动包 `Some(...)`，传 `null` 生成 `None`。
 - **JR-T2** 引用语法 `&T` / `&mut T` **不在 .jrust 中暴露**（Java 没有该语法）。借用由 §9 规则自动生成；需要强制指定时用 `@ref` / `@mut` 注解覆盖推断（✅ v1.8，见 JR-O11）。
 - **JR-T3** 泛型声明：`class Box<T> {...}` → `pub struct Box<T>` + `impl<T: Clone> Box<T>` ✅；`new Box<Integer>(v)` → `Box::<i32>::new(v)`，钻石 `new Box<>(v)` 由左侧声明类型推断 ✅；方法泛型 `public <T> T id(T x)` → `pub fn id<T: Clone>(x: T) -> T` ✅。字段未使用的类型参数补 `std::marker::PhantomData` 占位（`class Tag<T> {}`）；泛型接口 `interface Mapper<T>` → `pub trait Mapper<T>`（`implements Mapper<Integer>` → `impl Mapper<i32> for X`），泛型枚举 `enum Maybe<T>` → `pub enum Maybe<T>` 亦已支持 ✅。
@@ -141,7 +141,7 @@
 - **JR-E13** 含字符串操作数的 `+` 链 → `format!`（✅）：任意位置可用（声明、赋值、方法实参、返回值、下标赋值）；字面量段折进格式串（花括号转义为 `{{`/`}}`），其余段按 `{}` 传参；纯字面量拼接折叠成 `"ab".to_string()`；`println` / `print` 单参数仍由打印宏拆链，产物更短。
 - **JR-E14** `println`/`print`/`println()` 简写；多参数时首个实参作格式串，`{}` 按序填充，字面花括号写 `{{`/`}}`；占位符与参数数不匹配报 `JR3016`。✅
 - **JR-E15** 集合方法映射：`list.add` → `push`、`list.size` → `len`、`list.get(i)` → `v[i]`、`list.isEmpty` → `is_empty`；`map.put/get/size/containsKey/isEmpty` 见附录 A。`v[i]` 借出元素位置，**owned 上下文**（`String s = xs.get(0)`）按元素类型补 `.to_string()` / `.clone()`，Copy 标量不补（✅ v1.25）。
-- **JR-E16** `map.get(k)` 的 v1 行为固定为 `.cloned().unwrap()`（键缺失 panic，Java 返回 null）。`map.getOrNull(k)` → `Option<V>`（✅，产物 `get(&k).cloned()`），v2 起 `get` 改为返回 `Option` 并给出迁移诊断（❓）。
+- **JR-E16** `map.get(k)` **v1.48 起已切换为 `Option<V>`**（产物 `get(&k).cloned()`，键缺失为 `None`、不再 panic），与 `getOrNull` 完全等价。旧行为 `.cloned().unwrap()` 已删除。注意：`T?` 赋给非可空 `T` 仍需显式判空（见 JR-T1），未判空报 `JR6007`。
 - **JR-E17** 闭包（✅ 转译）：`(a, b) -> expr` → `|a, b| expr`；作为实参使用；参数可带类型标注。闭包体目前只支持单个表达式。
 - **JR-E18** 迭代器链（✅）：`list.stream().map(...).filter(...).collectList()` → `iter().cloned().map().filter().collect::<Vec<_>>()`；只允许白名单方法（`stream` / `map` / `filter` / `collectList`），未知方法报 `JR3017`。`cloned()` 保证按值处理元素（否则 `filter` 里是 `&&T`、`collect` 得到 `Vec<&T>`）；`collectList()` 的元素类型沿用基座集合，`map` 改变元素类型的情况 v1 不推断。
 - **JR-E19** `?` 传播（✅）：`v = f()?;` 仅允许出现在声明了 `throws` 的函数内，否则 `JR3018`。
@@ -200,7 +200,7 @@ Java 的对象参数语义是「引用的按值传递」，直接映射为 Rust 
 - **JR-C5** 多 `catch` 与 `catch (Exception e)` 兜底同样不支持；错误分支由 `?` 在各调用点展开，需要区分错误类型时在 `raw` 里写 `match`。❌
 - **JR-C6** 常见异常映射：`IOException` → `std::io::Error`（`From` 已生成）、`SQLException` → 由绑定 crate 的错误类型（在 `raw` 里补 `From`）、`IllegalArgumentException` → `panic!` + 提示注释；用户自定义 `class X extends Exception` → `struct X` + `impl std::error::Error` + `From<X> for JrustError`（✅）。
 - **JR-C7** `panic("msg")` / `assert(cond, "msg")` → `panic!` / `assert!`（✅）。裸调用解析器已放开，但只有这四个内置名有定义；其它裸调用报「未知的函数」。
-- **JR-C8** 不得把 `Result` 静默 `unwrap`；除 §8 明确规定的 `map.get` 外，任何需要解包的位置必须由用户显式写 `unwrap()` 或 `?`。
+- **JR-C8** 不得把 `Result` 静默 `unwrap`；任何需要解包的位置必须由用户显式写 `unwrap()` 或 `?`，或先判空（`if (x != null)`）。`map.get` 自 v1.48 起返回 `Option`，不再隐式 unwrap。
 
 ## 11. 并发与异步
 
@@ -397,7 +397,7 @@ Java 的对象参数语义是「引用的按值传递」，直接映射为 Rust 
 | JR-T6 | `Map<K,V>` / `HashMap<K,V>` | `HashMap<K,V>` + 自动 `use` | ✅ |
 | JR-T8 | `new HashMap<>()` | `HashMap::new()` | ✅ |
 | JR-E15 / JR-E16 | `map.put/size/containsKey/isEmpty` | `insert/len/contains_key/is_empty` | ✅ |
-| JR-E16 | `map.get(k)` | `get(&k).cloned().unwrap()` | ✅ |
+| JR-E16 | `map.get(k)` | `get(&k).cloned()` → `Option<V>`（2.0 起，不再 panic） | ✅ |
 | JR-E16 | `map.getOrNull(k)` | `get(&k).cloned()` → `Option<V>` | ✅ |
 | JR-E14 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | ✅ |
 | JR-E14 | `println(x)` / `print(x)` / `println()` | `println!` / `print!` / `println!()` | ✅ |

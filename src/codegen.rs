@@ -76,6 +76,10 @@ struct Env {
     ret_borrow: bool,
     /// 本次调用里已经被移动出去的变量（Value 实参）：再次使用报 `JR4001`。
     moved: HashSet<String>,
+    /// 已被 `if (x != null)` 判空收窄为非空的可空变量（2.0 / JR-T1 修订）。
+    /// 进入 then 分支时写入，离开时移除——检查器据此允许 `T v = x;`，
+    /// 其余情况 `T?` → `T` 一律报 JR6007（不再静默 `.unwrap()`）。
+    nonnull: HashSet<String>,
 }
 
 impl Env {
@@ -89,6 +93,7 @@ impl Env {
             borrowed: HashMap::new(),
             ret_borrow: false,
             moved: HashSet::new(),
+            nonnull: HashSet::new(),
         }
     }
 }
@@ -504,11 +509,12 @@ impl<'a> Codegen<'a> {
             Type::Void => self.gen_expr(init, env, Some(ty)),
             other => {
                 if self.expr_is_nullable(core, env) {
-                    // 只允许把 T? 解包给非可空 T：None 时会 panic，等价于 Java 的 NPE。
+                    // 2.0 / JR-T1 修订：`T?` → 非可空 `T` 不再静默 `.unwrap()`。
+                    // 检查器已在 JR6007 拦下未判空的写法；走到这里说明是
+                    // `if (x != null)` 收窄过的局部变量（`env.nonnull`），
+                    // 此时 x 在源码里已判空，产物仍需 `.unwrap()` 来把 Option 取出——
+                    // 语义安全（already checked），与"静默解包未判空值"有本质区别。
                     let base = self.gen_expr(init, env, None);
-                    self.emit(
-                        "// jrust 提示: 从可能为空的 `T?` 解包，None 会 panic；先确认判过空（`if (x != null)`）。",
-                    );
                     return if copy && is_holder_expr(core) && self.is_cloneable_type(other) {
                         format!("{}.clone().unwrap()", base)
                     } else {
@@ -1687,9 +1693,16 @@ impl<'a> Codegen<'a> {
         ) {
             return true;
         }
-        // 规则 2：`T?` 一律放行（JR-T1 已有专门逻辑与诊断）。
-        if matches!(from, Type::Nullable(_)) || matches!(to, Type::Nullable(_)) {
+        // 规则 2：`T?` → `T?` 放行；`T` → `T?` 放行（自动包 Some）。
+        // **2.0 修订**：`T?` → 非可空 `T` **不再自动放行**——此前会静默生成
+        // `.unwrap()`，键缺失时 panic（用户报的 P1）。现在必须由调用方先判空：
+        // 检查器在 `if (x != null)` 的 then 分支把 x 记入 `env.nonnull`，
+        // `assignable_expr` 据此放行；其余情况报 JR6007。
+        if matches!(to, Type::Nullable(_)) {
             return true;
+        }
+        if matches!(from, Type::Nullable(_)) {
+            return false; // 由 assignable_expr 的 nonnull 判断覆盖
         }
         // 规则 3：数值标量——同级或加宽允许，窄化不允许。
         if let (Some(a), Some(b)) = (Self::scalar_rank(from), Self::scalar_rank(to)) {
@@ -1742,6 +1755,17 @@ impl<'a> Codegen<'a> {
         }
         // 规则 8：其余不允许。
         false
+    }
+
+    /// 带表达式上下文的赋值判定（2.0 / JR-T1 修订）。
+    ///
+    /// `T?` → `T` 只有在「源是已被 `if (x != null)` 收窄的局部变量」时才放行；
+    /// 其余情况一律拒绝，让检查器报 JR6007，而不是静默生成 `.unwrap()`。
+    fn assignable_expr(&self, from: &Type, to: &Type, e: &Expr, env: &Env) -> bool {
+        if matches!(from, Type::Nullable(_)) && !matches!(to, Type::Nullable(_)) {
+            return nullable_expr_key(e).map_or(false, |k| env.nonnull.contains(&k));
+        }
+        self.assignable(from, to)
     }
 
     /// 接口 `start` 是否等于 `target` 或在它的 `extends` 闭包里。
@@ -4709,6 +4733,34 @@ fn unknown_named_in(
     }
 }
 
+/// 给可判空表达式生成「签名 key」，用于 `if (expr != null)` 的收窄跟踪。
+///
+/// 变量名 → 名字本身；方法调用 → 完整调用串（`a.getTag()`）。
+/// 用文本签名而非指针，是因为收窄条件与后续取值是两个独立的 AST 节点。
+fn nullable_expr_key(e: &Expr) -> Option<String> {
+    match strip_parens_expr(e) {
+        Expr::Ident(n) => Some(n.clone()),
+        other => Some(format!("{:?}", other)),
+    }
+}
+
+/// 识别 `expr != null` / `expr == null` 条件里的可判空表达式。
+fn null_narrow_name(cond: &Expr) -> Option<String> {
+    match strip_parens_expr(cond) {
+        Expr::Binary { op, lhs, rhs, .. }
+            if matches!(op, BinOp::Eq | BinOp::Ne) =>
+        {
+            for (a, b) in [(lhs, rhs), (rhs, lhs)] {
+                if matches!(strip_parens_expr(b), Expr::Null) {
+                    return nullable_expr_key(a);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// 字面量能否自适应到目标标量类型（Rust 的字面量类型由上下文推断）。
 ///
 /// - 整数字面量 → 任意整数目标：可以（`let m: i64 = 5;` 合法）。
@@ -4841,7 +4893,7 @@ fn collect_assign_mismatches(
                 if let Some(from) = g.scalar_source_type(init, env) {
                     // 字面量可以自适应：`float f = 1.5;` 里的 `1.5` 在 Rust 里
                     // 会推断成 f32，所以「浮点字面量 → f32」不算窄化。
-                    if !g.assignable(&from, ty) && !literal_fits(init, ty) {
+                    if !g.assignable_expr(&from, ty, init, env) && !literal_fits(init, ty) {
                         bad.push((
                             *line,
                             g.rust_type(&from),
@@ -4867,7 +4919,7 @@ fn collect_assign_mismatches(
                     _ => None,
                 };
                 if let (Some(tt), Some(from)) = (target_ty, g.scalar_source_type(value, env)) {
-                    if !g.assignable(&from, &tt) {
+                    if !g.assignable_expr(&from, &tt, value, env) {
                         bad.push((*line, g.rust_type(&from), g.rust_type(&tt), "assign"));
                     }
                 }
@@ -4875,15 +4927,37 @@ fn collect_assign_mismatches(
             Stmt::Return { value: Some(e), line } => {
                 let ret = env.ret.clone();
                 if let Some(from) = g.scalar_source_type(e, env) {
-                    if !g.assignable(&from, &ret) {
+                    if !g.assignable_expr(&from, &ret, e, env) {
                         bad.push((*line, g.rust_type(&from), g.rust_type(&ret), "return"));
                     }
                 }
             }
-            Stmt::If { then, els, .. } => {
-                collect_assign_mismatches(then, env, g, bad);
-                if let Some(e) = els {
-                    collect_assign_mismatches(e, env, g, bad);
+            Stmt::If { cond, then, els, .. } => {
+                // 2.0 / JR-T1 修订：`if (x != null)` 的 then 分支内 x 已收窄为非空，
+                // 允许 `T v = x;`；`== null` 的 else 分支同理。离开后恢复。
+                let narrowed = null_narrow_name(cond);
+                let is_ne = matches!(strip_parens_expr(cond), Expr::Binary { op: BinOp::Ne, .. });
+                if let Some(name) = narrowed {
+                    if is_ne {
+                        env.nonnull.insert(name.clone());
+                        collect_assign_mismatches(then, env, g, bad);
+                        env.nonnull.remove(&name);
+                        if let Some(e) = els {
+                            collect_assign_mismatches(e, env, g, bad);
+                        }
+                    } else {
+                        collect_assign_mismatches(then, env, g, bad);
+                        env.nonnull.insert(name.clone());
+                        if let Some(e) = els {
+                            collect_assign_mismatches(e, env, g, bad);
+                        }
+                        env.nonnull.remove(&name);
+                    }
+                } else {
+                    collect_assign_mismatches(then, env, g, bad);
+                    if let Some(e) = els {
+                        collect_assign_mismatches(e, env, g, bad);
+                    }
                 }
             }
             Stmt::While { body, .. }
