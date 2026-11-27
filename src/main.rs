@@ -1127,29 +1127,42 @@ fn plan_tree(dir: &Path) -> Option<TreePlan> {
     })
 }
 
-fn check_one(path: &Path) -> bool {
+/// 跑一遍完整检查（解析 → 依赖校验 → 类型检查），返回 error 级诊断。
+///
+/// `check` / `build` / `run` 三条命令共用，保证同一份源码在任何入口得到**同一个诊断码**
+/// （SPEC-v2 JR-V3：check 报出的 error 必须在 build 之前复现；P2 要求 run 也一致）。
+/// warning 不在这里返回——调用方按需打印。
+fn check_diags(path: &Path) -> Result<(), Vec<diag::Diag>> {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("无法读取 {}: {}", path.display(), e);
-            return false;
+            return Err(Vec::new());
         }
     };
     let prog = match parser::parse_file(&src) {
         Ok(p) => p,
-        Err(diags) => {
-            print_diags(path, &diags);
-            return false;
-        }
+        Err(diags) => return Err(diags),
     };
     let dep_diags = validate_deps(path, &prog, &HashSet::new());
     if !dep_diags.is_empty() {
-        print_diags(path, &dep_diags);
-        return false;
+        return Err(dep_diags);
     }
     match codegen::generate(&prog, &path.display().to_string()) {
         Ok(gen) => {
+            // warning 在所有入口都打印（check / build 原本就会打印，run 现在也会）。
             print_warnings(path, &gen.warnings);
+            Ok(())
+        }
+        Err(diags) => Err(diags),
+    }
+}
+
+fn check_one(path: &Path) -> bool {
+    // 与 run / build 共用检查阶段（check_diags 内部负责解析、依赖校验、类型检查、
+    // warning 打印）；这里只补「检查通过」的成功提示。
+    match check_diags(path) {
+        Ok(()) => {
             println!("检查通过 {}", path.display());
             true
         }
@@ -1762,6 +1775,12 @@ fn load_program(path: &Path) -> Option<(String, ast::Program)> {
 }
 
 fn run_one(path: &Path) -> bool {
+    // P2 / JR-V3：解释执行前跑与 check/build 相同的检查阶段，
+    // 保证同一份源码在三个入口的诊断码一致（不再出现「run 说 null、build 说 JR6007」）。
+    if let Err(diags) = check_diags(path) {
+        print_diags(path, &diags);
+        return false;
+    }
     let (_, prog) = match load_program(path) {
         Some(v) => v,
         None => return false,
