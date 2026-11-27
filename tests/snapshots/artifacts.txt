@@ -33,6 +33,7 @@ FAILED  tests/conformance/L1/neg_mutable_static/main.jrust
 FAILED  tests/conformance/L1/neg_newarray_type/main.jrust
 FAILED  tests/conformance/L1/neg_null_assign/main.jrust
 FAILED  tests/conformance/L1/neg_nullable_method/main.jrust
+FAILED  tests/conformance/L1/neg_nullable_reassign/main.jrust
 FAILED  tests/conformance/L1/neg_nullable_unwrap/main.jrust
 FAILED  tests/conformance/L1/neg_override_args/main.jrust
 FAILED  tests/conformance/L1/neg_override_both/main.jrust

@@ -1,0 +1,16 @@
+/// 收窄状态在重新赋值后必须失效：
+/// `if (x == null) { return; }` 只证明「那一刻的 x」非空，
+/// 之后 `x = ...` 换成新值，先前的判空结论不再成立。
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 1);
+        Integer? x = m.get("a");
+        if (x == null) {
+            return;
+        }
+        x = m.get("zzz");
+        int v = x;
+        println(v);
+    }
+}

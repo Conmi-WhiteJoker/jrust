@@ -1094,6 +1094,8 @@ run_neg neg_cond_not_bool JR6009 "不是 \`boolean\`" 5
 run_neg neg_nullable_unwrap JR6007 "不能赋给" 7
 # A：可空实参（普通方法 / 构造器）必须报 JR6007，不得留给 cargo。
 run_neg neg_call_arg_nullable JR6007 "实参的类型不匹配" 16
+# 收窄状态在重新赋值后失效（v1.53）。
+run_neg neg_nullable_reassign JR6007 "不能赋给" 13
 # 阶段 C / 赋值与返回的类型兼容。
 run_neg neg_assign_mismatch JR6007 "不能赋给" 4
 run_neg neg_ret_type JR6008 "不能赋给" 4

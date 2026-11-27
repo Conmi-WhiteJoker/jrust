@@ -5006,9 +5006,17 @@ fn collect_assign_mismatches(
                     }
                 }
                 check_call_args(init, env, g, *line, bad);
+                // 同名重新声明（新作用域或遮蔽）也要清除旧的收窄状态。
+                env.nonnull.remove(name);
                 env.vars.declare(name.clone(), ty.clone());
             }
             Stmt::Assign { target, value, line } => {
+                // 收窄失效（v1.53）：`if (x == null) { return; } x = ...;` 后 x 不再是
+                // 已判空的值。赋值前先清除该变量的 nonnull 标记，否则后续
+                // `int v = x;` 会带着过期的收窄通过检查，产物 `.unwrap()` 在 None 时 panic。
+                if let Expr::Ident(n) = strip_parens_expr(target) {
+                    env.nonnull.remove(n);
+                }
                 // 只检查目标类型能静态确定的赋值（局部变量 / `this.字段`）。
                 let target_ty = match strip_parens_expr(target) {
                     Expr::Ident(n) => env.vars.lookup(n).cloned(),

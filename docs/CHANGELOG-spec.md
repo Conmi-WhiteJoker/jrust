@@ -979,3 +979,18 @@ build 产物 panic」。P1 修复后两者虽都阻断，但**诊断码仍不同
 
 验收：`./verify.sh` 十一步全绿（L1 175、解释对拍 15 + 38、快照 119 项、覆盖率 58/58）；
 rustc 1.85.0 基线通过。
+
+## v1.53 — 2026-11-27
+
+### 修复收窄状态在重新赋值后不失效
+
+用户报最后一个 P1：`if (x == null) { return; } x = m.get("zzz"); int v = x;`
+此前 `check` 通过、产物 `let v: i32 = x.clone().unwrap()`，None 时 panic。
+
+- 根因：`env.nonnull` 按变量名记录收窄，但 `Stmt::Assign` 不清除——判空结论针对的是
+  「那一刻的 x」，重新赋值后已过期。
+- 修法：`Stmt::Assign` 在检查前先 `env.nonnull.remove(target_name)`；`Stmt::Let`
+  同名声明（遮蔽）同样清除。
+- 新增 `neg_nullable_reassign` 夹具（`x = m.get("zzz")` 变体），L1 175 → **176**。
+- 验证：`./verify.sh` 十一步全绿（快照 121 项、覆盖率 58/58）；
+  `x = null` 变体手测也报 JR6007；合法的提前返回判空用例不回归。
