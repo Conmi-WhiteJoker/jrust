@@ -670,3 +670,39 @@ V2 类型信息层（cairn §14）的阶段 B：让 `.jrust` 的「未知名字�
   `--check` 与 `l1_cases.sh` 抓出来，逐条修判据而不是放宽检查。
 - 验收：`./verify.sh` 十步全绿（L1 148、快照 111 项零漂移）；覆盖率盘点 53/53；
   rustc 1.85.0 基线通过。
+
+## v1.42 — 2026-11-27
+
+### 阶段 C：类型兼容性检查 + 二元运算标量提升（JR6007 / JR6008 / JR-T9 延伸）
+
+V2 类型信息层（cairn §14）的阶段 C。
+
+- **`assignable(from, to)` 八条规则落地**（`codegen::assignable`）：
+  1. 完全相同 → 是（含 `bool` 的两种表示 `Type::Boolean` / `Type::RustPrim("bool")` 归一）；
+  2. `T?` 相关 → 一律放行（既有 JR-T1 逻辑负责）；
+  3. 数值标量 → 同级或加宽允许，**窄化报错**（Java 也不允许隐式窄化）；
+  4. `char` → 数值 → 允许；
+  5. 类 → 接口（含 `extends` 链）、接口 → 父接口 → 允许；
+  6. `Named("Box")` 与 `Generic("Box", args)` → 视为同一类型（目标侧常省略实参）；
+  7. 泛型参数 / 外部 crate 类型 → 放行（无法判定不猜）；
+  8. 其余 → 不允许。
+- **JR6007 赋值不匹配 / JR6008 返回不匹配**（error）：覆盖 `int n = "s";`、
+  `String s = 1;`、`boolean b = 1;`、`int f() { return "s"; }` 等此前全部静默透传、
+  产物编译不过的写法。
+- **二元运算的标量提升**（JR-T9 延伸）：Java 里 `int + double` 结果是 `double`，
+  Rust 里 `i32 + f64` 直接 E0277。新增 `promote_binary`，对算术（`+ - * / %`）与关系
+  （`< <= > >=`）运算把较窄一侧补 `as`。`&&` / `||` 两侧必须是 bool，不参与。
+  - `int / int` **保持整数除法**（Java 语义，`7/2 = 3`），不因提升而变成浮点。
+  - 附带变更：`examples/RustTypes` 的 `tiny + 0.25`（`f32 + f64 字面量`）从
+    `tiny + 0.25` 变为 `tiny as f64 + 0.25`——向 Java 的 `float + double → double` 对齐。
+    旧产物在 Rust 里也能编译（字面量自适应成 f32），所以这是**语义对齐**而非修 bug，
+    快照已更新并在此记录。
+- **误报控制**（本版主要工作量，4 处误报全部由快照 + L1 抓出）：
+  - `i32 → i128` 被判窄化 → `scalar_rank` 补 `i128` / `u128`；
+  - `float f = 1.5;`（浮点字面量 → f32）被判窄化 → 新增 `literal_fits`，字面量可自适应同族标量；
+  - `bool` vs `bool` 被判不等 → 用 `rust_type` 归一两种表示；
+  - `List<String> ys = xs.stream().map(...).collectList();` 被判元素类型不符 → 集合 / 数组
+    跳过元素级检查（`collectList` 按基座类型推断是 README 已记录的已知局限）。
+- **新增负向夹具** `neg_assign_mismatch` / `neg_ret_type`，`ok_widen` 扩展混合运算用例；
+  L1 148 → **154**；快照 111 → 113 项。
+- 验收：`./verify.sh` 十步全绿；覆盖率盘点 53/53；rustc 1.85.0 基线通过。

@@ -1,0 +1,10 @@
+// 返回类型不匹配（阶段 C / JR6008）：声明返回 `int` 却返回字符串。
+public class Main {
+    public static int bad() {
+        return "s";
+    }
+
+    public static void main(String[] args) {
+        println(bad());
+    }
+}

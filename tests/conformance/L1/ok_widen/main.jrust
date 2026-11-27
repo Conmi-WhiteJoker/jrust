@@ -42,5 +42,15 @@ public class Main {
 
         // return 加宽
         println(c.widen(3));
+
+        // 二元运算的标量提升（阶段 C）：Java 里 `int + double` 结果是 double。
+        double mixed = n + 1.5;
+        println(mixed);
+        double mixed2 = n * d;
+        println(mixed2);
+        println(n > d);
+        // 同级运算不提升：int / int 仍是整数除法（Java 语义，7/2 = 3）。
+        int intdiv = 7 / 2;
+        println(intdiv);
     }
 }

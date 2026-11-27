@@ -1042,6 +1042,11 @@ run_build_has ok_widen 'c.twice(n as f64)'
 run_build_has ok_widen 'return x as f64;'
 run_build_lacks ok_widen 'let dl: f64 = 1;'
 run_build_lacks ok_widen 'let d: f64 = n;'
+# 阶段 C / 二元运算标量提升：窄侧补 as，同级保持整数除法。
+run_build_has ok_widen 'n as f64 + 1.5'
+run_build_has ok_widen 'let mixed2: f64 = n as f64'
+run_build_has ok_widen 'n as f64 > d'
+run_build_lacks ok_widen 'n as f64 / 2'
 # 阶段 A / 块作用域：内层同名变量不得污染外层类型。
 # 修复前 `s + 1` 会被当成字符串拼接生成 `format!("{}{}", s, 1)`（语义错误）。
 run_build_lacks ok_shadow_scope 'format!("{}{}", s, 1)'
@@ -1075,6 +1080,9 @@ run_neg neg_try JR3031 "不支持 try / catch / finally" 3
 run_neg neg_unknown_type JR6001 "声明处必须写全类型" 4
 run_neg neg_unknown_method JR6004 "没有方法" 11
 run_neg neg_cond_not_bool JR6009 "不是 \`boolean\`" 5
+# 阶段 C / 赋值与返回的类型兼容。
+run_neg neg_assign_mismatch JR6007 "不能赋给" 4
+run_neg neg_ret_type JR6008 "不能赋给" 4
 run_neg neg_return_this JR4003 "静态工厂" 11
 run_neg neg_conflict JR4001 "所有权已经移走" 18
 run_neg neg_borrow_field JR3011 "无法统一" 18

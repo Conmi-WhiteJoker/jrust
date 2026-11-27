@@ -12,10 +12,11 @@ f4b64ceba58aced18609c4536754db3440c1d7074a734937119c9f21dc0e54d9  examples/Nulla
 0c7226e20121ffce242f48bc5f5fe36ae6861a5ce395f42cc0d91b51195a7fe0  examples/Ownership/main.jrust
 14233cd6d9c98c1403dbf007050b01d994949fdb8f1eb7bc383a5cccbbf3a30e  examples/PolymorphicList/main.jrust
 9a1fcf83dc414d5c1615fbf30b9d6d361edfdd785dcea1f92c7ec17142a69b3b  examples/PrintShort/main.jrust
-247e371ce4548edc6457d2898dd4f6b56e8eeaaaf9bdf3f4d9ac7e5d51dc6cc2  examples/RustTypes/main.jrust
+38a41fde53a9d57e7c08ffef0d3d76602cc3b33f9d644088c798cdc678ed0330  examples/RustTypes/main.jrust
 495f210ff67dc314f6798dc17446c44f38a6ede6292df0d3a728a5306296ec67  examples/ShapeSwitch/main.jrust
 248a1c8d0958c8f652a1f196b214cec079c55dac09ec72faeb0ac5bdc6b51a71  examples/SharedState/main.jrust
 d26b0f1ba626a5235853c46c2a9a39b4022c43a7f9d991742a0063f2ebc60cfd  examples/VecImport/main.jrust
+FAILED  tests/conformance/L1/neg_assign_mismatch/main.jrust
 FAILED  tests/conformance/L1/neg_await_sync/main.jrust
 FAILED  tests/conformance/L1/neg_borrow_field/main.jrust
 FAILED  tests/conformance/L1/neg_cfor_dir/main.jrust
@@ -44,6 +45,7 @@ FAILED  tests/conformance/L1/neg_raw_nested/main.jrust
 FAILED  tests/conformance/L1/neg_ref_ctor/main.jrust
 FAILED  tests/conformance/L1/neg_ref_enum/main.jrust
 FAILED  tests/conformance/L1/neg_ref_return/main.jrust
+FAILED  tests/conformance/L1/neg_ret_type/main.jrust
 FAILED  tests/conformance/L1/neg_return_this/main.jrust
 FAILED  tests/conformance/L1/neg_spawn_this/main.jrust
 FAILED  tests/conformance/L1/neg_switch_incomplete/main.jrust
@@ -100,7 +102,7 @@ f5d011b7782b600ea8104119ebdc598da63c71d296a7d7572bfaeb0d12a5f3a5  tests/conforma
 6a2bbdf846348c34fb483ff986ea7b8292249b704bd84a79a822f8e1c3fb3bc4  tests/conformance/L1/ok_spawn_this_copy/main.jrust
 ed875d46a843b432c45a72a66c7e401e0a979f6fee1c05ca8562d955dcf5d5d6  tests/conformance/L1/ok_sync/main.jrust
 87e33b4088628ad8fe8424afb3685046c6ebbe6265025c0545831d2154a0cd1d  tests/conformance/L1/ok_throws/main.jrust
-cd4f98e8cfd36318cbd671f6e587282ce69cbdc3df3fbe2ef836edf07d05b2cc  tests/conformance/L1/ok_widen/main.jrust
+e4c9aa453cb1c67f1d11e240bbb1322a1a172fc44562923ceb818fd541a6b72e  tests/conformance/L1/ok_widen/main.jrust
 12ebfdb12638ca6a47d1cc5f352e10a3638049c0d052885faa5fbcddc2cf0562  tests/conformance/L1/verify_ok/main.jrust
 d0d5ce413b9eac2c0a29c00ec274f8fa43a9307513bbc6bdb5efc727f2d11fc8  tests/conformance/L1/verify_raw_error/main.jrust
 FAILED  tests/l2/src

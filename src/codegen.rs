@@ -928,14 +928,61 @@ impl<'a> Codegen<'a> {
             Type::RustPrim(n) => match n.as_str() {
                 "i8" | "i16" | "i32" => Some(1),
                 "i64" | "isize" => Some(2),
+                // `i128` 比 `i64` 更宽，单列一级；否则 `i32 → i128` 会被误判成窄化。
+                "i128" => Some(2),
                 "u8" | "u16" | "u32" => Some(1),
-                "u64" | "u128" | "usize" => Some(2),
+                "u64" | "usize" => Some(2),
+                "u128" => Some(2),
                 "f32" => Some(3),
                 "f64" => Some(4),
                 _ => None,
             },
             _ => None,
         }
+    }
+
+    /// 二元运算的标量提升（阶段 C）：把较窄的一侧加宽到较宽的一侧。
+    ///
+    /// Java 规则：`int + double` → `double`，`int < long` → 比较前统一为 `long`。
+    /// Rust 没有隐式提升，`i32 + f64` 直接 E0277，所以必须显式补 `as`。
+    ///
+    /// 返回 `None` 表示不需要 / 无法提升（两侧同级、任一非数值、或类型推不出来），
+    /// 调用方按原样生成。
+    ///
+    /// **字面量特化**：`n + 1.5` 里 `1.5` 已是浮点字面量，不需要 `as`；
+    /// 但 `n + 1` 里 `1` 是整数，在 `double` 上下文里要改成 `1.0`（Rust 字面量
+    /// 类型由上下文推断，`n as f64 + 1.0` 才合法）。
+    fn promote_binary(
+        &self,
+        l: &str,
+        r: &str,
+        lhs: &Expr,
+        rhs: &Expr,
+        env: &Env,
+    ) -> Option<(String, String)> {
+        let lt = self.scalar_source_type(lhs, env)?;
+        let rt = self.scalar_source_type(rhs, env)?;
+        let (lr, rr) = (Self::scalar_rank(&lt)?, Self::scalar_rank(&rt)?);
+        if lr == rr {
+            return None; // 同级，交给默认路径
+        }
+        // 取较宽的一侧作为提升目标。
+        let (target, l_needs, r_needs) = if lr < rr {
+            (rt.clone(), true, false)
+        } else {
+            (lt.clone(), false, true)
+        };
+        let l2 = if l_needs {
+            self.coerce_scalar(l.to_string(), &lt, &target)
+        } else {
+            l.to_string()
+        };
+        let r2 = if r_needs {
+            self.coerce_scalar(r.to_string(), &rt, &target)
+        } else {
+            r.to_string()
+        };
+        Some((l2, r2))
     }
 
     /// 把已生成的表达式串 `s` 从标量类型 `from` 加宽到 `to`。
@@ -987,6 +1034,9 @@ impl<'a> Codegen<'a> {
             Expr::Float(_) => Some(Type::Double),
             Expr::Char(_) => Some(Type::Char),
             Expr::Bool(_) => Some(Type::Boolean),
+            // 字符串字面量在 `.jrust` 里是 `&str`，落到 `String` 目标时补 `.to_string()`。
+            // 这里按 `String` 报告，让 `int n = "s";` 能报出「`String` 不能赋给 `i32`」。
+            Expr::Str(_) => Some(Type::String),
             other => self.infer_type(other, env),
         }
     }
@@ -1508,6 +1558,157 @@ impl<'a> Codegen<'a> {
             .any(|t| self.iface_has_method(type_name(t), name, seen))
     }
 
+    /// 赋值 / 返回的类型兼容性（阶段 C / JR6007 / JR6008）。
+    ///
+    /// 用 `assignable` 判定「源类型能否赋给目标类型」；不兼容时报错。
+    /// 覆盖此前全部静默透传的写法：
+    /// ```java
+    /// int n = "s";        // JR6007
+    /// String s = 1;       // JR6007
+    /// boolean b = 1;      // JR6007
+    /// int f() { return "s"; }   // JR6008
+    /// ```
+    ///
+    /// **误报控制**（比 JR6001 更保守，因为赋值是最常见的语句）：
+    /// - 源类型或目标类型任一侧推不出来 → 放行（`Unknown` 语义）；
+    /// - `T?` 相关一律放行，交给既有的 JR-T1 判空逻辑；
+    /// - 数值之间只要满足「同级或加宽」就放行（加宽由阶段 0 的 `coerce_scalar` 补 `as`）；
+    ///   窄化（`double` → `int`）报错——Java 也不允许隐式窄化；
+    /// - 接口 / 类之间的赋值：只要源类型实现了目标接口就放行（含 `extends` 链）；
+    /// - 泛型参数（`T`）与 `Unknown` 一律放行。
+    fn check_assign_compat(&mut self) {
+        let mut bad: Vec<(usize, String, String, &'static str)> = Vec::new();
+
+        for c in &self.prog.classes {
+            for m in &c.methods {
+                let mut env = Env::new(m.ret.clone());
+                env.self_class = Some(c.name.clone());
+                for p in &m.params {
+                    env.vars.declare(p.name.clone(), p.ty.clone());
+                }
+                collect_assign_mismatches(&m.body, &mut env, self, &mut bad);
+            }
+            if let Some(ctor) = &c.ctor {
+                let mut env = Env::new(Type::Void);
+                env.self_class = Some(c.name.clone());
+                for p in &ctor.params {
+                    env.vars.declare(p.name.clone(), p.ty.clone());
+                }
+                collect_assign_mismatches(&ctor.body, &mut env, self, &mut bad);
+            }
+        }
+
+        bad.sort();
+        bad.dedup();
+        for (line, from, to, kind) in bad {
+            self.cur_line = line;
+            let code = if kind == "return" { "JR6008" } else { "JR6007" };
+            let what = if kind == "return" { "返回值" } else { "赋值" };
+            self.err_code(
+                code,
+                format!("{}的类型不匹配：`{}` 不能赋给 `{}`", what, from, to),
+                "Java 只允许「同级或加宽」的隐式转换；窄化请显式转换，类型不同请改用对应类型或补转换方法。",
+            );
+        }
+    }
+
+    /// `assignable(from, to)`（阶段 C / §14.4 的八条规则）。
+    ///
+    /// 返回 `true` 表示可以直接赋值（含需要补 `as` 的加宽）。
+    fn assignable(&self, from: &Type, to: &Type) -> bool {
+        // 规则 1：完全相同。
+        if from == to {
+            return true;
+        }
+        // 规则 1b：`bool` 的两种表示等价（`Type::Boolean` vs `Type::RustPrim("bool")`）。
+        if self.rust_type(from) == self.rust_type(to) {
+            return true;
+        }
+        // 规则 1c：集合 / 数组不检查元素类型。`List<String> ys = xs.stream().map(...).collectList()`
+        // 是合法写法（元素类型由 `map` 决定，而 jrust 的 collectList 仍按基座类型推断——
+        // README 已列为已知局限）。对集合做元素级检查只会误报。
+        if matches!(
+            from,
+            Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Array(_)
+        ) || matches!(
+            to,
+            Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Array(_)
+        ) {
+            return true;
+        }
+        // 规则 2：`T?` 一律放行（JR-T1 已有专门逻辑与诊断）。
+        if matches!(from, Type::Nullable(_)) || matches!(to, Type::Nullable(_)) {
+            return true;
+        }
+        // 规则 3：数值标量——同级或加宽允许，窄化不允许。
+        if let (Some(a), Some(b)) = (Self::scalar_rank(from), Self::scalar_rank(to)) {
+            return a <= b;
+        }
+        // 规则 4：`char` ↔ 数值。Java 允许 `char` → `int`，jrust 也放行（产物补 `as`）。
+        if matches!(from, Type::Char) && Self::scalar_rank(to).is_some() {
+            return true;
+        }
+        // 规则 5：类 → 接口（含 `extends` 链）与接口 → 接口（父接口）。
+        if let (Some(f), Some(t)) = (type_name_opt(from), type_name_opt(to)) {
+            if self.iface_decls.contains_key(t) {
+                // 目标接口：源类实现了它（或源接口继承了它）就允许。
+                if let Some(cd) = self.classes.get(f) {
+                    let mut seen = HashSet::new();
+                    if cd
+                        .implements
+                        .iter()
+                        .any(|imp| self.iface_closure_has(type_name(imp), &t, &mut seen))
+                    {
+                        return true;
+                    }
+                }
+                let mut seen = HashSet::new();
+                if self.iface_closure_has(&f, &t, &mut seen) {
+                    return true;
+                }
+            }
+        }
+        // 规则 5b：`Named("Box")` 与 `Generic("Box", args)` 是同一类型的两种写法
+        // （`Box b = new Box<String>(...)` 里目标侧没写实参）。按名字相同即兼容。
+        if let (Some(f), Some(t)) = (type_name_opt(from), type_name_opt(to)) {
+            if f == t {
+                return true;
+            }
+        }
+        // 规则 6：泛型参数 / 外部未知类型放行（无法判定不猜）。
+        if matches!(from, Type::Named(n) if is_generic_param(n))
+            || matches!(to, Type::Named(n) if is_generic_param(n))
+        {
+            return true;
+        }
+        // 规则 7：源或目标是本工程没有源码的类型（外部 crate）→ 放行。
+        for t in [from, to] {
+            if let Some(n) = type_name_opt(t) {
+                if !self.classes.contains_key(n) && !self.iface_decls.contains_key(n) {
+                    return true;
+                }
+            }
+        }
+        // 规则 8：其余不允许。
+        false
+    }
+
+    /// 接口 `start` 是否等于 `target` 或在它的 `extends` 闭包里。
+    fn iface_closure_has(&self, start: &str, target: &str, seen: &mut HashSet<String>) -> bool {
+        if start == target {
+            return true;
+        }
+        if !seen.insert(start.to_string()) {
+            return false;
+        }
+        let Some(d) = self.iface_decls.get(start) else {
+            return false;
+        };
+        d.extends
+            .iter()
+            .any(|p| self.iface_closure_has(type_name(p), target, seen))
+    }
+
     /// 条件表达式必须是 `bool`（阶段 B / JR6009）。
     ///
     /// Java 与 Rust 在这一点上一致——`if (1)` 在两边都非法，所以这条检查
@@ -1596,6 +1797,7 @@ impl<'a> Codegen<'a> {
         self.check_unknown_type_names();
         self.check_unknown_methods();
         self.check_non_bool_conditions();
+        self.check_assign_compat();
         // `java.*` 的 import 只需让 jrust 认识类型名，不生成代码；
         // 其余路径当作 Rust 的 use 原样输出（圆点转 `::`），例如 import std.vec.Vec;
         let imports = self.prog.imports.clone();
@@ -3263,6 +3465,25 @@ impl<'a> Codegen<'a> {
                 }
                 let l = self.gen_expr(lhs, env, None);
                 let r = self.gen_expr(rhs, env, None);
+                // 二元运算的标量提升（阶段 C / JR-T9 延伸）：Java 里 `int + double` 结果是
+                // `double`，Rust 里 `i32 + f64` 直接 E0277。按 Java 规则把较窄的一侧加宽。
+                // 只处理算术 / 关系运算；`&&` / `||` 两侧必须是 bool，不参与提升。
+                if matches!(
+                    op,
+                    BinOp::Add
+                        | BinOp::Sub
+                        | BinOp::Mul
+                        | BinOp::Div
+                        | BinOp::Rem
+                        | BinOp::Lt
+                        | BinOp::Le
+                        | BinOp::Gt
+                        | BinOp::Ge
+                ) {
+                    if let Some((l2, r2)) = self.promote_binary(&l, &r, lhs, rhs, env) {
+                        return format!("{} {} {}", l2, binop_str(*op), r2);
+                    }
+                }
                 format!("{} {} {}", l, binop_str(*op), r)
             }
             Expr::Unary { op, expr } => match op {
@@ -4375,6 +4596,116 @@ fn unknown_named_in(
             unknown_named_in(k, known, external).or_else(|| unknown_named_in(v, known, external))
         }
         _ => None,
+    }
+}
+
+/// 字面量能否自适应到目标标量类型（Rust 的字面量类型由上下文推断）。
+///
+/// - 整数字面量 → 任意整数目标：可以（`let m: i64 = 5;` 合法）。
+/// - 浮点字面量 → 任意浮点目标：可以（`let f: f32 = 1.5;` 合法）。
+/// - 整数字面量 → 浮点目标：**不可以**（`let d: f64 = 1;` 报 E0308，阶段 0 已补 `.0`）。
+/// - 浮点字面量 → 整数目标：不可以。
+fn literal_fits(e: &Expr, to: &Type) -> bool {
+    let to_float = matches!(to, Type::Double | Type::Float)
+        || matches!(to, Type::RustPrim(n) if n == "f32" || n == "f64");
+    let to_int = matches!(to, Type::Int | Type::Long | Type::Char)
+        || matches!(to, Type::RustPrim(n) if n.starts_with('i') || n.starts_with('u'));
+    match strip_parens_expr(e) {
+        Expr::Int(_) => to_int,
+        Expr::Float(_) => to_float,
+        _ => false,
+    }
+}
+
+/// 类型的名字（`Named` / `Generic` 的名字部分），其余返回 `None`。
+fn type_name_opt(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Named(n) | Type::Generic(n, _) => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+/// 是否是泛型参数名（单字母大写是最常见的写法，但也可能是 `TValue`）。
+///
+/// 判定保守：只把「单字符大写」或「以 T 开头且全大写字母/数字」当泛型参数。
+/// 误判成泛型参数的代价是漏报一次赋值检查（无害），误判成类的代价是误报（有害），
+/// 所以这里偏向「宁可当泛型」。
+fn is_generic_param(n: &str) -> bool {
+    if n.chars().count() == 1 {
+        return n.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+    }
+    n.starts_with('T') && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+/// 递归收集赋值 / 返回的类型不匹配（阶段 C / JR6007 / JR6008）。
+///
+/// 边扫描边把 `Stmt::Let` 的声明写进 `env`，保证后续语句能解析变量类型。
+/// `raw` 块跳过（JR-X3）。
+fn collect_assign_mismatches(
+    stmts: &[Stmt],
+    env: &mut Env,
+    g: &Codegen,
+    bad: &mut Vec<(usize, String, String, &'static str)>,
+) {
+    for s in stmts {
+        match s {
+            Stmt::Raw { .. } => {}
+            Stmt::Let { ty, name, init, line } => {
+                if let Some(from) = g.scalar_source_type(init, env) {
+                    // 字面量可以自适应：`float f = 1.5;` 里的 `1.5` 在 Rust 里
+                    // 会推断成 f32，所以「浮点字面量 → f32」不算窄化。
+                    if !g.assignable(&from, ty) && !literal_fits(init, ty) {
+                        bad.push((
+                            *line,
+                            g.rust_type(&from),
+                            g.rust_type(ty),
+                            "assign",
+                        ));
+                    }
+                }
+                env.vars.declare(name.clone(), ty.clone());
+            }
+            Stmt::Assign { target, value, line } => {
+                // 只检查目标类型能静态确定的赋值（局部变量 / `this.字段`）。
+                let target_ty = match strip_parens_expr(target) {
+                    Expr::Ident(n) => env.vars.lookup(n).cloned(),
+                    Expr::Field(base, f) if matches!(strip_parens_expr(base), Expr::This(_)) => {
+                        env.self_class.as_ref().and_then(|cn| {
+                            g.classes
+                                .get(cn)
+                                .and_then(|cd| cd.fields.iter().find(|x| &x.name == f))
+                                .map(|x| x.ty.clone())
+                        })
+                    }
+                    _ => None,
+                };
+                if let (Some(tt), Some(from)) = (target_ty, g.scalar_source_type(value, env)) {
+                    if !g.assignable(&from, &tt) {
+                        bad.push((*line, g.rust_type(&from), g.rust_type(&tt), "assign"));
+                    }
+                }
+            }
+            Stmt::Return { value: Some(e), line } => {
+                let ret = env.ret.clone();
+                if let Some(from) = g.scalar_source_type(e, env) {
+                    if !g.assignable(&from, &ret) {
+                        bad.push((*line, g.rust_type(&from), g.rust_type(&ret), "return"));
+                    }
+                }
+            }
+            Stmt::If { then, els, .. } => {
+                collect_assign_mismatches(then, env, g, bad);
+                if let Some(e) = els {
+                    collect_assign_mismatches(e, env, g, bad);
+                }
+            }
+            Stmt::While { body, .. }
+            | Stmt::ForEach { body, .. }
+            | Stmt::ForRange { body, .. }
+            | Stmt::Sync { body, .. }
+            | Stmt::Spawn { body, .. } => collect_assign_mismatches(body, env, g, bad),
+            _ => {}
+        }
     }
 }
 

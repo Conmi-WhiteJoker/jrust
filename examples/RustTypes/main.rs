@@ -43,7 +43,7 @@ fn main() {
     // jrust:L25
     println!("{}", ratio * 2.0);
     // jrust:L26
-    println!("{}", tiny + 0.25);
+    println!("{}", tiny as f64 + 0.25);
     // jrust:L27
     println!("{}", ok);
 }
