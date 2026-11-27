@@ -30,8 +30,8 @@ FAILED  tests/conformance/L1/neg_labeled/main.jrust
 FAILED  tests/conformance/L1/neg_mutable_set/main.jrust
 FAILED  tests/conformance/L1/neg_mutable_static/main.jrust
 FAILED  tests/conformance/L1/neg_newarray_type/main.jrust
-FAILED  tests/conformance/L1/neg_nullable_method/main.jrust
 FAILED  tests/conformance/L1/neg_null_assign/main.jrust
+FAILED  tests/conformance/L1/neg_nullable_method/main.jrust
 FAILED  tests/conformance/L1/neg_override_args/main.jrust
 FAILED  tests/conformance/L1/neg_override_both/main.jrust
 FAILED  tests/conformance/L1/neg_override_conflict/main.jrust
@@ -77,9 +77,9 @@ a86e1a9e6b6fcfccb24188fe3c2d36fcce50b60d2bbc173df7396b6952ea1929  tests/conforma
 0b2f3a80307ebf87ddfb682d268453afe9ca9ac516bbfbbdec198262c2cf8aa2  tests/conformance/L1/ok_enum_switch/main.jrust
 5e7d58690d646a7fde40b11d20a29c98f51d2039a3af201ec78104144f2dc185  tests/conformance/L1/ok_ext_unknown/main.jrust
 3f12a89aeef571137eb808f8301c272842a11d78c3c0a0bf681510e471810640  tests/conformance/L1/ok_for_mutable/main.jrust
+2b2ccd571deb6158b9c10baade737c4baa99af5c84f2155b5bfa8144ad80e92d  tests/conformance/L1/ok_generic/main.jrust
 cb22583ed787ef4e2998319a038874a48bcd4add041c826ef7911ca48390195e  tests/conformance/L1/ok_generic_bounds/main.jrust
 08f326f158c46d45c6040bfe0fc1db19d3da6a22c5db4eb70430581dcabfe097  tests/conformance/L1/ok_generic_iface_enum/main.jrust
-2b2ccd571deb6158b9c10baade737c4baa99af5c84f2155b5bfa8144ad80e92d  tests/conformance/L1/ok_generic/main.jrust
 40e2aa046cb2e2048f40243eeacc143369b86737a55f9ed7bf8594fa27169208  tests/conformance/L1/ok_getter_ref/main.jrust
 282ef93049b2fadde26e849b616f4652f1e9320015ce7b1654a4faf06f72bae6  tests/conformance/L1/ok_iface_default/main.jrust
 c6b1e8612f6a065e998d2a2453b4041f6f906f70d4613c3b49ee2e23c4252576  tests/conformance/L1/ok_iface_extends/main.jrust
@@ -97,8 +97,8 @@ d13fff4ef3b2852ae4a2c318546de97331452a5a0b338889473bacda04e8fbc1  tests/conforma
 e675cbd3ea4aa5767824f12e42d981e69c4d150a74bc9787d73fc67d9bce33af  tests/conformance/L1/ok_set/main.jrust
 8071a2f84c85cdab5faa1ed97d6516dcf23365d8233bb0089b815bf121969fd3  tests/conformance/L1/ok_shadow_scope/main.jrust
 c6e51fc3b5a4b3d15bd46687d848985059eb1d71c8e28faa9bd25a21664d91ce  tests/conformance/L1/ok_shared/main.jrust
-8f22ba217d491b91bd0de1c0265cab7c0466daea88a28d0add966aa3a5eaac16  tests/conformance/L1/ok_spawn_capture/main.jrust
 f5d011b7782b600ea8104119ebdc598da63c71d296a7d7572bfaeb0d12a5f3a5  tests/conformance/L1/ok_spawn/main.jrust
+8f22ba217d491b91bd0de1c0265cab7c0466daea88a28d0add966aa3a5eaac16  tests/conformance/L1/ok_spawn_capture/main.jrust
 5e462cdb91cb67461374e1bbdfb95184445018da29f171b8beda806a8c7b9089  tests/conformance/L1/ok_spawn_raw/main.jrust
 6a2bbdf846348c34fb483ff986ea7b8292249b704bd84a79a822f8e1c3fb3bc4  tests/conformance/L1/ok_spawn_this_copy/main.jrust
 0cee20bc875eb0f7e130b4234557b4e282641087d78a758d00475b495fe2fa5c  tests/conformance/L1/ok_string_methods/main.jrust

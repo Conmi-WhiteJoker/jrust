@@ -28,6 +28,6 @@ jobs:
       - name: 安装 ab
         if: matrix.rust == 'stable'
         run: sudo apt-get update && sudo apt-get install -y apache2-utils
-      - name: 九步全量验收
+      - name: 十步全量验收
         if: matrix.rust == 'stable'
         run: ./verify.sh

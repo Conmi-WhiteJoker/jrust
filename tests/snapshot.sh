@@ -19,6 +19,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# 排序受 locale 影响：本地 zh_CN 与 CI 的 C.UTF-8 对 `_` / 字母的权重不同，
+# 同一条目会落在不同位置，导致「仅顺序不同」被误判成产物漂移。统一按字节序。
+export LC_ALL=C
+
 JRUST=./target/debug/jrust
 SNAP=tests/snapshots/artifacts.txt
 CHECK=0

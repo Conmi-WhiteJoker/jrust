@@ -257,7 +257,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 
 - 单文件与多文件两种模式：单文件一个 `.jrust` 对应一个 crate 根；多文件用 `package a.b;` 生成模块树（`jrust build <目录>`）。没有包管理与依赖解析——外部 crate 必须在最近的 `Cargo.toml` 里声明（缺失报 `JR5001`），jrust 从不生成或改写 `Cargo.toml`。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
-- **名称与类型检查**（v1.41–v1.44，`jrust check` 就会报，规范见 SPEC §13.5）：
+- **名称与类型检查**（v1.41–v1.44，`jrust check` 就会报，规范见 [SPEC-v2](docs/SPEC-v2.md) §2；历史记录见 v1 §13.5）：
   未知类型名（`JR6001`；找不到相近拼写时降级为 `JR6102` warning）、未知方法（`JR6004`，
   仅限接收者类型在本工程有源码时；内置类型列支持清单 + `raw` 逃生口）、
   条件必须 `boolean`（`JR6009`）。**外部 crate 类型是显式的「不可知」状态**——
@@ -295,7 +295,7 @@ src/lexer.rs    手写词法分析（不引解析框架，便于阅读）
 src/parser.rs   递归下降语法分析 + 解释性诊断
 src/ast.rs      Java 风格的 AST（不含任何 Rust 概念）
 src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推断）
-src/types.rs    V2 类型信息层骨架（Ty / TypeEnv / SymbolTable；阶段 A 已启用 TypeEnv）
+src/types.rs    V2 类型信息层：TypeEnv 已接入；Ty / SymbolTable 为后续阶段预留
 src/interp.rs   树遍历解释器（run / debug 共用，赋值复制 + 显式 move）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
@@ -318,8 +318,11 @@ tests/l4/       独立 cargo 工程：中型服务双 bin（jrust 产物 / 手�
                 多模块 `app.gate` + `app.store` + `spawn` 后台心跳 + 三条失败路径（JR-G13）
 tests/l4_cases.sh  L4 验收：功能逐字节对拍 + 稳定性基线 + 后台任务 + ab 压测 + 优雅退出
 tests/snapshot.sh  产物快照：生成 / `--check` 校验全部产物的 sha256（重构防漂移门槛）
-tests/snapshots/artifacts.txt  快照基线（108 项：例程 + L1 夹具 + 多文件工程）
+tests/snapshots/artifacts.txt  快照基线（116 项：例程 + L1 夹具 + 多文件工程）
 tests/coverage_audit.sh  附录 A 覆盖率盘点：逐条确认每个 ✅ 需求都有夹具覆盖
+docs/SPEC-v1.md  1.0 基线规范（历史记录）
+docs/SPEC-v2.md  2.0 规范：类型检查、破坏性变更与双轨、V2 验收
+docs/CHANGELOG-spec.md  每个版本的需求变更记录
 ```
 
 ## 为什么不用 proc macro

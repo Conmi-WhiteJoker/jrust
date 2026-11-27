@@ -149,7 +149,7 @@ fn exit_code(ok: bool) -> ExitCode {
 }
 
 /// 规范版本（JR-G11）：`--version` 与 usage 头同时报告实现版本与规范版本。
-const SPEC_VERSION: &str = "1.0";
+const SPEC_VERSION: &str = "2.0";
 
 fn print_usage() {
     eprintln!(
