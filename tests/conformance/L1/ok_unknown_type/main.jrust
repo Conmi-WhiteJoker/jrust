@@ -1,0 +1,11 @@
+/// 外部类型是显式的「不可知」（阶段 E / JR6102 + JR4101）：
+/// `Writer` 在本工程没有源码，jrust 无法判定它的方法签名。
+/// 按 JR-O6 的原则：**放行 + warning**，不静默猜、也不武断判错。
+public class Main {
+    public static void main(String[] args) {
+        Writer w = new Writer();
+        String text = "hello";
+        w.write(text);
+        println(w.size());
+    }
+}

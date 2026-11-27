@@ -804,7 +804,18 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// 接收者是否「外部类型」：本文件既没有声明它，也不是内置映射类型（`JR4101` 的判定）。
+    /// 接收者是否「外部类型」（阶段 E / `Ty::Unknown` 的显式判定）。
+    ///
+    /// 这是 V2 类型层里 `Unknown` 概念的唯一落地点：**本工程没有源码的类型**。
+    /// 语义上等价于 `Ty::Unknown`——jrust 无法判定它的方法签名、字段、trait 实现，
+    /// 因此所有基于它的判断都必须降级为「放行 + warning」（JR-O6 / `JR4101`），
+    /// 而不是静默猜一个答案。
+    ///
+    /// 三个条件是**且**关系：
+    /// 1. 名字能在类型位置出现（`Named` / `Generic`）；
+    /// 2. 不是本工程声明的 class / interface / enum；
+    /// 3. 不是内置映射类型（`List` / `Map` / `String` 等在 parser 里已转成 `Type` 变体，
+    ///    走到这里的只会是用户直接写内建名的边角情况）。
     fn is_external_recv_type(&self, t: Option<&Type>) -> bool {
         let name = match t {
             Some(Type::Named(n)) => n,

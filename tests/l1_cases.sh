@@ -1024,6 +1024,8 @@ run_build_has ok_override_ref 'u.touch(&mut xs)'
 run_build_has ok_override_ref 'fn note(&self, s: String)'
 run_build_has ok_override_ref 'u.note(note)'
 run_warn ok_ext_unknown 'w.write(&text)'
+# 阶段 E / Unknown 显式化：外部类型同时触发 JR6102（未知类型）与 JR4101（签名不可知）。
+run_warn ok_unknown_type 'w.write(&text)' 
 # 缺口 1：spawn 不能捕获 this（JR3023），替代路径是字段先复制到局部变量。
 run_build_has ok_spawn_this_copy 'let t: String = self.tag.clone();'
 run_build_has ok_spawn_this_copy 'let __jr_sp0_t = t.clone();'

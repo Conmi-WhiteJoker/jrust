@@ -49,6 +49,23 @@ pub enum Ty {
     Unknown,
 }
 
+impl Ty {
+    /// 该类型是否「本工程不可知」（阶段 E）。
+    ///
+    /// 语义等价于 `codegen::is_external_recv_type`——两者描述同一个概念，只是
+    /// 一个在 `Ty` 层、一个在 `ast::Type` 层（阶段 A 的遗留）。**任何"无法判定"
+    /// 的分支都必须走这里**，不允许返回 `None` 让调用方静默跳过：
+    /// 静默跳过正是 §14.1 里六条缺口（`var` / 拼错方法名 / 实参类型…）的成因。
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Ty::Unknown)
+    }
+
+    /// 是否是数值标量（参与加宽与二元提升）。
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Ty::Scalar(s) if s.widen_rank().is_some())
+    }
+}
+
 /// 标量类型。与 `ast::Type` 的 `Int` / `Long` / ... 及 `RustPrim` 一一对应。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scalar {
