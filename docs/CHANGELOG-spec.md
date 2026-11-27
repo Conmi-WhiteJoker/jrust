@@ -706,3 +706,42 @@ V2 类型信息层（cairn §14）的阶段 C。
 - **新增负向夹具** `neg_assign_mismatch` / `neg_ret_type`，`ok_widen` 扩展混合运算用例；
   L1 148 → **154**；快照 111 → 113 项。
 - 验收：`./verify.sh` 十步全绿；覆盖率盘点 53/53；rustc 1.85.0 基线通过。
+
+## v1.43 — 2026-11-27
+
+### 阶段 D：内置类型方法白名单 + String 方法映射（JR-E21 / JR6004 扩展）
+
+V2 类型信息层（cairn §14）的阶段 D。
+
+- **String 方法映射**（只做语义等价的换名，遵循 JR-G4「不得静默改变语义」）：
+  | Java | Rust | 说明 |
+  |---|---|---|
+  | `length()` | `s.chars().count()` | **语义修正**：Java 数字符，Rust `len()` 数字节 |
+  | `isEmpty()` | `is_empty()` | 等价 |
+  | `equals(x)` | `eq(x)` | 等价 |
+  | `startsWith` / `endsWith` / `contains` | `starts_with` / `ends_with` / `contains` | 等价 |
+  | `toUpperCase` / `toLowerCase` | `to_uppercase` / `to_lowercase` | 同为 Unicode 感知 |
+  | `trim()` | `trim()` | Rust 去 Unicode 空白、Java 去 <= U+0020，常见场景等价 |
+  | `toString()` | `to_string()` | 等价 |
+- **不映射的方法**（语义有实质差异，报 `JR6004` 并建议 `raw`）：
+  - `substring(a,b)` / `charAt(i)`：Java 按 UTF-16 码元、Rust 按字节，非 ASCII 会 panic；
+  - `split` / `replace`：Java 收正则、Rust 收字面量；
+  - `indexOf`：Java 找不到返回 `-1`，Rust `find` 返回 `Option<usize>`。
+- **发现并修复一个真实的语义分叉**：`"你好".length()` 修复前产物输出 **6**（字节）、
+  解释器输出 **2**（字符）。Java 语义是 2。这是 `interp_parity.sh` 一直没抓到的问题
+  （夹具里没有非 ASCII 的 `length()` 用例）。修复后两侧一致。
+  附带变更：`ok_pick_lifetime` 的 `x.length() > y.length()` 产物变为
+  `x.chars().count() > y.chars().count()`（语义正确化，快照已更新）。
+- **内置方法白名单**（`builtin_method_known`）：String / List / Map / Set 各有名单，
+  名单外报 `JR6004`，提示里列出支持的方法并给出 `raw` 逃生口。
+  名单必须与 `gen_call` 的映射表、`infer_type` 的返回类型表**三处保持一致**——
+  不同步会出现「检查放行但产物编译不过」或「检查报错但产物其实能用」。
+- **`infer_type` 补 String 方法返回类型**：否则链式调用 `s.trim().toLowerCase()`
+  里外层映射不生效（`trim()` 的返回类型推不出来）。
+- **解释器同步**：`interp` 补 trim / toUpper / toLower / startsWith / endsWith /
+  contains / equals / toString，保持 `interp_parity.sh` 全绿。
+- **已知边界**（如实记录）：字符串字面量直接调方法（`"".isEmpty()`）时接收者类型
+  推不出来，不参与映射——字面量是 `&str` 而映射表按 `String` 建。
+- 新增夹具 `ok_string_methods`（10 条映射）/ `neg_string_unknown`（`substring` 报错），
+  L1 154 → **166**；快照 113 → 115 项。
+- 验收：`./verify.sh` 十步全绿；覆盖率 53/53；rustc 1.85.0 基线通过。

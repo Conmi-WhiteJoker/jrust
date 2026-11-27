@@ -266,6 +266,11 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
   （`collectList` 按基座类型推断是已知局限）。
 - **二元运算的标量提升**（v1.42 起）：`n + 1.5` → `n as f64 + 1.5`，`n > d` → `n as f64 > d`；
   `int / int` 保持整数除法（Java 语义）。
+- **String 方法映射**（v1.43 起）：`length` / `isEmpty` / `equals` / `startsWith` / `endsWith` /
+  `contains` / `toUpperCase` / `toLowerCase` / `trim` / `toString` 按语义等价换名；
+  `length()` 生成 `chars().count()`（Java 数字符，Rust `len()` 数字节）。
+  `substring` / `charAt` / `split` / `replace` / `indexOf` **不映射**（Java 与 Rust 语义不同），
+  报 `JR6004` 并提示用 `raw`。
 - 不支持实例字段初始化（`static final` 常量除外）、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 不支持（解析期报 `JR3031`，提示用 `?` 传播、清理交给 `Drop`）。

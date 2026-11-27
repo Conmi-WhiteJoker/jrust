@@ -1083,6 +1083,20 @@ run_neg neg_cond_not_bool JR6009 "不是 \`boolean\`" 5
 # 阶段 C / 赋值与返回的类型兼容。
 run_neg neg_assign_mismatch JR6007 "不能赋给" 4
 run_neg neg_ret_type JR6008 "不能赋给" 4
+# 阶段 D / 内置类型方法白名单：`substring` 语义与 Rust 差异太大，不映射。
+run_neg neg_string_unknown JR6004 "没有方法" 6
+# 阶段 D / String 方法映射的产物形态。
+run_build_has ok_string_methods 's.chars().count()'
+run_build_has ok_string_methods 's.trim().to_lowercase()'
+run_build_has ok_string_methods 's.trim().to_uppercase()'
+run_build_has ok_string_methods 's.trim().is_empty()'
+run_build_has ok_string_methods 's.trim().starts_with("He")'
+run_build_has ok_string_methods 's.trim().ends_with("lo")'
+run_build_has ok_string_methods 's.trim().contains("ell")'
+run_build_has ok_string_methods 's.trim().eq("Hello")'
+run_build_lacks ok_string_methods 's.trim().toLowerCase()'
+run_build_lacks ok_string_methods 's.trim().isEmpty()'
+run_build_lacks ok_string_methods '.len()' 
 run_neg neg_return_this JR4003 "静态工厂" 11
 run_neg neg_conflict JR4001 "所有权已经移走" 18
 run_neg neg_borrow_field JR3011 "无法统一" 18

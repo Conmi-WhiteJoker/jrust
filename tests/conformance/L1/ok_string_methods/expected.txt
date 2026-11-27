@@ -1,0 +1,10 @@
+9
+Hello
+hello
+HELLO
+false
+true
+true
+true
+true
+Hello

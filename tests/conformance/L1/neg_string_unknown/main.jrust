@@ -1,0 +1,8 @@
+/// 内置类型的方法白名单（阶段 D / JR6004）：`substring` 语义与 Rust 差异太大
+/// （Java 按 UTF-16 码元、Rust 按字节，非 ASCII 会 panic），故不映射、报错。
+public class Main {
+    public static void main(String[] args) {
+        String s = "hello";
+        println(s.substring(1, 3));
+    }
+}

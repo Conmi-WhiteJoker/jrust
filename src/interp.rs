@@ -1806,8 +1806,50 @@ impl<'a> Interp<'a> {
                 },
                 Value::Str(s) => match name {
                     // Java 的 `length()` 数的是字符个数；Rust 的 `len()` 是字节数。
+                    // 非 ASCII 时两者不同——产物侧补 `chars().count()` 对齐（见 codegen）。
                     "length" => Ok(Value::Int(s.chars().count() as i64)),
                     "isEmpty" => Ok(Value::Bool(s.is_empty())),
+                    // 阶段 D / JR-E21：与 codegen 的映射表保持一致。
+                    "trim" => Ok(Value::Str(s.trim().to_string())),
+                    "toLowerCase" => Ok(Value::Str(s.to_lowercase())),
+                    "toUpperCase" => Ok(Value::Str(s.to_uppercase())),
+                    "toString" => Ok(Value::Str(s.clone())),
+                    "startsWith" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "startsWith 需要一个字符串参数"));
+                        }
+                        match self.eval(&args[0])? {
+                            Value::Str(p) => Ok(Value::Bool(s.starts_with(p.as_str()))),
+                            _ => Err(RuntimeError::new(line, "startsWith 需要一个字符串参数")),
+                        }
+                    }
+                    "endsWith" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "endsWith 需要一个字符串参数"));
+                        }
+                        match self.eval(&args[0])? {
+                            Value::Str(p) => Ok(Value::Bool(s.ends_with(p.as_str()))),
+                            _ => Err(RuntimeError::new(line, "endsWith 需要一个字符串参数")),
+                        }
+                    }
+                    "contains" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "contains 需要一个字符串参数"));
+                        }
+                        match self.eval(&args[0])? {
+                            Value::Str(p) => Ok(Value::Bool(s.contains(p.as_str()))),
+                            _ => Err(RuntimeError::new(line, "contains 需要一个字符串参数")),
+                        }
+                    }
+                    "equals" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(line, "equals 需要一个字符串参数"));
+                        }
+                        match self.eval(&args[0])? {
+                            Value::Str(p) => Ok(Value::Bool(*s == p)),
+                            _ => Err(RuntimeError::new(line, "equals 需要一个字符串参数")),
+                        }
+                    }
                     other => Err(RuntimeError::new(
                         line,
                         format!("String 没有方法 `{}`", other),

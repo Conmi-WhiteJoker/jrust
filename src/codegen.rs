@@ -1395,7 +1395,16 @@ impl<'a> Codegen<'a> {
         bad.dedup();
         for (line, owner, name) in bad {
             self.cur_line = line;
-            let hint = if let Some(similar) = closest_method(&name, &owner, &self.classes, &self.iface_decls) {
+            let hint = if let Some(kind) = builtin_kind_name(&owner) {
+                // 内置类型：列出支持的方法，并给出 raw 的逃生口。
+                format!(
+                    "`{}` 只支持 {}；需要别的行为用 `raw {{ }}` 直接写 Rust。",
+                    kind,
+                    builtin_method_list(kind)
+                )
+            } else if let Some(similar) =
+                closest_method(&name, &owner, &self.classes, &self.iface_decls)
+            {
                 format!("`{}` 里有没有 `{}`？检查拼写。", owner, similar)
             } else {
                 format!("`{}` 里没有这个方法；检查拼写，或先在类里声明它。", owner)
@@ -1488,6 +1497,15 @@ impl<'a> Codegen<'a> {
                         }
                     }
                     // 只处理「接收者类型能解析到本工程源码」的情况。
+                    // 内置类型（String / List / Map / Set / 数组）走白名单检查（阶段 D）。
+                    if let Some(rt) = self.infer_type(r, env) {
+                        if let Some(kind) = builtin_kind(&rt) {
+                            if !builtin_method_known(kind, name) {
+                                bad.push((line, kind.to_string(), name.clone()));
+                            }
+                            return;
+                        }
+                    }
                     let owner = match self.infer_type(r, env) {
                         Some(t) => match type_name(&t) {
                             "" => return,
@@ -1496,7 +1514,7 @@ impl<'a> Codegen<'a> {
                         None => return,
                     };
                     if !self.classes.contains_key(&owner) && !self.iface_decls.contains_key(&owner) {
-                        return; // 外部 crate / 内置类型 → 放行
+                        return; // 外部 crate → 放行
                     }
                     // 泛型类的方法名也按名字查（jrust 全仓按名字并集推断）。
                     if self.method_exists(&owner, name) {
@@ -4149,10 +4167,37 @@ impl<'a> Codegen<'a> {
             return format!("{}[{}]", r, arg_strs[0]);
         }
 
-        let mapped = match (is_list, name) {
-            (true, "add") => "push",
-            (true, "size") => "len",
-            (_, "length") => "len",
+        let is_string = matches!(recv_ty, Some(Type::String));
+        // String 方法的 Java → Rust 映射（阶段 D / JR-E21）。
+        //
+        // **只做语义等价的映射**（JR-G4：不得静默改变语义）：
+        // - `length` / `isEmpty` / `equals` / `startsWith` / `endsWith` / `contains` /
+        //   `toString` 两边语义一致，直接换名；
+        // - `trim` → `trim()`（Rust 去 Unicode 空白，Java 去 <= U+0020；常见场景等价）；
+        // - `toUpperCase` / `toLowerCase` → `to_uppercase` / `to_lowercase`（同为 Unicode 感知）。
+        //
+        // **不映射**（语义有实质差异，报 JR6004 并建议用 raw）：
+        // - `substring(a, b)` / `charAt(i)`：Java 按 UTF-16 码元、Rust 按字节，非 ASCII 会 panic；
+        // - `split` / `replace`：Java 收正则、Rust 收字面量；
+        // - `indexOf`：Java 找不到返回 `-1`，Rust 的 `find` 返回 `Option<usize>`，语义不同。
+        let string_map = match name {
+            "length" => Some("len"),
+            "isEmpty" => Some("is_empty"),
+            "equals" => Some("eq"),
+            "startsWith" => Some("starts_with"),
+            "endsWith" => Some("ends_with"),
+            "contains" => Some("contains"),
+            "toUpperCase" => Some("to_uppercase"),
+            "toLowerCase" => Some("to_lowercase"),
+            "trim" => Some("trim"),
+            "toString" => Some("to_string"),
+            _ => None,
+        };
+        let mapped = match (is_list, is_string, name) {
+            (true, _, "add") => "push",
+            (true, _, "size") => "len",
+            (_, true, _) if string_map.is_some() => string_map.unwrap(),
+            (_, _, "length") => "len",
             _ => name,
         };
 
@@ -4171,12 +4216,24 @@ impl<'a> Codegen<'a> {
         };
         // `len()` 是 `usize`：Java 里 `size()` 返回 int，落回 int/long 上下文时补转换。
         if mapped == "len" {
+            // String 的 `length()` 在 Java 里数的是**字符**，Rust 的 `len()` 是**字节**。
+            // 非 ASCII 时两者不同（`"你好".length()` Java = 2、Rust len = 6），必须补
+            // `chars().count()` 才能与解释器 / Java 语义一致（JR-G4 不得静默改变语义）。
+            // 集合的 `size()` 两边都是元素个数，不需要转换。
+            let call = if is_string {
+                // `call` 形如 `s.len()`，去掉整个 `.len()` 后缀再拼 `.chars().count()`。
+                let recv_expr = call.strip_suffix(".len()").unwrap_or(&call);
+                format!("{}.chars().count()", recv_expr)
+            } else {
+                call
+            };
             if matches!(expect, Some(Type::Int)) {
                 return format!("({}) as i32", call);
             }
             if matches!(expect, Some(Type::Long)) {
                 return format!("({}) as i64", call);
             }
+            return call;
         }
         // 借用返回（`-> &T`）落到 owned 上下文时做落地转换。
         if let Some(exp) = expect {
@@ -4401,6 +4458,20 @@ impl<'a> Codegen<'a> {
                         return Some(Type::Nullable(v.clone()));
                     }
                 }
+                // String 方法的返回类型（阶段 D / JR-E21）：链式调用 `s.trim().toLowerCase()`
+                // 需要知道 `trim()` 返回 `&str`，否则外层方法映射不生效。
+                if matches!(recv_ty, Some(Type::String)) {
+                    match name.as_str() {
+                        "length" => return Some(Type::Int),
+                        "isEmpty" | "equals" | "startsWith" | "endsWith" | "contains" => {
+                            return Some(Type::Boolean)
+                        }
+                        "trim" | "toUpperCase" | "toLowerCase" | "toString" => {
+                            return Some(Type::String)
+                        }
+                        _ => {}
+                    }
+                }
                 if let Some(rt) = &recv_ty {
                     if let Some((c, map)) = self.type_binding(rt) {
                         if let Some(cd) = self.classes.get(&c) {
@@ -4615,6 +4686,83 @@ fn literal_fits(e: &Expr, to: &Type) -> bool {
         Expr::Float(_) => to_float,
         _ => false,
     }
+}
+
+/// owner 是否内置类型名（白名单报错时用来换提示措辞）。
+fn builtin_kind_name(owner: &str) -> Option<&'static str> {
+    match owner {
+        "String" | "List" | "Map" | "Set" => Some(match owner {
+            "String" => "String",
+            "List" => "List",
+            "Map" => "Map",
+            _ => "Set",
+        }),
+        _ => None,
+    }
+}
+
+/// 内置类型支持的方法列表（拼成提示文本）。
+fn builtin_method_list(kind: &str) -> String {
+    let names: &[&str] = match kind {
+        "String" => &[
+            "length", "isEmpty", "equals", "startsWith", "endsWith", "contains",
+            "toUpperCase", "toLowerCase", "trim", "toString",
+        ],
+        "List" => &["add", "size", "get", "isEmpty", "stream", "mutable", "length"],
+        "Map" => &["put", "get", "getOrNull", "size", "containsKey", "isEmpty"],
+        _ => &["add", "contains", "remove", "size", "isEmpty"],
+    };
+    names
+        .iter()
+        .map(|n| format!("`{}`", n))
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+/// 内置类型的种类（阶段 D 的白名单键）。
+fn builtin_kind(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::String => Some("String"),
+        Type::List(_) | Type::Array(_) => Some("List"),
+        Type::Map(..) => Some("Map"),
+        Type::Set(_) => Some("Set"),
+        _ => None,
+    }
+}
+
+/// 内置类型的已知方法白名单（阶段 D / JR-E21）。
+///
+/// **只列真正被映射或有语义等价实现的方法**。名单外的报 `JR6004` 并建议用 `raw`。
+/// 这张表必须与 `gen_call` 里的映射表、以及 `infer_type` 的返回类型表保持一致——
+/// 三处不同步就会出现「检查放行但产物编译不过」或「检查报错但产物其实能用」。
+fn builtin_method_known(kind: &str, name: &str) -> bool {
+    let names: &[&str] = match kind {
+        "String" => &[
+            "length",
+            "isEmpty",
+            "equals",
+            "startsWith",
+            "endsWith",
+            "contains",
+            "toUpperCase",
+            "toLowerCase",
+            "trim",
+            "toString",
+        ],
+        "List" => &[
+            "add",
+            "size",
+            "get",
+            "isEmpty",
+            "stream",
+            "mutable",
+            "length",
+        ],
+        "Map" => &["put", "get", "getOrNull", "size", "containsKey", "isEmpty"],
+        "Set" => &["add", "contains", "remove", "size", "isEmpty"],
+        _ => return true,
+    };
+    names.contains(&name)
 }
 
 /// 类型的名字（`Named` / `Generic` 的名字部分），其余返回 `None`。

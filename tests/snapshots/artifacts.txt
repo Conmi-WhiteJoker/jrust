@@ -48,6 +48,7 @@ FAILED  tests/conformance/L1/neg_ref_return/main.jrust
 FAILED  tests/conformance/L1/neg_ret_type/main.jrust
 FAILED  tests/conformance/L1/neg_return_this/main.jrust
 FAILED  tests/conformance/L1/neg_spawn_this/main.jrust
+FAILED  tests/conformance/L1/neg_string_unknown/main.jrust
 FAILED  tests/conformance/L1/neg_switch_incomplete/main.jrust
 FAILED  tests/conformance/L1/neg_switch_int/main.jrust
 FAILED  tests/conformance/L1/neg_sync_target/main.jrust
@@ -90,7 +91,7 @@ fc252b6ca594b8cc646ca1b5f89f0105e1f909860fc9b441e8ddf0042f81a2b4  tests/conforma
 371ea2493e4597b245d9bd8746fa7fcba41fe959922855ea34c3ee135667cbcd  tests/conformance/L1/ok_newarray/main.jrust
 d13fff4ef3b2852ae4a2c318546de97331452a5a0b338889473bacda04e8fbc1  tests/conformance/L1/ok_nullable/main.jrust
 645c19e41739498c1ff9c1c7f66e539f09a3edd03c049b921e575dbe4621f015  tests/conformance/L1/ok_override_ref/main.jrust
-fe1df55274b9e6f42e6c7b8f45ddcce50732f8223c46f76f57f85fc54ae48a4d  tests/conformance/L1/ok_pick_lifetime/main.jrust
+7ab7822852baea055889f9c6a502a9c75512b360359c2bf66eb2ec867b7a6418  tests/conformance/L1/ok_pick_lifetime/main.jrust
 29e33094a4047c0575ec560661ee0171736b0f85b2e6e93de3312a34d3d93f12  tests/conformance/L1/ok_raw/main.jrust
 83c956d54f29b01ce4d7b21c0446993687445e294a0bac11c6a0f64696e31f97  tests/conformance/L1/ok_raw_multiline/main.jrust
 e675cbd3ea4aa5767824f12e42d981e69c4d150a74bc9787d73fc67d9bce33af  tests/conformance/L1/ok_set/main.jrust
@@ -100,6 +101,7 @@ c6e51fc3b5a4b3d15bd46687d848985059eb1d71c8e28faa9bd25a21664d91ce  tests/conforma
 f5d011b7782b600ea8104119ebdc598da63c71d296a7d7572bfaeb0d12a5f3a5  tests/conformance/L1/ok_spawn/main.jrust
 5e462cdb91cb67461374e1bbdfb95184445018da29f171b8beda806a8c7b9089  tests/conformance/L1/ok_spawn_raw/main.jrust
 6a2bbdf846348c34fb483ff986ea7b8292249b704bd84a79a822f8e1c3fb3bc4  tests/conformance/L1/ok_spawn_this_copy/main.jrust
+0cee20bc875eb0f7e130b4234557b4e282641087d78a758d00475b495fe2fa5c  tests/conformance/L1/ok_string_methods/main.jrust
 ed875d46a843b432c45a72a66c7e401e0a979f6fee1c05ca8562d955dcf5d5d6  tests/conformance/L1/ok_sync/main.jrust
 87e33b4088628ad8fe8424afb3685046c6ebbe6265025c0545831d2154a0cd1d  tests/conformance/L1/ok_throws/main.jrust
 e4c9aa453cb1c67f1d11e240bbb1322a1a172fc44562923ceb818fd541a6b72e  tests/conformance/L1/ok_widen/main.jrust
