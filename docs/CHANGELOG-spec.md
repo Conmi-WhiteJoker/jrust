@@ -495,3 +495,27 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 - 踩坑：`tests/<名字>/main.rs` 会被 cargo 自动发现成集成测试目标并参与 `cargo test` 编译，
   因此 L3 源码放在 `tests/l3/src/`（与 `tests/l2` 一致）。
 - SPEC §15：**L3 由 🚧 转 ✅**；L4（中型服务）与 L5（附录 A 收尾）仍为 🚧。
+
+## v1.35 — 2026-11-27
+
+### L4 验收：async 中型服务全量转译（多模块 + 外部 crate + 共享状态 + 后台任务）
+
+- 新增 `tests/l4/`：多模块工程 `src/main.jrust` + `src/app/gate.jrust`（`package app.gate`）
+  + `src/app/store.jrust`（`package app.store`）。`Gate` 用 `@shared` / `synchronized` 表达
+  共享计数（`hits` 业务计数、`ticks` 后台心跳），`Store` 用 `Map` 承载配置；键缺失走
+  `map.get` 的 `.cloned().unwrap()` panic（JR-E16）。
+- 外部 crate 照 L2 边界：axum 路由 / 提取器 / 信号处理与 tokio 后台任务写在 `raw`，
+  业务判定（密码、设备表、计数）留在 jrust 类里。
+- 新增手写参考实现 `tests/l4/ref/reference.rs`（AtomicI32 + 同样的路由与响应体），
+  `tests/l4_cases.sh` 把同一组请求分别打到两个 bin，状态码与 body 逐字节比对。
+- JR-G13 三条失败路径全部覆盖：错密码 401 `deny:bad-password`、未知设备 404
+  `deny:unknown-device`、键缺失 `catch_unwind` 捕获 panic 后 500 `panic:missing-config-key`。
+- 稳定性与性能：3 轮基线后 `hits=24` 两侧一致；后台 `ticks` 持续增长；
+  `ab -n 2000 -c 20 /health` 两侧 0 失败，调试构建实测 ≈10k QPS（单跑峰值 ≈12.6k），
+  generated ≥ 0.7×reference；
+  SIGINT 两侧退出码 0 且打印 `shutdown clean`。
+- `verify.sh` 扩为 **九步**，第 9 步跑 L4；`.gitignore` 忽略 `tests/l4/target`、
+  `tests/l4/src/**/*.rs`、`tests/l4/Cargo.lock`（`ref/reference.rs` 入库）。
+- 踩坑：`spawn { while (true) { ... } }` 的产物会触发 `while_true` 警告，改为
+  `Gate bg = gate; spawn { raw { loop { ... } } }`（值语义先复制，`@shared` 的 Arc 计数不变）。
+- SPEC §15：**L4 由 🚧 转 ✅**；L5（附录 A 收尾）仍为 🚧。

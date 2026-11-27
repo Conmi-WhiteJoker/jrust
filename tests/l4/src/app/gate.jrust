@@ -1,0 +1,65 @@
+package app.gate;
+
+/// L4 域逻辑：设备准入网关（SPEC §15 L4 / JR-G13）。
+///
+/// `@shared` 字段由多线程共享：HTTP 处理器递增 `hits`，后台任务递增 `ticks`；
+/// 失败路径（错密码 deny、未知设备 deny）的判定都留在这里，产物只做状态码映射。
+public class Gate {
+    private String password;
+    @shared int hits;
+    @shared int ticks;
+
+    public Gate(String password) {
+        this.password = password;
+        this.hits = 0;
+        this.ticks = 0;
+    }
+
+    public static Gate create(String password) {
+        return new Gate(password);
+    }
+
+    /// 密码校验：命中即放行（错密码由调用方映射成 401 deny）。
+    public boolean ok(String given) {
+        return given == this.password;
+    }
+
+    /// 放行响应体（固定文本，便于与手写版本逐字节对拍）。
+    public String token() {
+        return "token:dev-1";
+    }
+
+    /// 拒绝响应体。
+    public String deny() {
+        return "deny:bad-password";
+    }
+
+    /// 未知设备判定（设备表在 L4 里故意写死，保证两侧一致）。
+    public boolean known(String id) {
+        if (id == "dev-1") {
+            return true;
+        }
+        if (id == "dev-2") {
+            return true;
+        }
+        return false;
+    }
+
+    public String device(String id) {
+        return "device:" + id + ":online";
+    }
+
+    /// 业务请求计数：login / devices / config 各计一次。
+    public synchronized void touch() {
+        this.hits += 1;
+    }
+
+    /// 后台任务心跳：每 100ms 递增，证明 spawn 的生命周期独立于请求。
+    public synchronized void beat() {
+        this.ticks += 1;
+    }
+
+    public synchronized String stats() {
+        return "hits=" + this.hits + " ticks=" + this.ticks;
+    }
+}

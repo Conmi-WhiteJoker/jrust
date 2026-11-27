@@ -36,8 +36,8 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证（八步）：cargo test → 转译 15 个例程 → cargo build →
-# l1_cases → move_cases → 解释/编译对拍 → L3 服务（压测 ≥1k QPS）
+# 端到端验证（九步）：cargo test → 转译 15 个例程 → cargo build →
+# l1_cases → move_cases → 解释/编译对拍 → L3 服务 → L4 双实现对拍（压测 ≥1k QPS）
 ./verify.sh
 
 # 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
@@ -283,7 +283,7 @@ examples/       15 个独立 cargo 工程（examples/Cargo.toml 是 workspace，
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
                 SharedState、AsyncMain（唯一带 tokio 依赖）、ShapeSwitch（enum + switch）、
                 Exceptions（throws + `?`）
-tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate、L3 async 服务）+ verify 脚本
+tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate、L3 async 服务、L4 中型服务）+ verify 脚本
 tests/conformance/L1/  单文件夹具，全部目录式 `<case>/{main.jrust, expected.txt}`
                 （runner 仍兼容扁平 `<case>.jrust` 的历史写法，见 tests/l1_cases.sh 的 case_paths）
 tests/l2/       独立 cargo 工程：多文件 + serde_json，双 bin（jrust 产物 / 手写参考）逐字节对拍
@@ -292,6 +292,9 @@ tests/l2_cross/ 跨文件矩阵：构造器 / 实例方法 / 静态方法 / 可�
 tests/spawn_capture/  独立 cargo 工程：spawn 捕获 clone 的真实编译运行（并发，不参与逐字节对拍）
 tests/l3/       独立 cargo 工程：axum async 小服务（`@shared` 计数 + `/health` `/hit` + SIGINT 优雅退出）
 tests/l3_smoke.sh  L3 验收：端点 smoke + ab 压测（≥1k QPS、0 失败）+ 优雅退出
+tests/l4/       独立 cargo 工程：中型服务双 bin（jrust 产物 / 手写 `ref/reference.rs`），
+                多模块 `app.gate` + `app.store` + `spawn` 后台心跳 + 三条失败路径（JR-G13）
+tests/l4_cases.sh  L4 验收：功能逐字节对拍 + 稳定性基线 + 后台任务 + ab 压测 + 优雅退出
 ```
 
 ## 为什么不用 proc macro

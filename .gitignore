@@ -24,3 +24,8 @@
 /tests/l2_cross/**/*.rs
 !/tests/l2_cross/ref/**/*.rs
 /tests/l2_cross/Cargo.lock
+
+# L4 双实现验收：src 下的 .rs 是 jrust 产物，ref/reference.rs 是手写参考实现（入库）
+/tests/l4/target/
+/tests/l4/src/**/*.rs
+/tests/l4/Cargo.lock

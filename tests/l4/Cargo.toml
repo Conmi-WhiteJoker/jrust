@@ -1,0 +1,18 @@
+[package]
+name = "l4"
+version = "0.1.0"
+edition = "2021"
+
+# 两个 bin 跑同一套用例：generated 是 `jrust build tests/l4/src` 的产物，
+# reference 是同语义的手写 Rust（ref/reference.rs），用于逐字节行为对拍。
+[[bin]]
+name = "l4_generated"
+path = "src/main.rs"
+
+[[bin]]
+name = "l4_reference"
+path = "ref/reference.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }

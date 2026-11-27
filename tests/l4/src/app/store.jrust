@@ -1,0 +1,29 @@
+package app.store;
+
+/// L4 域逻辑：只读配置表。
+///
+/// `get` 走 jrust 的 `map.get` 语义（JR-E16）：键缺失时 `.cloned().unwrap()` 直接 panic。
+/// 处理器用 `catch_unwind` 把 panic 映射成 500，于是 JR-G13 的「键缺失 panic 行为」
+/// 在两条实现上都可观测、可对拍。
+public class Store {
+    private Map<String, String> config;
+
+    public Store() {
+        this.config = new HashMap<>();
+    }
+
+    public static Store demo() {
+        Store s = new Store();
+        s.put("region", "cn-north-1");
+        s.put("plan", "team");
+        return s;
+    }
+
+    public void put(String key, String value) {
+        this.config.put(key, value);
+    }
+
+    public String get(String key) {
+        return this.config.get(key);
+    }
+}
