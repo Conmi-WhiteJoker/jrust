@@ -240,42 +240,6 @@ run_warn() {
     pass=$((pass + 1))
 }
 
-# 弃用警告（双轨期）：断言指定码的 warning 出现、且产物形态**未变**（JR-V7）。
-# 用法：run_deprecated <用例> <诊断码> <产物里必须出现的旧形态>
-run_deprecated() {
-    local base=$1
-    local code=$2
-    local old_form=$3
-    case_paths "$base"
-    if ! $JRUST build "$CASE_SRC" >"$TMP/out" 2>&1; then
-        echo "FAIL $base：转译失败"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
-    fi
-    if ! grep -q "warning\[$code\]" "$TMP/out"; then
-        echo "FAIL $base：缺少弃用警告 warning[$code]"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
-    fi
-    # 提示里必须给出迁移出口，否则用户不知道该怎么改。
-    if ! grep -q 'getOrNull' "$TMP/out"; then
-        echo "FAIL $base：弃用提示没有给出迁移出口（getOrNull）"
-        cat "$TMP/out"
-        fail=$((fail + 1))
-        return
-    fi
-    # 双轨期不提前改行为：旧形态必须仍在产物里。
-    if ! grep -q -- "$old_form" "$CASE_RS"; then
-        echo "FAIL $base：产物里没有旧形态（$old_form）——双轨期不应提前切换语义"
-        fail=$((fail + 1))
-        return
-    fi
-    echo "PASS $base"
-    pass=$((pass + 1))
-}
-
 # `jrust check`：只做检查、不写产物；ok 期望退出 0，fail 期望非 0。
 run_check() {
     local base=$1
@@ -1062,7 +1026,6 @@ run_build_has ok_override_ref 'u.note(note)'
 run_warn ok_ext_unknown 'w.write(&text)'
 # 阶段 E / Unknown 显式化：外部类型同时触发 JR6102（未知类型）与 JR4101（签名不可知）。
 run_warn ok_unknown_type 'w.write(&text)'
-# SPEC-v2 §3-1 / JR9001：`map.get` 双轨期——发弃用警告，产物仍是 `.unwrap()`。
 # SPEC-v2 §3-1 已切换（2.0）：`map.get` 返回 Option，不再 panic，也不再发 JR9001。
 # 断言产物里 get 与 getOrNull 完全一致（都是 `.cloned()`），且**没有** `.unwrap()`。
 run_build_has ok_map_get_option 'let hit: Option<i32> = m.get("a").cloned();'

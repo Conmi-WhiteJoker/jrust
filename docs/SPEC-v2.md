@@ -102,12 +102,12 @@
 | V2-A1 | 类型错误在 `check` 阶段报出，不依赖 rustc 兜底 | 6 个 `neg_*` 负向夹具 + `l1_cases.sh` | ✅ |
 | V2-A2 | 既有产物零漂移 | `tests/snapshot.sh --check`（116 项） | ✅ |
 | V2-A3 | 解释执行与编译产物行为一致 | `tests/interp_parity.sh`（examples 15 + L1 37） | ✅ |
-| V2-A4 | 附录 A 覆盖率盘点可执行且进入验收 | `tests/coverage_audit.sh`（58 项） | 🚧 脚本已有，未接入 verify/CI |
+| V2-A4 | 附录 A 覆盖率盘点可执行且进入验收 | `tests/coverage_audit.sh`（58 项），`verify.sh` 第 11 步 + CI stable 作业 | ✅ v1.49 |
 | V2-A5 | 双轨机制可用，`map.get` 按 §3 切换 | `JR9xxx` 警告 + 迁移用例 | ✅ v1.46 双轨机制（`JR9001` + `run_deprecated` + 变异验证）；v1.48 语义已切换，`ok_map_get_option` 锁定 `get`/`getOrNull` 产物一致且无 `.unwrap()` |
 | V2-A6 | CI 覆盖 rustc 基线 1.85 与最新 stable | `.github/workflows/ci.yml` | ✅ v1.37 |
 | V2-A7 | §4 全部定案 | 决策记录进 CHANGELOG | 🚧 0 / 7 |
 
-2.0 发布门槛：V2-A1 ~ A7 全部 ✅，且 `./verify.sh` 十步全绿。
+2.0 发布门槛：V2-A1 ~ A7 全部 ✅，且 `./verify.sh` 十一步全绿。
 
 ## 6. 与 v1 的差异清单
 

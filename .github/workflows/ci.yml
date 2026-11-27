@@ -1,7 +1,7 @@
 name: ci
 
 # JR-G10：至少覆盖 rustc 基线（1.85）与最新 stable。
-# 基线只跑构建 + 单测（依赖体积小、耗时短）；stable 再跑九步全量验收。
+# 基线只跑构建 + 单测（依赖体积小、耗时短）；stable 再跑十一步全量验收。
 on:
   push:
     branches: [master]
@@ -28,6 +28,6 @@ jobs:
       - name: 安装 ab
         if: matrix.rust == 'stable'
         run: sudo apt-get update && sudo apt-get install -y apache2-utils
-      - name: 十步全量验收
+      - name: 十一步全量验收
         if: matrix.rust == 'stable'
         run: ./verify.sh

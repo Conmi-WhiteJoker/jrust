@@ -36,8 +36,8 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证（十步）：cargo test → 转译 15 个例程 → cargo build →
-# l1_cases → move_cases → 解释/编译对拍 → L3 服务 → L4 双实现对拍 → 产物快照
+# 端到端验证（十一步）：cargo test → 转译 15 个例程 → cargo build →
+# l1_cases → move_cases → 解释/编译对拍 → L3 服务 → L4 双实现对拍 → 产物快照 → 覆盖率盘点
 ./verify.sh
 
 # 直接解释执行（不经过 rustc，断点行号就是 .jrust 行号）
@@ -66,7 +66,7 @@ cargo build
 ./target/debug/jrust --version
 ```
 
-CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构建 + 单测，`stable` 上再跑十步全量验收（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)）。
+CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构建 + 单测，`stable` 上再跑十一步全量验收（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)）。
 
 ## 解释执行与调试（方案 C）
 
