@@ -235,6 +235,98 @@ pub struct MethodSig {
 }
 
 impl SymbolTable {
+    /// 从（可能已合并的）程序构建符号表。
+    ///
+    /// 多文件模式下传入的是 `merge_programs` 的结果，因此跨文件类型天然可见——
+    /// 这正是 §14.1 里「工程级类型表」要解决的问题。
+    pub fn build(prog: &ast::Program) -> Self {
+        let mut st = SymbolTable::default();
+
+        for c in &prog.classes {
+            let mut fields = HashMap::new();
+            for f in &c.fields {
+                // `static final` 常量不进结构体，但仍要有符号（`Cls.N` 的静态读取）。
+                fields.insert(f.name.clone(), f.ty.clone());
+            }
+            let mut methods = HashMap::new();
+            for m in &c.methods {
+                methods.insert(
+                    m.name.clone(),
+                    MethodSig {
+                        is_static: m.is_static,
+                        params: m.params.iter().map(|p| p.ty.clone()).collect(),
+                        ret: Some(m.ret.clone()),
+                    },
+                );
+            }
+            st.classes.insert(
+                c.name.clone(),
+                ClassInfo {
+                    name: c.name.clone(),
+                    generics: c.type_params.iter().map(|p| p.name.clone()).collect(),
+                    fields,
+                    methods,
+                    implements: c
+                        .implements
+                        .iter()
+                        .map(|t| match t {
+                            ast::Type::Named(n) => n.clone(),
+                            ast::Type::Generic(n, _) => n.clone(),
+                            other => format!("{:?}", other),
+                        })
+                        .collect(),
+                },
+            );
+        }
+
+        for i in &prog.interfaces {
+            let mut methods = HashMap::new();
+            for m in &i.methods {
+                methods.insert(
+                    m.name.clone(),
+                    MethodSig {
+                        is_static: m.is_static,
+                        params: m.params.iter().map(|p| p.ty.clone()).collect(),
+                        ret: Some(m.ret.clone()),
+                    },
+                );
+            }
+            st.ifaces.insert(
+                i.name.clone(),
+                IfaceInfo {
+                    name: i.name.clone(),
+                    generics: i.type_params.iter().map(|p| p.name.clone()).collect(),
+                    methods,
+                    extends: i
+                        .extends
+                        .iter()
+                        .map(|t| match t {
+                            ast::Type::Named(n) => n.clone(),
+                            ast::Type::Generic(n, _) => n.clone(),
+                            other => format!("{:?}", other),
+                        })
+                        .collect(),
+                },
+            );
+        }
+
+        for e in &prog.enums {
+            let mut variants = HashMap::new();
+            for v in &e.variants {
+                variants.insert(v.name.clone(), v.params.iter().map(|p| p.ty.clone()).collect());
+            }
+            st.enums.insert(
+                e.name.clone(),
+                EnumInfo {
+                    name: e.name.clone(),
+                    variants,
+                },
+            );
+        }
+
+        st
+    }
+
     pub fn class(&self, name: &str) -> Option<&ClassInfo> {
         self.classes.get(name)
     }

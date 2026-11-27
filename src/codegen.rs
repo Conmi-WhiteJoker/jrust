@@ -1150,6 +1150,405 @@ impl<'a> Codegen<'a> {
 
     /// 类型名撞上「不能用 `r#` 挽救」的关键字时直接报错（JR-L1）。
     ///
+    /// 名称解析（阶段 B / JR6001）：类型位置出现的名字必须在符号表里。
+    ///
+    /// 覆盖两类此前静默放行的写法：
+    /// - `var x = 1;` —— `var` 不是类型（SPEC JR-T7 明确不支持）；
+    /// - `Intger x = 1;` —— 拼错的类型名。
+    ///
+    /// 两者都走 parser 的 `Tok::Ident → Type::Named` 兜底，此前一路透传到 rustc。
+    ///
+    /// **误报控制**（这条检查最容易误伤合法程序，逐条说明为什么安全）：
+    /// 1. 只查 `Type::Named` —— 标量（`int` 等）是关键字走 `Kw`，不进 `Named`；
+    ///    `List` / `Map` / `String` 等内建名在 parser 里已转成对应 `Type` 变体，也不会是 `Named`。
+    /// 2. 泛型参数单独收集（类级 + 方法级 + 接口级），不参与"未知类型"判定。
+    /// 3. 外部 crate 的类型：只要 `import` 里出现过该名字（或它的末段），就放行——
+    ///    jrust 看不到外部源码，不能武断判错（与 JR-O6 同一原则）。
+    /// 4. `raw` 块内完全不检查（JR-X3：raw 不参与 jrust 诊断）。
+    fn check_unknown_type_names(&mut self) {
+        let st = crate::types::SymbolTable::build(self.types);
+        // 外部 import 的末段名字：`import serde_json::Value;` → `Value`。
+        let external: HashSet<String> = self
+            .types
+            .imports
+            .iter()
+            .filter(|i| !i.starts_with("java."))
+            .map(|i| i.rsplit(['.', ':']).next().unwrap_or(i).to_string())
+            .collect();
+
+        let mut bad: Vec<(usize, String)> = Vec::new();
+
+        // 收集所有「合法类型名」：符号表里的 + 泛型参数。
+        let mut known: HashSet<String> = HashSet::new();
+        for c in &self.types.classes {
+            known.insert(c.name.clone());
+            for p in &c.type_params {
+                known.insert(p.name.clone());
+            }
+            for m in &c.methods {
+                for p in &m.type_params {
+                    known.insert(p.name.clone());
+                }
+            }
+        }
+        for i in &self.types.interfaces {
+            known.insert(i.name.clone());
+            for p in &i.type_params {
+                known.insert(p.name.clone());
+            }
+            for m in &i.methods {
+                for p in &m.type_params {
+                    known.insert(p.name.clone());
+                }
+            }
+        }
+        for e in &self.types.enums {
+            known.insert(e.name.clone());
+            for p in &e.type_params {
+                known.insert(p.name.clone());
+            }
+        }
+        let _ = &st; // 符号表用于后续阶段（JR6003/JR6004），此处只用 known 集合。
+
+        // Java 包装类型名：parser 已把它们映射成标量，不会出现在 `Type::Named` 里，
+        // 但它们必须进 `known`——否则 `Intger x = 1;` 无法被判为「Integer 的拼错」，
+        // 只能降级成 warning，失去了这条检查最有价值的场景。
+        for n in [
+            "Integer", "Long", "Double", "Float", "Boolean", "Character", "String", "Object",
+            "List", "ArrayList", "LinkedList", "Collection", "Vec", "Map", "HashMap", "Set",
+            "HashSet",
+        ] {
+            known.insert(n.to_string());
+        }
+
+        // 逐处扫描类型位置。
+        let probe = |ty: &Type, line: usize, bad: &mut Vec<(usize, String)>| {
+            if let Some(n) = unknown_named_in(ty, &known, &external) {
+                bad.push((line, n));
+            }
+        };
+
+        for c in &self.prog.classes {
+            for f in &c.fields {
+                probe(&f.ty, f.line, &mut bad);
+            }
+            if let Some(ctor) = &c.ctor {
+                for p in &ctor.params {
+                    probe(&p.ty, p.line, &mut bad);
+                }
+            }
+            for m in &c.methods {
+                probe(&m.ret, m.line, &mut bad);
+                for p in &m.params {
+                    probe(&p.ty, p.line, &mut bad);
+                }
+            }
+        }
+        for i in &self.prog.interfaces {
+            for m in &i.methods {
+                probe(&m.ret, m.line, &mut bad);
+                for p in &m.params {
+                    probe(&p.ty, p.line, &mut bad);
+                }
+            }
+        }
+
+        // 局部变量声明：`var x = 1;` / `Intger x = 1;` 都在这里。
+        for c in &self.prog.classes {
+            for m in &c.methods {
+                collect_local_types(&m.body, &mut bad, &known, &external);
+            }
+            if let Some(ctor) = &c.ctor {
+                collect_local_types(&ctor.body, &mut bad, &known, &external);
+            }
+        }
+
+        bad.sort();
+        bad.dedup();
+        for (line, name) in bad {
+            self.cur_line = line;
+            if name == "var" {
+                // `var` 能确定是错的（SPEC JR-T7 明确不支持），报 error。
+                self.err_code(
+                    "JR6001",
+                    "`var` 不是 jrust 的类型：声明处必须写全类型",
+                    "写具体类型，例如 `int x = 1;`；`var` 的类型推断不在 jrust 支持范围内（SPEC JR-T7）。",
+                );
+            } else if let Some(similar) = closest_known(&name, &known) {
+                // 能找到拼写相近的已声明类型 → 基本可以断定是拼错，报 error。
+                self.err_code(
+                    "JR6001",
+                    format!("未知类型 `{}`（是不是 `{}`？）", name, similar),
+                    format!(
+                        "检查拼写：工程里声明的是 `{}`。若确实是另一个类型，先声明 `class {} {{ ... }}`。",
+                        similar, name
+                    ),
+                );
+            } else {
+                // 找不到相近类型 → 可能是外部 crate 的类型（jrust 看不到源码）。
+                // 按 JR-O6「无法判定时给 warning 而非武断判错」处理，不阻断生成。
+                self.warn_code(
+                    "JR6102",
+                    format!("类型 `{}` 在本工程里找不到声明", name),
+                    format!(
+                        "若是外部 crate 的类型，补 `import` 并在 Cargo.toml 声明依赖；若是拼写错误，改成已声明的类型名；若是自建类型，补上 `class {} {{ ... }}`。",
+                        name
+                    ),
+                );
+            }
+        }
+    }
+
+    /// 未知方法（阶段 B / JR6004）。
+    ///
+    /// **只对能确定的场景报错**，因为方法名解析的误报面比类型名大得多：
+    ///
+    /// 报错的三个必要条件（全部满足才报）：
+    /// 1. 接收者的静态类型能在本工程里解析到（`infer_type` 拿到 `Named`/`Generic`）；
+    /// 2. 该类型**有源码**（在 `classes` 或 `iface_decls` 里）——外部 crate 类型一律放行；
+    /// 3. 该类型（含其实现的接口、父接口）的方法表里确实没有这个名字。
+    ///
+    /// 不报错的情况（逐条说明为什么）：
+    /// - 接收者是内置类型（`String` / `List` / `Map` / `Set` / 标量）：Java 方法名与 Rust
+    ///   不同名（`substring` / `charAt` / `toUpperCase` 在 Rust 里不存在），jrust 目前是
+    ///   **原样透传**，交给 `jrust verify` 暴露。这类留给阶段 D 的「内置方法白名单」。
+    /// - 接收者类型推不出来（`infer_type` 返回 `None`）：无法判定，放行。
+    /// - 接收者是泛型参数 `T`：上界方法集在阶段 E 才完整，先放行。
+    /// - `raw` 块内的调用：JR-X3 规定 raw 不参与 jrust 诊断。
+    fn check_unknown_methods(&mut self) {
+        let mut bad: Vec<(usize, String, String)> = Vec::new();
+
+        for c in &self.prog.classes {
+            // 收集本工程全部「已知方法名」的来源：本类 + 实现的接口闭包 + 所有类
+            // （jrust 的调用点推断是按名字并集工作的，见 `Sigs::mut_names`）。
+            let mut body_env = Env::new(c.methods.first().map_or(Type::Void, |m| m.ret.clone()));
+            body_env.self_class = Some(c.name.clone());
+            for m in &c.methods {
+                for p in &m.params {
+                    body_env.vars.declare(p.name.clone(), p.ty.clone());
+                }
+            }
+            for m in &c.methods {
+                self.collect_bad_methods(&m.body, &mut body_env, c, &mut bad);
+            }
+            if let Some(ctor) = &c.ctor {
+                let mut cenv = Env::new(Type::Void);
+                cenv.self_class = Some(c.name.clone());
+                for p in &ctor.params {
+                    cenv.vars.declare(p.name.clone(), p.ty.clone());
+                }
+                self.collect_bad_methods(&ctor.body, &mut cenv, c, &mut bad);
+            }
+        }
+
+        bad.sort();
+        bad.dedup();
+        for (line, owner, name) in bad {
+            self.cur_line = line;
+            let hint = if let Some(similar) = closest_method(&name, &owner, &self.classes, &self.iface_decls) {
+                format!("`{}` 里有没有 `{}`？检查拼写。", owner, similar)
+            } else {
+                format!("`{}` 里没有这个方法；检查拼写，或先在类里声明它。", owner)
+            };
+            self.err_code(
+                "JR6004",
+                format!("类型 `{}` 没有方法 `{}`", owner, name),
+                hint,
+            );
+        }
+    }
+
+    /// 递归扫描语句，找出「接收者类型可确定但方法不存在」的调用。
+    fn collect_bad_methods(
+        &self,
+        stmts: &[Stmt],
+        env: &mut Env,
+        cur_class: &ClassDecl,
+        bad: &mut Vec<(usize, String, String)>,
+    ) {
+        for s in stmts {
+            match s {
+                Stmt::Raw { .. } => {}
+                Stmt::Let { ty, name, init, line } => {
+                    // 先查初始化器（此时该变量还不可见），再声明它，
+                    // 这样后续语句里的 `h.calcc()` 能解析出 `h` 的类型。
+                    self.probe_method_call(init, env, cur_class, *line, bad);
+                    env.vars.declare(name.clone(), ty.clone());
+                }
+                Stmt::Expr { expr, line } => {
+                    self.probe_method_call(expr, env, cur_class, *line, bad)
+                }
+                Stmt::Return { value: Some(e), line } => {
+                    self.probe_method_call(e, env, cur_class, *line, bad)
+                }
+                Stmt::Assign { value, line, .. } => {
+                    self.probe_method_call(value, env, cur_class, *line, bad)
+                }
+                Stmt::Throw { expr, line } => {
+                    self.probe_method_call(expr, env, cur_class, *line, bad)
+                }
+                Stmt::If { cond, then, els, .. } => {
+                    self.probe_method_call(cond, env, cur_class, cur_class.line, bad);
+                    self.collect_bad_methods(then, env, cur_class, bad);
+                    if let Some(e) = els {
+                        self.collect_bad_methods(e, env, cur_class, bad);
+                    }
+                }
+                Stmt::While { cond, body, .. } => {
+                    self.probe_method_call(cond, env, cur_class, cur_class.line, bad);
+                    self.collect_bad_methods(body, env, cur_class, bad);
+                }
+                Stmt::ForEach { iter, body, .. } => {
+                    self.probe_method_call(iter, env, cur_class, cur_class.line, bad);
+                    self.collect_bad_methods(body, env, cur_class, bad);
+                }
+                Stmt::ForRange { start, end, body, .. } => {
+                    self.probe_method_call(start, env, cur_class, cur_class.line, bad);
+                    self.probe_method_call(end, env, cur_class, cur_class.line, bad);
+                    self.collect_bad_methods(body, env, cur_class, bad);
+                }
+                Stmt::Sync { body, .. } | Stmt::Spawn { body, .. } => {
+                    self.collect_bad_methods(body, env, cur_class, bad)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// 检查单个表达式里的方法调用（含嵌套子表达式）。
+    fn probe_method_call(
+        &self,
+        e: &Expr,
+        env: &mut Env,
+        cur_class: &ClassDecl,
+        line: usize,
+        bad: &mut Vec<(usize, String, String)>,
+    ) {
+        match e {
+            Expr::Call { recv, name, args, .. } => {
+                for a in args {
+                    self.probe_method_call(a, env, cur_class, line, bad);
+                }
+                if let Some(r) = recv {
+                    self.probe_method_call(r, env, cur_class, line, bad);
+                    // 静态调用 `Cls.method()`：接收者是类型名，不是值。
+                    if let Expr::Ident(en) = &**r {
+                        if self.classes.contains_key(en) || self.iface_decls.contains_key(en) {
+                            return;
+                        }
+                    }
+                    // 只处理「接收者类型能解析到本工程源码」的情况。
+                    let owner = match self.infer_type(r, env) {
+                        Some(t) => match type_name(&t) {
+                            "" => return,
+                            n => n.to_string(),
+                        },
+                        None => return,
+                    };
+                    if !self.classes.contains_key(&owner) && !self.iface_decls.contains_key(&owner) {
+                        return; // 外部 crate / 内置类型 → 放行
+                    }
+                    // 泛型类的方法名也按名字查（jrust 全仓按名字并集推断）。
+                    if self.method_exists(&owner, name) {
+                        return;
+                    }
+                    bad.push((line, owner, name.clone()));
+                }
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                self.probe_method_call(lhs, env, cur_class, line, bad);
+                self.probe_method_call(rhs, env, cur_class, line, bad);
+            }
+            Expr::Unary { expr, .. } => self.probe_method_call(expr, env, cur_class, line, bad),
+            Expr::Paren(inner) | Expr::Try(inner) | Expr::Await(inner) => {
+                self.probe_method_call(inner, env, cur_class, line, bad)
+            }
+            Expr::Field(base, _) => self.probe_method_call(base, env, cur_class, line, bad),
+            Expr::Index(base, idx) => {
+                self.probe_method_call(base, env, cur_class, line, bad);
+                self.probe_method_call(idx, env, cur_class, line, bad);
+            }
+            Expr::New { args, .. } => {
+                for a in args {
+                    self.probe_method_call(a, env, cur_class, line, bad);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 某类型（含其实现的接口与父接口）是否声明了该方法。
+    fn method_exists(&self, owner: &str, name: &str) -> bool {
+        if let Some(cd) = self.classes.get(owner) {
+            if cd.methods.iter().any(|m| m.name == name) {
+                return true;
+            }
+            for imp in &cd.implements {
+                if self.iface_has_method(&type_name(imp), name, &mut HashSet::new()) {
+                    return true;
+                }
+            }
+        }
+        self.iface_has_method(owner, name, &mut HashSet::new())
+    }
+
+    /// 接口（含 `extends` 链）是否声明了该方法。
+    fn iface_has_method(&self, iface: &str, name: &str, seen: &mut HashSet<String>) -> bool {
+        if !seen.insert(iface.to_string()) {
+            return false;
+        }
+        let Some(d) = self.iface_decls.get(iface) else {
+            return false;
+        };
+        if d.methods.iter().any(|m| m.name == name) {
+            return true;
+        }
+        d.extends
+            .iter()
+            .any(|t| self.iface_has_method(type_name(t), name, seen))
+    }
+
+    /// 条件表达式必须是 `bool`（阶段 B / JR6009）。
+    ///
+    /// Java 与 Rust 在这一点上一致——`if (1)` 在两边都非法，所以这条检查
+    /// **不会拒绝任何合法的 Java 写法**，只把原本推迟到 rustc 的 E0308 提前到 `check`。
+    ///
+    /// 只检查能确定类型的情况：`infer_type` 拿不到类型（外部 crate 调用结果、
+    /// 泛型参数等）时放行。
+    fn check_non_bool_conditions(&mut self) {
+        let mut bad: Vec<(usize, String)> = Vec::new();
+
+        for c in &self.prog.classes {
+            for m in &c.methods {
+                let mut menv = Env::new(m.ret.clone());
+                menv.self_class = Some(c.name.clone());
+                for p in &m.params {
+                    menv.vars.declare(p.name.clone(), p.ty.clone());
+                }
+                collect_non_bool_conds(&m.body, &mut menv, self, &mut bad);
+            }
+            if let Some(ctor) = &c.ctor {
+                let mut cenv = Env::new(Type::Void);
+                cenv.self_class = Some(c.name.clone());
+                for p in &ctor.params {
+                    cenv.vars.declare(p.name.clone(), p.ty.clone());
+                }
+                collect_non_bool_conds(&ctor.body, &mut cenv, self, &mut bad);
+            }
+        }
+
+        bad.sort();
+        bad.dedup();
+        for (line, tn) in bad {
+            self.cur_line = line;
+            self.err_code(
+                "JR6009",
+                format!("条件表达式的类型是 `{}`，不是 `boolean`", tn),
+                "`if` / `while` 的条件必须是布尔值；比较写成 `n != 0` / `flag`，不要直接写数值。",
+            );
+        }
+    }
+
     /// `r#crate` / `r#Self` / `r#self` / `r#super` 本身非法，所以这几个只能让用户改名；
     /// 其余关键字由 `rust_ident` 加 `r#` 透明处理，不打扰用户。
     fn check_type_name_conflicts(&mut self) {
@@ -1194,6 +1593,9 @@ impl<'a> Codegen<'a> {
             "#![allow(dead_code, unused_variables, unused_mut, unused_imports, unused_parens, non_snake_case, unused_assignments)]",
         );
         self.check_type_name_conflicts();
+        self.check_unknown_type_names();
+        self.check_unknown_methods();
+        self.check_non_bool_conditions();
         // `java.*` 的 import 只需让 jrust 认识类型名，不生成代码；
         // 其余路径当作 Rust 的 use 原样输出（圆点转 `::`），例如 import std.vec.Vec;
         let imports = self.prog.imports.clone();
@@ -3502,7 +3904,13 @@ impl<'a> Codegen<'a> {
             let pt = param_types.as_ref().and_then(|p| p.get(i));
             let mode = sig.as_ref().and_then(|s| s.0.get(i)).copied();
             match (pt, mode) {
-                (Some(pt), Some(mode)) => arg_strs.push(self.gen_mode_arg(a, mode, pt, env)),
+                // 形参类型已知时必须过 `effective_mode`：Copy 标量恒为 `Value`
+                // （`int` 形参不能生成 `&i32`）。此前缺这一步，接口方法收标量形参
+                // 时实参被加上 `&`，产物 `f.call(&n)` 对 `x: i32` 报 E0308。
+                (Some(pt), Some(mode)) => {
+                    let mode = self.effective_mode(mode, pt);
+                    arg_strs.push(self.gen_mode_arg(a, mode, pt, env));
+                }
                 (Some(pt), None) => arg_strs.push(self.gen_arg(a, pt, env)),
                 (None, Some(mode)) => arg_strs.push(self.gen_mode_arg_unknown(a, mode, env)),
                 _ => {
@@ -3833,6 +4241,245 @@ fn type_name(ty: &Type) -> &str {
     match ty {
         Type::Named(n) | Type::Generic(n, _) => n,
         _ => "",
+    }
+}
+
+/// 在已声明类型里找拼写最接近的名字（阶段 B / JR6001）。
+///
+/// 用 Levenshtein 距离，阈值取 `min(2, len/3)`：短名字（`Op`）容 1 处差异，
+/// 长名字（`ConfigManager`）容 2 处。超过阈值返回 `None` —— 此时宁可判「可能来自外部
+/// crate」给 warning，也不要武断地说「你是不是想写 X」。
+///
+/// 大小写差异按 1 处算（`Intger` vs `Integer` 距离 2 也是常见拼错形态）。
+fn closest_known(name: &str, known: &HashSet<String>) -> Option<String> {
+    let limit = std::cmp::min(2, std::cmp::max(1, name.chars().count() / 3));
+    let mut best: Option<(usize, String)> = None;
+    for cand in known {
+        // 完全相同不是「拼错」，跳过。
+        if cand == name {
+            continue;
+        }
+        let d = levenshtein(name, cand);
+        if d <= limit && best.as_ref().map_or(true, |(bd, _)| d < *bd) {
+            best = Some((d, cand.clone()));
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+/// 标准 Levenshtein 距离（字符级，非字节级——中文标识符也不会被切坏）。
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            cur[j] = std::cmp::min(
+                std::cmp::min(cur[j - 1] + 1, prev[j] + 1),
+                prev[j - 1] + cost,
+            );
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// 在某类型（含实现/继承的接口）的方法名里找拼写最接近的（阶段 B / JR6004）。
+///
+/// 阈值与 `closest_known` 一致。找不到返回 `None` —— 此时提示里就不猜「你是不是想写 X」。
+fn closest_method(
+    name: &str,
+    owner: &str,
+    classes: &HashMap<String, &ClassDecl>,
+    ifaces: &HashMap<String, &InterfaceDecl>,
+) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(cd) = classes.get(owner) {
+        names.extend(cd.methods.iter().map(|m| m.name.clone()));
+        for imp in &cd.implements {
+            collect_iface_method_names(type_name(imp), ifaces, &mut names, &mut HashSet::new());
+        }
+    }
+    collect_iface_method_names(owner, ifaces, &mut names, &mut HashSet::new());
+
+    let limit = std::cmp::min(2, std::cmp::max(1, name.chars().count() / 3));
+    let mut best: Option<(usize, String)> = None;
+    for cand in names {
+        if cand == name {
+            continue;
+        }
+        let d = levenshtein(name, &cand);
+        if d <= limit && best.as_ref().map_or(true, |(bd, _)| d < *bd) {
+            best = Some((d, cand));
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+/// 递归收集接口（含 `extends` 链）的方法名。
+fn collect_iface_method_names(
+    iface: &str,
+    ifaces: &HashMap<String, &InterfaceDecl>,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    if !seen.insert(iface.to_string()) {
+        return;
+    }
+    let Some(d) = ifaces.get(iface) else {
+        return;
+    };
+    out.extend(d.methods.iter().map(|m| m.name.clone()));
+    for p in &d.extends {
+        collect_iface_method_names(type_name(p), ifaces, out, seen);
+    }
+}
+
+/// 在类型里找第一个「未知的 `Named`」（阶段 B / JR6001）。
+///
+/// 只认 `Type::Named`：`Generic(name, args)` 的名字部分是用户写的类/接口名（要查），
+/// 但实参递归检查（`List<Intger>` 也要抓）。标量与内建集合在 parser 阶段就变成了
+/// 对应的 `Type` 变体，不会走到这里。
+fn unknown_named_in(
+    ty: &Type,
+    known: &HashSet<String>,
+    external: &HashSet<String>,
+) -> Option<String> {
+    match ty {
+        Type::Named(n) => {
+            if known.contains(n) || external.contains(n) {
+                None
+            } else {
+                Some(n.clone())
+            }
+        }
+        Type::Generic(n, args) => {
+            if !known.contains(n) && !external.contains(n) {
+                return Some(n.clone());
+            }
+            args.iter().find_map(|a| unknown_named_in(a, known, external))
+        }
+        Type::List(inner) | Type::Set(inner) | Type::Array(inner) | Type::Nullable(inner) => {
+            unknown_named_in(inner, known, external)
+        }
+        Type::Map(k, v) => {
+            unknown_named_in(k, known, external).or_else(|| unknown_named_in(v, known, external))
+        }
+        _ => None,
+    }
+}
+
+/// 递归收集「条件不是 bool」的 `if` / `while`（阶段 B / JR6009）。
+///
+/// 边扫描边把 `Stmt::Let` 的声明写进 `env`，这样 `int n = 1; if (n)` 里的
+/// `n` 才能解析出 `int`。`raw` 块跳过（JR-X3）。
+fn collect_non_bool_conds(
+    stmts: &[Stmt],
+    env: &mut Env,
+    g: &Codegen,
+    bad: &mut Vec<(usize, String)>,
+) {
+    for s in stmts {
+        match s {
+            Stmt::Raw { .. } => {}
+            Stmt::Let { ty, name, init, line } => {
+                let _ = line;
+                // 初始化器里也可能有条件表达式（如闭包体），但 jrust 的闭包体只支持
+                // 单表达式，不含语句，故这里只关心声明本身。
+                let _ = init;
+                env.vars.declare(name.clone(), ty.clone());
+            }
+            Stmt::If { cond, then, els, line } => {
+                if let Some(tn) = non_bool_cond_type(cond, env, g) {
+                    bad.push((*line, tn));
+                }
+                collect_non_bool_conds(then, env, g, bad);
+                if let Some(e) = els {
+                    collect_non_bool_conds(e, env, g, bad);
+                }
+            }
+            Stmt::While { cond, body, line } => {
+                if let Some(tn) = non_bool_cond_type(cond, env, g) {
+                    bad.push((*line, tn));
+                }
+                collect_non_bool_conds(body, env, g, bad);
+            }
+            Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } => {
+                // `for` 的迭代器/区间由语法限定，不会是非 bool 条件。
+                collect_non_bool_conds(body, env, g, bad);
+            }
+            Stmt::Sync { body, .. } | Stmt::Spawn { body, .. } => {
+                collect_non_bool_conds(body, env, g, bad)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 条件表达式的类型若可确定为「非 bool」，返回其类型名。
+///
+/// 比较 / 逻辑运算（`<` / `==` / `&&` / `!`）天然产 bool，直接放行；
+/// 其余交给 `infer_type`，拿不到就放行（无法判定不猜）。
+fn non_bool_cond_type(cond: &Expr, env: &Env, g: &Codegen) -> Option<String> {
+    let ty = match strip_parens_expr(cond) {
+        Expr::Bool(_) => return None,
+        Expr::Binary { op, .. } => match op {
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne | BinOp::And
+            | BinOp::Or => return None,
+            _ => g.infer_type(cond, env)?,
+        },
+        Expr::Unary { op, .. } if matches!(op, UnOp::Not) => return None,
+        _ => g.infer_type(cond, env)?,
+    };
+    // `bool` 本身是合法条件——必须排除，否则 `if (flag)` 会被误报。
+    // 用 `rust_type` 判而不是 `matches!(ty, Type::Boolean)`，因为用户直接写
+    // Rust 原生类型名 `bool` 时走的是 `Type::RustPrim("bool")`。
+    if g.rust_type(&ty) == "bool" {
+        return None;
+    }
+    Some(g.rust_type(&ty))
+}
+
+/// 递归收集语句里的局部变量声明类型（阶段 B / JR6001）。
+///
+/// `Stmt::Let` 是 `var x = 1;` / `Intger x = 1;` 的落点；其余语句递归下去，
+/// 但**跳过 `Stmt::Raw`**（JR-X3：raw 不参与 jrust 诊断）。
+fn collect_local_types(
+    stmts: &[Stmt],
+    bad: &mut Vec<(usize, String)>,
+    known: &HashSet<String>,
+    external: &HashSet<String>,
+) {
+    for s in stmts {
+        match s {
+            Stmt::Let { ty, line, .. } => {
+                if let Some(n) = unknown_named_in(ty, known, external) {
+                    bad.push((*line, n));
+                }
+            }
+            Stmt::If { then, els, .. } => {
+                collect_local_types(then, bad, known, external);
+                if let Some(e) = els {
+                    collect_local_types(e, bad, known, external);
+                }
+            }
+            Stmt::While { body, .. }
+            | Stmt::ForEach { body, .. }
+            | Stmt::ForRange { body, .. }
+            | Stmt::Sync { body, .. }
+            | Stmt::Spawn { body, .. } => collect_local_types(body, bad, known, external),
+            Stmt::Raw { .. } => {}
+            _ => {}
+        }
     }
 }
 

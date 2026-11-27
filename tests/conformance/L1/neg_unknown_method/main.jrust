@@ -1,0 +1,13 @@
+// 未知方法（阶段 B / JR6004）：接收者类型可确定、且方法不在类/接口里。
+public class Helper {
+    public int calc(int x) {
+        return x * 2;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Helper h = new Helper();
+        println(h.calcc(5));
+    }
+}

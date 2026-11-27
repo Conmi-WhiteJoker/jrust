@@ -20,6 +20,7 @@ FAILED  tests/conformance/L1/neg_await_sync/main.jrust
 FAILED  tests/conformance/L1/neg_borrow_field/main.jrust
 FAILED  tests/conformance/L1/neg_cfor_dir/main.jrust
 FAILED  tests/conformance/L1/neg_cfor_step/main.jrust
+FAILED  tests/conformance/L1/neg_cond_not_bool/main.jrust
 FAILED  tests/conformance/L1/neg_conflict/main.jrust
 FAILED  tests/conformance/L1/neg_fallthrough/main.jrust
 FAILED  tests/conformance/L1/neg_iface_static_no_body/main.jrust
@@ -52,6 +53,8 @@ FAILED  tests/conformance/L1/neg_throw_undeclared/main.jrust
 FAILED  tests/conformance/L1/neg_throw_without_throws/main.jrust
 FAILED  tests/conformance/L1/neg_try/main.jrust
 FAILED  tests/conformance/L1/neg_try_without_throws/main.jrust
+FAILED  tests/conformance/L1/neg_unknown_method/main.jrust
+FAILED  tests/conformance/L1/neg_unknown_type/main.jrust
 FAILED  tests/conformance/L1/neg_wildcard/main.jrust
 90af702cdef9cfeaca8ef725e52ad08ae155aff6cf529a23159d6338ab95b016  tests/conformance/L1/ok_assert/main.jrust
 753cdf446be101719360a871884d1e6e67cb672e230e57b4617de2c619f92775  tests/conformance/L1/ok_async/main.jrust
@@ -63,7 +66,7 @@ a97ebda62c5f8cfe8f8a460dc6ae1a246e2ef3a3cff29134ae25f33ee3567570  tests/conforma
 9366eac84ead848fccba1bbaf24d307f2f7a73fa34de9736a63cb40602d50c5f  tests/conformance/L1/ok_borrow_string/main.jrust
 ffbb02dc70b030dec830be4f6714260648c4b120d1c2d15570a6820adb4e8a51  tests/conformance/L1/ok_cfor/main.jrust
 d7605c10a5d8c25a2bd9c6bff1fec448fd24b372a0ef39cc3be163c788651601  tests/conformance/L1/ok_closure_capture/main.jrust
-7a085dea249d4f8db718cf907896f858f314a947e6f5afebffc904bed7e0c8a5  tests/conformance/L1/ok_closure_transpile/main.jrust
+d49e458a9e1f62d6e0a84d5fd10507b15dc75b1c604bf16d100ada0583916f76  tests/conformance/L1/ok_closure_transpile/main.jrust
 89157eaf503ba52f11f8cb39db9353cc473a541cb7257a93a2cc41c5a06c94e2  tests/conformance/L1/ok_concat/main.jrust
 a86e1a9e6b6fcfccb24188fe3c2d36fcce50b60d2bbc173df7396b6952ea1929  tests/conformance/L1/ok_const/main.jrust
 376c71aaacf2c581b12e2a2fd018e510a75ea920d9d61d1a2d83b9b174b5f94a  tests/conformance/L1/ok_custom_exception/main.jrust

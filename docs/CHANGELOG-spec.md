@@ -637,3 +637,36 @@ V2 类型信息层（cairn §14）的阶段 A，硬门槛是**产物逐字节不
   rustc 1.85.0 基线通过。
 - **零漂移证据**：替换 `TypeEnv` 后立即跑 `snapshot.sh --check`，107 项全等；
   加作用域后再次校验，仍全等（说明现有夹具没有踩到遮蔽 bug，该 bug 只在新夹具里暴露）。
+
+## v1.41 — 2026-11-27
+
+### 阶段 B：名称解析 + 低码检查（JR6001 / JR6004 / JR6009 / JR6102）
+
+V2 类型信息层（cairn §14）的阶段 B：让 `.jrust` 的「未知名字」在 `jrust check`
+就能报出，而不是等到 rustc。
+
+- **JR6001 未知类型名**（error）：`var x = 1;`、`Intger x = 1;` 这类此前静默透传的写法，
+  现在在类型位置被拦下。判据分两档：
+  - 能确定是错的（`var` 违反 JR-T7；或能找到拼写相近的已声明类型，Levenshtein ≤ 2）→ **error**，
+    提示里直接给出「是不是 `Integer`？」；
+  - 纯未知、找不到相近名 → **JR6102 warning**（不阻断）。理由：jrust 看不到外部 crate 源码，
+    武断判错会误伤合法程序（与 JR-O6「无法判定时给 warning」同一原则）。
+- **JR6004 未知方法**（error）：接收者类型能在本工程解析到、且该类型（含实现的接口、
+  `extends` 链）确实没有这个方法时报错，并给拼写建议。**边界严格**：
+  内置类型（`String`/`List`/`Map`/`Set`/标量）放行（Java 方法名与 Rust 不同名，
+  jrust 目前原样透传，留给阶段 D 的白名单）；外部 crate 类型放行；泛型参数放行；`raw` 内不查。
+- **JR6009 条件必须 bool**（error）：`if (n)` / `while (n)` 里 `n` 是数值时报错。
+  Java 与 Rust 在这点一致，不会拒绝任何合法 Java 写法，只把 rustc 的 E0308 提前。
+- **顺带修的真 bug（接口标量形参）**：`(Some(pt), Some(mode))` 分支漏了 `effective_mode`，
+  导致接口方法收 Copy 标量形参时实参被加 `&`——`f.call(&n)` 对 `x: i32` 报 E0308。
+  修法：该分支补 `self.effective_mode(mode, pt)`，Copy 标量恒为 `Value`。
+  这个 bug 是 `ok_closure_transpile` 夹具暴露的：它此前**省掉了 `Util` 类声明**，
+  靠 rustc 兜底、形态断言照样通过，等于夹具本身是残的（JR6001 上线后立刻暴露）。
+- **新增负向夹具** `neg_unknown_type`（`var`）/ `neg_unknown_method`（拼错方法名）/
+  `neg_cond_not_bool`（`if (int)`），L1 145 → **148**。
+- **误报控制是这一版的主要工作量**：`JR6001` 首次接入时把 `ok_closure_transpile` /
+  `ok_ext_unknown` 两个夹具判错（前者缺类声明、后者故意用未声明类型模拟外部 crate），
+  `JR6009` 首次接入把 `if (flag)` 判错（`bool` 未排除）。三处都通过快照
+  `--check` 与 `l1_cases.sh` 抓出来，逐条修判据而不是放宽检查。
+- 验收：`./verify.sh` 十步全绿（L1 148、快照 111 项零漂移）；覆盖率盘点 53/53；
+  rustc 1.85.0 基线通过。

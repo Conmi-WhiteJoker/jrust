@@ -257,6 +257,10 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 
 - 单文件与多文件两种模式：单文件一个 `.jrust` 对应一个 crate 根；多文件用 `package a.b;` 生成模块树（`jrust build <目录>`）。没有包管理与依赖解析——外部 crate 必须在最近的 `Cargo.toml` 里声明（缺失报 `JR5001`），jrust 从不生成或改写 `Cargo.toml`。
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
+- **名称与类型检查**（v1.41 起，`jrust check` 就会报）：未知类型名（含 `var`，报 `JR6001`；
+  找不到相近拼写时降级为 `JR6102` warning）、未知方法（`JR6004`，仅限接收者类型在本工程有源码时）、
+  条件必须 `boolean`（`JR6009`）。内置类型的方法名（`String` / `List` / `Map` / `Set`）仍是
+  原样透传，由 `jrust verify` 暴露——Java 与 Rust 方法名不同，白名单留待后续阶段。
 - 不支持实例字段初始化（`static final` 常量除外）、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
 - `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 不支持（解析期报 `JR3031`，提示用 `?` 传播、清理交给 `Drop`）。

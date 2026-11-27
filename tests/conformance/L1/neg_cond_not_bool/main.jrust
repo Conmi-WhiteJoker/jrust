@@ -1,0 +1,9 @@
+// 条件必须 bool（阶段 B / JR6009）：`if (int)` 在 Java 与 Rust 里都非法。
+public class Main {
+    public static void main(String[] args) {
+        int n = 1;
+        if (n) {
+            println("x");
+        }
+    }
+}

@@ -1,0 +1,7 @@
+// 未知类型名（阶段 B / JR6001）：`var` 不支持、拼错类型名报错。
+public class Main {
+    public static void main(String[] args) {
+        var x = 1;
+        println(x);
+    }
+}

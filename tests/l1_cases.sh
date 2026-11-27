@@ -1071,6 +1071,10 @@ run_neg neg_raw_nested JR3027 "不能嵌套" 4
 run_neg neg_mutable_set JR3028 "只适用于 List" 6
 # v1.37 定案：try/catch/finally 永久不支持，解析期用 JR3031 给出替代方案。
 run_neg neg_try JR3031 "不支持 try / catch / finally" 3
+# 阶段 B / 名称解析：未知类型名（var 与拼错）、未知方法、非 bool 条件。
+run_neg neg_unknown_type JR6001 "声明处必须写全类型" 4
+run_neg neg_unknown_method JR6004 "没有方法" 11
+run_neg neg_cond_not_bool JR6009 "不是 \`boolean\`" 5
 run_neg neg_return_this JR4003 "静态工厂" 11
 run_neg neg_conflict JR4001 "所有权已经移走" 18
 run_neg neg_borrow_field JR3011 "无法统一" 18

@@ -1,3 +1,21 @@
+// 闭包作为方法实参的转译形态（闭包体只支持单表达式，无函数类型声明）。
+//
+// 这个夹具的定位是「只校验产物写法」，不要求产物能被 rustc 完整编译：
+// 闭包不能当接口实现用（没有 `impl Func for closure`），README 已把
+// 「闭包只能作为方法实参出现，没有函数类型」列为边界。
+//
+// 但 `Util` / `Func` 必须是**真实声明**的——早期版本省掉类声明，靠 rustc
+// 兜底，形态断言照样通过，等于夹具本身是残的（类型检查 JR6001 上线后暴露）。
+public interface Func {
+    int call(int x);
+}
+
+public class Util {
+    public int apply(int n, Func f) {
+        return f.call(n);
+    }
+}
+
 public class Main {
     public static void main(String[] args) {
         Util u = new Util();
