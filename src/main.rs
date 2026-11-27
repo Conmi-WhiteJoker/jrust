@@ -128,7 +128,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "version" | "-V" | "--version" => {
-            println!("jrust {}", env!("CARGO_PKG_VERSION"));
+            println!("jrust {} (spec {})", env!("CARGO_PKG_VERSION"), SPEC_VERSION);
             ExitCode::SUCCESS
         }
         other => {
@@ -147,9 +147,12 @@ fn exit_code(ok: bool) -> ExitCode {
     }
 }
 
+/// 规范版本（JR-G11）：`--version` 与 usage 头同时报告实现版本与规范版本。
+const SPEC_VERSION: &str = "1.0";
+
 fn print_usage() {
     eprintln!(
-        "jrust {} —— Java 风格的 Rust 转译器（教学项目）
+        "jrust {} (spec {}) —— Java 风格的 Rust 转译器（教学项目）
 
 用法:
   jrust new <目录>                         新建项目（main.jrust + main.rs + Cargo.toml，可直接 cargo run）
@@ -169,7 +172,8 @@ fn print_usage() {
   - `verify <目录>` 会按最近的 Cargo.toml 重建最小 manifest 后整 crate 编译；
     不支持 build 脚本 / 本地 path 依赖 / workspace 依赖继承（会直接给出诊断）
   - 遇到 jrust 砍掉的 Java 特性时，会解释 Rust 为什么这么要求",
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        SPEC_VERSION
     );
 }
 

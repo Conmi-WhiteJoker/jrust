@@ -61,7 +61,12 @@ cargo build
 
 # move 的非法边界用例（每种都应报错并给出提示）
 ./tests/move_cases.sh
+
+# 版本：同时报告实现版本与规范版本（JR-G11）
+./target/debug/jrust --version
 ```
+
+CI：GitHub Actions 在 rustc `1.85.0`（基线）与最新 `stable` 上跑构建 + 单测，`stable` 上再跑九步全量验收（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)）。
 
 ## 解释执行与调试（方案 C）
 
@@ -253,7 +258,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - 一个文件里恰好有一个 `main`（含 `main` 的类只允许有 `main` 方法，以及 `static final` 常量）。
 - 不支持实例字段初始化（`static final` 常量除外）、多维数组与 `new T[]{...}` 字面量初始化；泛型支持类 / 方法 / 接口 / 枚举与 `<T extends A & B>` 上界（→ `T: A + B`，`impl` 位置补 `Clone`），`? extends` / `? super` 通配符报 `JR3010`。
 - `switch` 只接受 `enum` / `boolean` 条件；`int`、`String` 的 switch 会报 `JR3019` 并建议改 `if` 链（Rust 的 `match` 要求穷尽）。
-- `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 仍未实现。
+- `throws` 目前生成程序级 `JrustError`，每个异常名对应一个 `String` 载荷分支；`try / catch / finally` 不支持（解析期报 `JR3031`，提示用 `?` 传播、清理交给 `Drop`）。
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。

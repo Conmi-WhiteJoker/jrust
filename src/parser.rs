@@ -1318,9 +1318,10 @@ impl Parser {
             Tok::Kw(Kw::Switch) => self.parse_switch(line),
             Tok::Kw(Kw::Try) | Tok::Kw(Kw::Catch) | Tok::Kw(Kw::Finally) => {
                 self.diags.push(
-                    Diag::error(line, "jrust 不支持 try / catch / finally").with_hint(
-                        "Rust 没有异常：可能失败的操作返回 Result<T, E>，调用处用 `?` 向上传播；清理资源交给 Drop（析构）。",
-                    ),
+                    Diag::error_code(line, "JR3031", "jrust 不支持 try / catch / finally")
+                        .with_hint(
+                            "Rust 没有异常：可能失败的操作返回 Result<T, E>，调用处用 `?` 向上传播；清理资源交给 Drop（析构）。",
+                        ),
                 );
                 self.bump();
                 if self.check_punct("{") {

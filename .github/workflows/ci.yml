@@ -1,0 +1,33 @@
+name: ci
+
+# JR-G10：至少覆盖 rustc 基线（1.85）与最新 stable。
+# 基线只跑构建 + 单测（依赖体积小、耗时短）；stable 再跑九步全量验收。
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    name: rust ${{ matrix.rust }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.85.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: 构建 + 单元测试
+        run: |
+          cargo build --locked
+          cargo test --locked
+      - name: 安装 ab
+        if: matrix.rust == 'stable'
+        run: sudo apt-get update && sudo apt-get install -y apache2-utils
+      - name: 九步全量验收
+        if: matrix.rust == 'stable'
+        run: ./verify.sh

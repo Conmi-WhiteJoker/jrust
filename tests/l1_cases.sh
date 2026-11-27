@@ -72,8 +72,8 @@ run_neg() {
         fail=$((fail + 1))
         return
     fi
-    # 可选第 4 参数：断言行号，格式必须是 `:<行> - error[<码>]`。
-    if [ -n "$line" ] && ! grep -q ":$line - error\[$code\]" "$TMP/out"; then
+    # 可选第 4 参数：断言行号，格式必须是 `:<行>:0: error[<码>]`（JR-G7，v1 列号固定 0）。
+    if [ -n "$line" ] && ! grep -q ":$line:0: error\[$code\]" "$TMP/out"; then
         echo "FAIL $base：诊断行号不是 $line"
         cat "$TMP/out"
         fail=$((fail + 1))
@@ -1051,6 +1051,8 @@ run_neg neg_sync_target JR3026 "this.f" 5
 run_neg neg_labeled JR2004 "不支持带标签" 4
 run_neg neg_raw_nested JR3027 "不能嵌套" 4
 run_neg neg_mutable_set JR3028 "只适用于 List" 6
+# v1.37 定案：try/catch/finally 永久不支持，解析期用 JR3031 给出替代方案。
+run_neg neg_try JR3031 "不支持 try / catch / finally" 3
 run_neg neg_return_this JR4003 "静态工厂" 11
 run_neg neg_conflict JR4001 "所有权已经移走" 18
 run_neg neg_borrow_field JR3011 "无法统一" 18

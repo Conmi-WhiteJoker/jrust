@@ -60,20 +60,23 @@ impl Diag {
     }
 
     /// 渲染成终端可读的两行格式。
+    ///
+    /// 格式对齐 JR-G7：`<path>:<line>:<col>: error[<码>]: <消息>`；v1 只保证到行，
+    /// 列号固定为 `0`（v1.2 起才要求精确列）。
     pub fn render(&self, path: &str) -> String {
-        let (label, tag) = match self.level {
-            Level::Error => ("错误", "error"),
-            Level::Warning => ("警告", "warning"),
+        let tag = match self.level {
+            Level::Error => "error",
+            Level::Warning => "warning",
         };
         let mut s = match self.code {
             Some(code) => format!(
-                "{}: {}:{} - {}[{}]: {}",
-                label, path, self.line, tag, code, self.message
+                "{}:{}:0: {}[{}]: {}",
+                path, self.line, tag, code, self.message
             ),
-            None => format!("{}: {}:{} - {}", label, path, self.line, self.message),
+            None => format!("{}:{}:0: {}: {}", path, self.line, tag, self.message),
         };
         if let Some(h) = &self.hint {
-            s.push_str(&format!("\n  提示: {}", h));
+            s.push_str(&format!("\n提示: {}", h));
         }
         s
     }

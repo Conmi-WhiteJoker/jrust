@@ -1,0 +1,11 @@
+public class Main {
+    public static void main(String[] args) {
+        try {
+            println("a");
+        } catch (Exception e) {
+            println("b");
+        } finally {
+            println("c");
+        }
+    }
+}
