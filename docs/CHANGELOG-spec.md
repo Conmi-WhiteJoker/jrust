@@ -409,3 +409,42 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 `tests/interp_unsupported.txt` 移除 `ok_bool_switch` / `ok_enum_switch` /
 `ok_generic_iface_enum` 三条；解释/编译对拍由「L1 23 通过、清单跳过 13」变为
 **L1 26 通过、清单跳过 10**；`./verify.sh` 七步全绿（L1 仍 131 项）。
+
+## v1.30 — 2026-11-27
+
+### 解释器能力（批次 3：异常）
+
+- **`throw` / `?` 传播**：`Stmt::Throw` 求值异常表达式后变成运行时错误，沿调用链自然上抛；
+  `Expr::Try`（`e?`）成功时原样返回、失败时错误继续外传。v1 没有 try / catch / finally，
+  因此「未捕获异常」是解释执行的最终行为（错误信息含异常名与消息）。
+- **`类名.静态方法(...)`**：解释器新增静态调用分派（同名局部变量优先当对象），
+  例如 `Runner.run(1)`；此前只有在当前类里写裸 `run(1)` 才能命中静态方法。
+- 顺带收益：`ok_illegal_arg`（接口作类型）通过动态分派即可解释执行并与 `expected.txt`
+  一致，按清单机制一并移除。
+
+### 验收
+
+`tests/interp_unsupported.txt` 移除 `ok_throws` / `ok_custom_exception` / `ok_illegal_arg`
+三条；解释/编译对拍由「L1 26 通过、清单跳过 10」变为 **L1 29 通过、清单跳过 7**；
+`./verify.sh` 七步全绿（L1 仍 131 项）。
+
+## v1.31 — 2026-11-27
+
+### 示例补齐
+
+- 新增 `examples/ShapeSwitch`：带数据 enum + `switch`（绑定、guard、布尔 switch），
+  用于展示 `enum` / `switch`→`match` 的映射。
+- 新增 `examples/Exceptions`：`throws` + `?` 向上传播 + `throw new E("...")`，
+  注释里保留异常路径开关。
+- `verify.sh` 第 4 步与 `tests/interp_parity.sh` 的例程计数改为随目录增长
+  （对拍汇总改为动态统计，不再写死 13）；README 示例目录与映射表链接同步。
+
+### 解释器修复
+
+- `Shape.Empty` 出现在实参位置时走了 `eval_place_take` 的字段搬移分支，误报「未声明变量」；
+  在该分支同样先识别无数据枚举常量，交给普通求值。
+
+### 验收
+
+`./verify.sh` 七步全绿：examples **15 个**解释/编译对拍全部一致，L1 仍 131 项，
+解释对拍 L1 29 通过、清单跳过 7。

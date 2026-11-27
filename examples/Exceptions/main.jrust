@@ -1,0 +1,27 @@
+// 示例：throws + `?` 向上传播 + throw new E("...")
+// 打开文件末尾被注释的异常调用，可以看到运行时如何报告未捕获异常。
+public class AppError extends Exception {
+}
+
+public class Calc {
+    public int divide(int a, int b) throws AppError {
+        if (b == 0) {
+            throw new AppError("division by zero");
+        }
+        return a / b;
+    }
+
+    public int twice(int a, int b) throws AppError {
+        return this.divide(a, b)? * 2;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) throws AppError {
+        Calc c = new Calc();
+        println("{}", c.twice(14, 2)?);
+        println("{}", c.twice(9, 3)?);
+        // 异常路径：取消下面注释会把 AppError 一路抛到 main 之外
+        // println("{}", c.twice(1, 0)?);
+    }
+}

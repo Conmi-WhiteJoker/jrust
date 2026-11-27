@@ -698,13 +698,7 @@ impl<'a> Interp<'a> {
                 let f = self.exec_block(body)?;
                 Ok(f)
             }
-            Stmt::Throw { line, .. } => Err(RuntimeError::new(
-                *line,
-                "解释器暂不支持 throw / throws",
-            )
-            .with_hint(
-                "错误传播目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
-            )),
+            Stmt::Throw { expr, line } => Err(self.throw_error(expr, *line)?),
             Stmt::Raw { line, .. } => Err(RuntimeError::new(
                 *line,
                 "解释器无法执行 raw 块",
@@ -713,6 +707,31 @@ impl<'a> Interp<'a> {
                 "raw 是原样内联的 Rust 源码；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
             )),
         }
+    }
+
+    // ---------- 异常 ----------
+
+    /// `throw new E("msg")`：v1 没有 try / catch，异常只能一路向上传播（与 `?` 一致）。
+    /// 因此把 throw 表示成运行时错误，由调用链自然带回 `main`。
+    fn throw_error(&mut self, expr: &Expr, line: usize) -> Result<RuntimeError, RuntimeError> {
+        let hint = "v1 只支持 `throws` + `?` 向上传播，暂不支持 try / catch / finally。";
+        if let Expr::New { class, args, .. } = strip_paren(expr) {
+            let msg = match args.first() {
+                Some(a) => {
+                    let v = self.eval(a)?;
+                    Some(v.display())
+                }
+                None => None,
+            };
+            let mut text = format!("未捕获异常: {}", class);
+            if let Some(m) = msg {
+                text.push_str(": ");
+                text.push_str(&m);
+            }
+            return Ok(RuntimeError::new(line, text).with_hint(hint));
+        }
+        let v = self.eval(expr)?;
+        Ok(RuntimeError::new(line, format!("未捕获异常: {}", v.display())).with_hint(hint))
     }
 
     // ---------- switch / enum ----------
@@ -940,6 +959,15 @@ impl<'a> Interp<'a> {
         }
     }
 
+    fn var_exists(&self, name: &str) -> bool {
+        self.frames.last().is_some_and(|f| {
+            f.scopes
+                .iter()
+                .rev()
+                .any(|s| s.iter().any(|(n, _)| n == name))
+        })
+    }
+
     fn find_slot(&mut self, name: &str) -> Result<&mut Slot, RuntimeError> {
         let line = self.cur_line;
         if let Some(f) = self.frames.last_mut() {
@@ -1018,6 +1046,18 @@ impl<'a> Interp<'a> {
                 Ok(v)
             }
             Expr::Field(recv, name) => {
+                // `Shape.Empty` 是无数据枚举常量，不是字段访问：交给普通求值。
+                if let Expr::Ident(en) = strip_paren(recv) {
+                    if let Some(ed) = self.enums.get(en.as_str()) {
+                        if ed
+                            .variants
+                            .iter()
+                            .any(|v| &v.name == name && v.params.is_empty())
+                        {
+                            return self.eval(e);
+                        }
+                    }
+                }
                 let line = self.cur_line;
                 let rv = self.eval(recv)?;
                 match rv {
@@ -1211,12 +1251,8 @@ impl<'a> Interp<'a> {
             }
             // 解释器同步执行：`await e` 就是 `e`（JR-C10）。
             Expr::Await(inner) => self.eval(inner),
-            Expr::Try(_) => {
-                let line = self.cur_line;
-                Err(RuntimeError::new(line, "解释器暂不支持 `?` 传播").with_hint(
-                    "throws / `?` 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
-                ))
-            }
+            // `?` 在解释器里就是「异常继续向上抛」：成功时原样返回，失败时错误自然外传。
+            Expr::Try(inner) => self.eval(inner),
             Expr::Raw { line, .. } => Err(RuntimeError::new(*line, "解释器无法执行 raw 块")
                 .with_hint(
                     "raw 是原样内联的 Rust 源码；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
@@ -1578,6 +1614,22 @@ impl<'a> Interp<'a> {
             if let Expr::Ident(en) = strip_paren(recv_expr) {
                 if self.enums.contains_key(en.as_str()) {
                     return self.eval_enum_variant(en, name, args);
+                }
+            }
+        }
+        // `Runner.run(1)`：类名作接收者 → 静态方法调用（同名局部变量优先当对象）。
+        if let Some(recv_expr) = recv {
+            if let Expr::Ident(cname) = strip_paren(recv_expr) {
+                if !self.var_exists(cname) {
+                    if let Some(decl) = self.classes.get(cname.as_str()).copied() {
+                        if let Some(m) =
+                            decl.methods.iter().find(|m| m.name == name && m.is_static)
+                        {
+                            let argv = self.eval_args(args)?;
+                            self.check_arity(name, m.params.len(), argv.len(), line)?;
+                            return self.call_method(cname, m, None, argv);
+                        }
+                    }
                 }
             }
         }

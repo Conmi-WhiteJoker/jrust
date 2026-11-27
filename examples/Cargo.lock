@@ -14,6 +14,10 @@ name = "classinterface"
 version = "0.1.0"
 
 [[package]]
+name = "exceptions"
+version = "0.1.0"
+
+[[package]]
 name = "generics"
 version = "0.1.0"
 
@@ -71,6 +75,10 @@ dependencies = [
 
 [[package]]
 name = "rusttypes"
+version = "0.1.0"
+
+[[package]]
+name = "shapeswitch"
 version = "0.1.0"
 
 [[package]]

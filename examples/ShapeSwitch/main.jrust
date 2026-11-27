@@ -1,0 +1,48 @@
+// 示例：带数据 enum + switch → match（绑定 / guard / 布尔 switch）
+public enum Shape {
+    Circle(double r),
+    Rect(double w, double h),
+    Empty
+}
+
+public class Printer {
+    public void show(Shape s) {
+        switch (s) {
+            case Circle(double r):
+                println("circle r={} area={}", r, 3.14159 * r * r);
+                break;
+            case Rect(double w, double h) if w > h:
+                println("wide rect {}x{}", w, h);
+                break;
+            case Rect(double w, double h):
+                println("tall rect {}x{}", w, h);
+                break;
+            case Empty:
+                println("empty");
+                break;
+        }
+    }
+
+    public void flag(boolean ok) {
+        switch (ok) {
+            case true:
+                println("flag = true");
+                break;
+            case false:
+                println("flag = false");
+                break;
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Printer p = new Printer();
+        p.show(Shape.Circle(2.0));
+        p.show(Shape.Rect(5.0, 2.0));
+        p.show(Shape.Rect(2.0, 5.0));
+        p.show(Shape.Empty);
+        p.flag(true);
+        p.flag(false);
+    }
+}

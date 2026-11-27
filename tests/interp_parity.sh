@@ -22,6 +22,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 fail=0
 skip=0
+ex_pass=0
 for f in examples/*/main.jrust; do
     base=$(basename "$(dirname "$f")")
     if ! ./target/debug/jrust run "$f" >"$tmp/${base}.interp" 2>"$tmp/${base}.interp.err"; then
@@ -35,6 +36,7 @@ for f in examples/*/main.jrust; do
     "examples/target/debug/$bin" >"$tmp/${base}.rust" 2>/dev/null
     if diff -u "$tmp/${base}.interp" "$tmp/${base}.rust" >"$tmp/${base}.diff"; then
         echo "PASS $base"
+        ex_pass=$((ex_pass + 1))
     else
         echo "FAIL $base: 解释执行与编译执行输出不一致"
         cat "$tmp/${base}.diff"
@@ -72,4 +74,4 @@ if [ "$fail" -ne 0 ]; then
     echo "对拍失败。"
     exit 1
 fi
-echo "全部通过：解释执行与编译执行输出一致（examples 13 个 + L1 $l1_pass 个，清单跳过 $skip 个）。"
+echo "全部通过：解释执行与编译执行输出一致（examples $ex_pass 个 + L1 $l1_pass 个，清单跳过 $skip 个）。"

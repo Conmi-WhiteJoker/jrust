@@ -36,7 +36,7 @@ cargo build
 # 多文件工程：按 package 生成模块树（目录下的 *.jrust 一起构建）
 ./target/debug/jrust build tests/multifile
 
-# 端到端验证（七步）：cargo test → 转译 13 个例程 → cargo build →
+# 端到端验证（七步）：cargo test → 转译 15 个例程 → cargo build →
 # l1_cases → move_cases → 解释/编译对拍
 ./verify.sh
 
@@ -94,10 +94,10 @@ cargo build
 解释器与转译器语义一致：普通赋值复制一份（对象、列表、Map 递归复制），源变量仍可用；
 只有显式 `move` 才转移所有权，之后再看原变量会得到「使用已移动的值」运行时错误。
 
-`tests/interp_parity.sh` 对 13 个示例、以及 L1 里解释器支持的正向夹具（当前 26 个），
+`tests/interp_parity.sh` 对 15 个示例、以及 L1 里解释器支持的正向夹具（当前 29 个），
 比较 `jrust run` 与「转译 + 跑二进制 / expected.txt」的 stdout，要求逐字节一致。
-解释器暂不支持的字形列在 `tests/interp_unsupported.txt`（raw、`?` 传播、
-`@ref` 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
+解释器暂不支持的字形列在 `tests/interp_unsupported.txt`（raw、`@ref`、
+接口默认方法、类内 const 等），清单外的用例一旦跑不动即判失败——避免「解释器回归」被当成
 「不支持」静默跳过；反过来，清单里的用例哪天能跑了会提示把它移除。
 
 ## 设计原则
@@ -158,10 +158,10 @@ cargo build
 | 接口默认方法 / `static` 方法 | trait 默认实现 / 自由函数 `Iface_method(...)` | 带方法体即默认方法（`default` 可省）；`Iface.method()` 调用生成 `Iface_method()`（Rust 不允许 `Trait::f()`，E0790）；`static` 接口方法必须有方法体，否则 `JR3024` | [L1 用例](tests/conformance/L1/ok_iface_default/main.jrust) |
 | `enum Maybe<T> { Some(T value), None }` | `pub enum Maybe<T> { Some(T), None }` | 泛型枚举；`Maybe.Some("hi")` 按左侧 `Maybe<String>` 替换实参 | [L1 用例](tests/conformance/L1/ok_generic_iface_enum/main.jrust) |
 | `class Holder<T extends Named & Sizer> { ... }` | `pub struct Holder<T>` + `impl<T: Named + Sizer + Clone> Holder<T>` | 上界按 `&` 拆成 `+`；声明位置不带界，`impl` / 方法位置尾随 `Clone`（值语义需要）；`? extends` / `? super` 报 `JR3010` | [L1 用例](tests/conformance/L1/ok_generic_bounds/main.jrust) |
-| `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [L1 用例](tests/conformance/L1/ok_enum_switch/main.jrust) |
+| `switch` | `match` | 仅支持 `enum` 与 `boolean`；必须穷尽（或写 `default:`）；case 块必须以 `break;` 结束，否则报 `JR3020` | [ShapeSwitch](examples/ShapeSwitch/main.jrust) |
 | `break;` / `continue;` | `break;` / `continue;` | 只支持无标签形式；`outer:` / `break outer;` / `continue outer;` 报 `JR2004` | [负向用例](tests/conformance/L1/neg_labeled/main.jrust) |
-| `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [L1 用例](tests/conformance/L1/ok_enum_switch/main.jrust) |
-| `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [L1 用例](tests/conformance/L1/ok_throws/main.jrust) |
+| `enum Shape { Circle(double r), Empty }` | `pub enum Shape { Circle(f64), Empty }` | 带数据枚举；`Shape.Circle(2.0)` → `Shape::Circle(2.0)` | [ShapeSwitch](examples/ShapeSwitch/main.jrust) |
+| `throws A, B` + `f()?` + `throw new A("x")` | `Result<T, JrustError>` + `?` + `return Err(...)` | 单文件模式共用程序级 `JrustError`；`?` 只能出现在 throws 方法内（`JR3018`），非 throws 方法的 `throw` 报 `JR3021` | [Exceptions](examples/Exceptions/main.jrust) |
 | `class X extends Exception` / `throw new IllegalArgumentException("…")` | `struct X` + `impl Error`；`panic!` | 自定义异常自动生成 `Display` / `Error` / `From<X> for JrustError`；`IllegalArgumentException` 视为编程错误直接 panic | [自定义异常](tests/conformance/L1/ok_custom_exception/main.jrust) · [IAE](tests/conformance/L1/ok_illegal_arg/main.jrust) |
 | `(a, b) -> a + b` / `x -> x * 2` | `|a, b| a + b` / `|x| x * 2` | 闭包体只支持单个表达式；当前类型系统没有函数类型，作为实参转译、暂不可独立存放 | [L1 用例](tests/conformance/L1/ok_closure_transpile/main.jrust) |
 | `System.out.println(a + "x" + b)` | `println!("{}x{}", a, b)` | 自动拆成格式串 | [PrintShort](examples/PrintShort/main.jrust) |
@@ -257,7 +257,7 @@ public void fill(@mut List<Integer> xs) { ... }  // 固定 &mut Vec<i32>
 - 闭包只能作为方法实参出现；没有函数类型声明，也没有 `List` 的高阶方法。
 - `T?` 只支持声明 / 赋值 / `== null`、`!= null` 判空 / 显式解包；没有 `if let` 语法糖，直接对 `T?` 调方法或打印会报 `JR3006` 或「不能直接打印可空类型」。
 - C 风格 `for` 只支持同一 `int`/`long` 计数变量的初始化 + `<` / `<=` / `>` / `>=` + `i++` / `i--` / `i += 1` / `i -= 1`；`i += 2`、多变量初始化、方向不一致等报 `JR2003` 并提示改 `while`，`++` / `--` 作为独立语句仍不支持。
-- 解释器（`jrust run`）暂不支持 throws / raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
+- 解释器（`jrust run`）支持 `throws` + `?` 的向上传播（throw 直接终止并报「未捕获异常」），但暂不支持 try / catch / finally 与 raw；闭包仅支持迭代器链里的内联写法（`map` / `filter` 的 `x -> ...`），不能当值传递。这些特性走 `jrust build` + cargo 验证。
 - `raw` 块内 rustc 错误可由 `jrust verify` 映射回 `.jrust` 行列（`JR-X2`），并附「raw 块内第 k 行 → 原 .jrust 第 n 行」；`raw` 不能嵌套（`JR3027`）。
 - `Map` 只支持 `put` / `get` / `getOrNull` / `size` / `containsKey` / `isEmpty`，不支持 `entrySet` 遍历与 `remove`；`get` 的返回值需要 `Clone`（标量、`String` 可用）。
 - 迭代器链只支持 `stream` / `map` / `filter` / `collectList`；元素必须可 `Clone`（`Box<dyn Trait>` 元素不可），`map` 改变元素类型时 `collectList` 仍按基座类型推断。
@@ -277,11 +277,12 @@ src/codegen.rs  AST → Rust 源码（含 println 格式串展开、mut/Box 推�
 src/interp.rs   树遍历解释器（run / debug 共用，赋值复制 + 显式 move）
 src/debug.rs    命令行调试器 + DAP 适配器
 src/json.rs     零依赖 JSON（只服务 DAP）
-examples/       13 个独立 cargo 工程（examples/Cargo.toml 是 workspace，共享 target/）：
+examples/       15 个独立 cargo 工程（examples/Cargo.toml 是 workspace，共享 target/）：
                 每个目录 = main.jrust + 生成的 main.rs + Cargo.toml，可单独 `cargo run -p <小写目录名>`；
                 HelloWorld、ClassInterface、PolymorphicList、Ownership、MoveEdges、
                 PrintShort、RustTypes、MapDemo、VecImport、Nullable、Generics、
-                SharedState、AsyncMain（唯一带 tokio 依赖）
+                SharedState、AsyncMain（唯一带 tokio 依赖）、ShapeSwitch（enum + switch）、
+                Exceptions（throws + `?`）
 tests/          一致性用例（move 边界、解释/编译对拍、L1 语法、L2 多文件+外部 crate）+ verify 脚本
 tests/conformance/L1/  单文件夹具，全部目录式 `<case>/{main.jrust, expected.txt}`
                 （runner 仍兼容扁平 `<case>.jrust` 的历史写法，见 tests/l1_cases.sh 的 case_paths）

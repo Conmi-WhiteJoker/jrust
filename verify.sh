@@ -14,7 +14,7 @@ for f in examples/*/main.jrust; do
     ./target/debug/jrust build "$f"
 done
 
-echo "== 4/7 cargo build 验证生成的 Rust（examples 是 workspace，13 个例程各为独立 crate） =="
+echo "== 4/7 cargo build 验证生成的 Rust（examples 是 workspace，15 个例程各为独立 crate） =="
 cargo build --quiet --manifest-path examples/Cargo.toml --workspace
 
 echo "== 5/7 L1 一致性用例（throws / switch / enum / 闭包 / T? / for / new T[n] / 字符串 + / 泛型类·方法·接口·枚举·上界）=="

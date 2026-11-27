@@ -12,10 +12,7 @@
 ok_borrow_list         # @ref / 借用语义（使用已移动的值）
 ok_borrow_param        # @ref / 借用语义（使用已移动的值）
 ok_const               # 类内 const 常量
-ok_custom_exception     # 异常 `?` 传播
 ok_iface_default       # 接口默认方法
-ok_illegal_arg         # 接口作类型（Box<dyn>）
 ok_override_ref        # @ref 覆盖 + 借用语义
 ok_raw                 # raw 块
 ok_raw_multiline       # raw 块
-ok_throws              # 异常 `?` 传播
