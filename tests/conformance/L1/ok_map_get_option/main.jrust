@@ -1,0 +1,43 @@
+/// 2.0 语义（SPEC-v2 §3-1）：`map.get(k)` 返回 `V?`（→ `Option<V>`），
+/// 键缺失得到 null，**不再 panic**。与 `getOrNull` 完全等价。
+public class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        m.put("a", 1);
+        m.put("b", 2);
+
+        // 键存在：get 拿到 Some(1)
+        Integer? hit = m.get("a");
+        if (hit != null) {
+            int v = hit;
+            println(v);
+        } else {
+            println(-1);
+        }
+
+        // 键缺失：get 拿到 null（v1 会 panic，2.0 不会）
+        Integer? miss = m.get("zzz");
+        if (miss != null) {
+            int v = miss;
+            println(v);
+        } else {
+            println(-1);
+        }
+
+        // get 与 getOrNull 产物与行为完全一致
+        Integer? viaOrNull = m.getOrNull("b");
+        if (viaOrNull != null) {
+            int v = viaOrNull;
+            println(v);
+        }
+
+        // String 值同样返回 V?
+        Map<String, String> names = new HashMap<>();
+        names.put("k", "v");
+        String? s = names.get("k");
+        if (s != null) {
+            String got = s;
+            println(got);
+        }
+    }
+}

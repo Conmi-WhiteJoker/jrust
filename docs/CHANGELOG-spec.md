@@ -839,3 +839,38 @@ V2 类型信息层（cairn §14）的阶段 E。**范围比设计稿小**，理�
 - **SPEC-v2 状态同步**：`JR-V4` 🚧 → ✅（机制已落地）；§3-1 标注「双轨第一步已落地」；
   `V2-A5` 标注「机制 ✅，2.0 的语义切换待做」。**§3-1 的现状列保持 🚧**——
   2.0 语义尚未切换，按 JR-V7 不得标 ✅。
+
+## v1.48 — 2026-11-27
+
+### 2.0 破坏性变更落地：`map.get(k)` 改为返回 `Option<V>`（不再 panic）
+
+SPEC-v2 §3-1 是 2.0 唯一的破坏性变更。v1.47 完成了双轨期（`JR9001` 警告），
+本版**完成语义切换并删除旧行为**。
+
+- **三处同步切换**（缺一处就会出现「文档写 None、实现仍 panic」）：
+  1. `codegen` 的 `get` 分支：`.get(&k).cloned().unwrap()` → **`.get(&k).cloned()`**，
+     同时删除 `JR9001` 警告（双轨期结束）；
+  2. `infer_type`：`Map.get` 的返回类型由 `V` 改为 **`Nullable(V)`**（`Option<V>`）；
+  3. 解释器 `Map.get`：由「键缺失返回 RuntimeError」改为 **返回 `Value::Option(None)`**。
+- **`get` 与 `getOrNull` 现在完全等价**（产物都是 `get(&k).cloned()`）。`getOrNull`
+  保留为显式别名——它已经写在用户代码里，删掉会造成不必要的迁移。
+- **顺带修两处因切换暴露的生成缺陷**：
+  - `needs_owned_landing` 原来对**所有** `name == "get"` 的调用返回 true（为 `List.get(i)`
+    的下标访问设计）。`Map.get` 现在返回 owned `Option`，被误判成借用位置后生成
+    `Option<T>.to_string()`（E0599）。改为只认「接收者是 List / 数组」且「结果不是 Nullable」。
+  - `clone_if_needed` 里有一份重复的 `name == "get"` 判断，同样误判。改为复用
+    `needs_owned_landing`，消除两份逻辑不同步的可能。
+- **夹具迁移**：
+  - `examples/MapDemo`：5 处 `get` 全部改为先判空再取值（旧写法 `println(ages.get("alice"))`
+    现在会报「不能直接打印可空类型」——这正是破坏性变更对用户的可见影响）；
+  - `ok_map_get_deprecated` → **`ok_map_get_option`**：断言 `get`/`getOrNull` 产物一致
+    且**不含** `.unwrap()`；L1 168 → **173**；
+  - `tests/l4/src/app/store.jrust`：`return this.config.get(key);` 改为显式
+    `String? found = ...; return found;`，让「缺键 panic → 500」的意图（JR-G13 失败路径）
+    写在代码里而不是依赖隐式解包。
+- **产物变更（已在 SPEC-v2 §3 备案，不违反 JR-V5）**：`MapDemo`、`ok_generic`、
+  `ok_generic_bounds`、`tests/l4` 四项产物更新。其中 `ok_generic` 的
+  `b.get().to_string()` → `b.get()` 是**改进**（`Box<T>.get()` 返回 `String`，
+  旧产物多了一次无意义的 `to_string`，能编译但冗余）。
+- 验收：`./verify.sh` 十步全绿（L1 173、解释对拍 15 + 38、快照 117 项、L4 失败路径不变）；
+  `cargo test` 13 项；rustc 1.85.0 基线通过。

@@ -23,7 +23,10 @@ public class Store {
         this.config.put(key, value);
     }
 
+    /// 2.0 起 `Map.get` 返回 `V?`；本服务故意让缺键 panic（L4 的 JR-G13 失败路径
+    /// 要求「键缺失 → 500」），所以这里显式解包而不是依赖隐式转换。
     public String get(String key) {
-        return this.config.get(key);
+        String? found = this.config.get(key);
+        return found;
     }
 }

@@ -1,4 +1,7 @@
 // 示例 9：Map<K, V> → HashMap<K, V>
+//
+// 2.0 起 `map.get(k)` 返回 `V?`（→ Option<V>）：键缺失得到 null，**不再 panic**。
+// 旧写法 `println(ages.get("alice"))` 现在要判空——这是 SPEC-v2 §3-1 的破坏性变更。
 import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
@@ -11,33 +14,55 @@ public class MapDemo {
         ages.put("alice", 30);
         ages.put("bob", 25);
         println("size={}", ages.size());
-        println("alice={}", ages.get("alice"));
+
+        // get 返回 V?：先判空再取值（键缺失时为 null，不 panic）
+        Integer? alice = ages.get("alice");
+        if (alice != null) {
+            int v = alice;
+            println("alice={}", v);
+        } else {
+            println("alice=missing");
+        }
         println("has carol={}", ages.containsKey("carol"));
 
         // 2) 重复 put 同一个键：值被覆盖，size 不变
         ages.put("bob", 26);
-        println("bob={} size={}", ages.get("bob"), ages.size());
+        Integer? bob = ages.get("bob");
+        if (bob != null) {
+            int v = bob;
+            println("bob={} size={}", v, ages.size());
+        }
 
         // 3) 空 Map 与 isEmpty；值类型可以是 double
         HashMap<String, Double> prices = new HashMap<>();
         println("empty={}", prices.isEmpty());
         prices.put("tea", 3.5);
-        println("tea={}", prices.get("tea"));
+        Double? tea = prices.get("tea");
+        if (tea != null) {
+            double v = tea;
+            println("tea={}", v);
+        }
 
         // 4) 键值类型也可以是标量
         HashMap<Integer, String> names = new HashMap<>();
         names.put(1, "one");
-        println("{} -> {}", 1, names.get(1));
+        String? one = names.get(1);
+        if (one != null) {
+            String v = one;
+            println("{} -> {}", 1, v);
+        }
 
-        // 5) 用 List 里的键查 Map：先 containsKey，避免 get 在缺键时 panic
+        // 5) 用 List 里的键查 Map：get 现在返回 V?，缺键得到 null 而不是 panic
         List<String> keys = new ArrayList<>();
         keys.add("alice");
         keys.add("bob");
         keys.add("carol");
         int total = 0;
         for (String k : keys) {
-            if (ages.containsKey(k)) {
-                total = total + ages.get(k);
+            Integer? got = ages.get(k);
+            if (got != null) {
+                int v = got;
+                total = total + v;
             }
         }
         println("total={}", total);

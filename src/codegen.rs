@@ -541,12 +541,35 @@ impl<'a> Codegen<'a> {
         if self.is_borrowed_place(e, env) {
             return true;
         }
-        matches!(
+        // 只针对 **List / 数组的 `get(i)`**：它在产物里是下标访问 `v[i]`，
+        // 产出的是 `T` 的借用位置，owned 上下文里直接赋值会 E0507。
+        //
+        // Map 的 `get(k)` 不适用：2.0 起它生成 `.get(&k).cloned()`，返回的已经是
+        // owned `Option<V>`，再做落地转换会得到 `Option<T>.to_string()` 这种坏代码。
+        if !matches!(
             strip_parens_expr(e),
             Expr::Call { recv: Some(_), name, .. } if name == "get"
-        ) && self
-            .infer_type(e, env)
-            .map_or(false, |t| !t.is_copy_scalar() && !matches!(t, Type::Void))
+        ) {
+            return false;
+        }
+        matches!(
+            self.infer_type(e, env),
+            Some(Type::List(_) | Type::Array(_))
+        ) || match self.infer_type(e, env) {
+            // List.get 的元素类型（`get` 在 List 上返回元素本身，不是 Option）。
+            Some(t) if !matches!(t, Type::Nullable(_)) => {
+                // 只有接收者是 List / 数组时才成立；用 recv 的类型再确认一次。
+                matches!(
+                    strip_parens_expr(e),
+                    Expr::Call { recv: Some(r), .. }
+                        if matches!(
+                            self.infer_type(r, env),
+                            Some(Type::List(_) | Type::Array(_))
+                        )
+                )
+            }
+            _ => false,
+        }
     }
 
     /// 变量 / 字段是「持有者」：按值语义需要补 `.clone()`。
@@ -567,11 +590,10 @@ impl<'a> Codegen<'a> {
         }
         // `list.get(i)` → `v[i]`：下标不能搬出 owned 值，按类型做落地转换。
         // 注意 `.clone()` 比 `.to_string()` 更通用，`owned_from_borrow` 已按类型分流。
+        // 复用 `needs_owned_landing` 而不是再写一遍 `name == "get"`——后者会把
+        // 2.0 的 `Map.get`（已返回 owned `Option<V>`）误判成借用位置。
         if !is_holder_expr(core) {
-            if matches!(
-                strip_parens_expr(core),
-                Expr::Call { recv: Some(_), name, .. } if name == "get"
-            ) {
+            if self.needs_owned_landing(core, env) {
                 return self.owned_from_borrow(s, ty);
             }
             return s;
@@ -4064,22 +4086,14 @@ impl<'a> Codegen<'a> {
                     if args.len() != 1 {
                         self.err("get 需要一个键", "例如 `m.get(\"a\")`。");
                     }
-                    // JR9001（双轨期第一步，SPEC-v2 §3-1）：`map.get(k)` 在 2.0 将改为返回
-                    // `Option<V>`（键缺失为 None，不再 panic）。当前语义仍是 `.unwrap()`，
-                    // **不提前切换**（JR-V7 禁止「文档写 None、实现仍 panic」的反向不一致，
-                    // 同样也禁止实现先跑）。
+                    // SPEC-v2 §3-1 / 2.0 语义：`map.get(k)` 返回 `Option<V>`
+                    // （键缺失为 `None`，**不再 panic**）。与 `getOrNull` 完全等价——
+                    // 2.0 起两者产物相同，`getOrNull` 保留为迁移期的显式别名。
                     //
-                    // 这里只发弃用警告，产物形态完全不变——双轨期的意义是给用户迁移时间，
-                    // 不是提前改变行为。2.0 才切换 `get` 语义并删除本分支。
-                    self.warn_code(
-                        "JR9001",
-                        "`map.get(k)` 将在 2.0 改为返回 `Option<V>`（键缺失为 `None`，不再 panic）",
-                        "迁移到 `getOrNull(k)`：它现在就是 `Option<V>` 语义（产物 `get(&k).cloned()`）。写成 `V? v = m.getOrNull(\"k\");`，2.0 之后两种写法等价。",
-                    );
+                    // 这是 2.0 唯一的破坏性变更（JR-V2）。双轨期（v1.47 的 JR9001 警告）
+                    // 已结束：旧行为 `.cloned().unwrap()` 已删除，`get` 不再 panic。
                     let k = self.gen_map_key(args.first(), k_ty, env);
-                    // Rust 的 get 返回 Option<&V>；键缺失时 Java 得到 null，jrust 没有 null，
-                    // 这里取拥有所有权的值，缺失即 panic（可用 containsKey 先判断）。
-                    return format!("{}.get({}).cloned().unwrap()", r, k);
+                    return format!("{}.get({}).cloned()", r, k);
                 }
                 "containsKey" => {
                     if args.len() != 1 {
@@ -4472,7 +4486,9 @@ impl<'a> Codegen<'a> {
                         Some(Type::List(inner) | Type::Array(inner)) => {
                             return Some((**inner).clone())
                         }
-                        Some(Type::Map(_, v)) => return Some((**v).clone()),
+                        // 2.0 语义（SPEC-v2 §3-1）：`Map.get` 返回 `Option<V>`，
+                        // 与 `getOrNull` 相同。列表的 `get` 仍是下标访问（越界 panic）。
+                        Some(Type::Map(_, v)) => return Some(Type::Nullable(v.clone())),
                         _ => {}
                     }
                 }

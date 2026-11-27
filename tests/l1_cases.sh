@@ -1063,7 +1063,14 @@ run_warn ok_ext_unknown 'w.write(&text)'
 # 阶段 E / Unknown 显式化：外部类型同时触发 JR6102（未知类型）与 JR4101（签名不可知）。
 run_warn ok_unknown_type 'w.write(&text)'
 # SPEC-v2 §3-1 / JR9001：`map.get` 双轨期——发弃用警告，产物仍是 `.unwrap()`。
-run_deprecated ok_map_get_deprecated JR9001 'm.get("a").cloned().unwrap()'  
+# SPEC-v2 §3-1 已切换（2.0）：`map.get` 返回 Option，不再 panic，也不再发 JR9001。
+# 断言产物里 get 与 getOrNull 完全一致（都是 `.cloned()`），且**没有** `.unwrap()`。
+run_build_has ok_map_get_option 'let hit: Option<i32> = m.get("a").cloned();'
+run_build_has ok_map_get_option 'let miss: Option<i32> = m.get("zzz").cloned();'
+run_build_has ok_map_get_option 'let viaOrNull: Option<i32> = m.get("b").cloned();'
+run_build_has ok_map_get_option 'let s: Option<String> = names.get("k").cloned();'
+run_build_lacks ok_map_get_option 'm.get("a").cloned().unwrap()'
+run_build_lacks ok_map_get_option 'names.get("k").cloned().unwrap()' 
 # 缺口 1：spawn 不能捕获 this（JR3023），替代路径是字段先复制到局部变量。
 run_build_has ok_spawn_this_copy 'let t: String = self.tag.clone();'
 run_build_has ok_spawn_this_copy 'let __jr_sp0_t = t.clone();'

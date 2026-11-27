@@ -1879,14 +1879,10 @@ impl<'a> Interp<'a> {
                             return Err(RuntimeError::new(line, "get 需要一个键"));
                         }
                         let k = self.eval(&args[0])?;
-                        match rc.borrow().get(&map_key(&k)) {
-                            Some(v) => Ok(v.clone()),
-                            None => Err(RuntimeError::new(
-                                line,
-                                format!("Map.get: 键 `{}` 不存在", k.display()),
-                            )
-                            .with_hint("先用 containsKey 判断；Rust 的 get 返回 Option，不会给 null。")),
-                        }
+                        // 2.0 语义（SPEC-v2 §3-1）：`Map.get` 返回 `Option<V>`，
+                        // 键缺失得到 `None`，**不再 panic**。与 `getOrNull` 完全等价。
+                        let found = rc.borrow().get(&map_key(&k)).cloned();
+                        Ok(Value::Option(found.map(Box::new)))
                     }
                     "getOrNull" => {
                         if args.len() != 1 {
