@@ -71,6 +71,13 @@ enum Value {
     Set(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<HashMap<String, Value>>>),
     Obj(Rc<RefCell<Instance>>),
+    /// 带数据枚举的值：`Shape.Circle(2.0)` / `Shape.Empty`。
+    Enum {
+        enum_name: String,
+        variant: String,
+        /// 分支数据，按 enum 声明顺序。
+        fields: Vec<Value>,
+    },
     /// `T?`：`Some(v)` / `None`，与 Rust 的 `Option<T>` 对齐。
     Option(Option<Box<Value>>),
     Unit,
@@ -98,6 +105,15 @@ fn deep_clone(v: &Value) -> Value {
         Value::Set(rc) => Value::Set(Rc::new(RefCell::new(
             rc.borrow().iter().map(deep_clone).collect(),
         ))),
+        Value::Enum {
+            enum_name,
+            variant,
+            fields,
+        } => Value::Enum {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+            fields: fields.iter().map(deep_clone).collect(),
+        },
         Value::Map(rc) => Value::Map(Rc::new(RefCell::new(
             rc.borrow()
                 .iter()
@@ -142,6 +158,7 @@ fn dynamic_type(v: &Value) -> Type {
         Value::Set(_) => Type::Set(Box::new(Type::Int)),
         Value::Map(_) => Type::Map(Box::new(Type::String), Box::new(Type::Int)),
         Value::Obj(obj) => Type::Named(obj.borrow().class.clone()),
+        Value::Enum { enum_name, .. } => Type::Named(enum_name.clone()),
         Value::Option(_) => Type::Nullable(Box::new(Type::Int)),
         Value::Unit => Type::Void,
     }
@@ -167,6 +184,7 @@ impl Value {
             Value::List(_) | Value::Set(_) | Value::Obj(_) | Value::Map(_) | Value::Option(_) => {
                 self.debug_repr()
             }
+            Value::Enum { .. } => self.debug_repr(),
             Value::Unit => "()".to_string(),
         }
     }
@@ -223,6 +241,16 @@ impl Value {
             }
             Value::Option(Some(v)) => format!("Some({})", v.debug_repr()),
             Value::Option(None) => "None".to_string(),
+            Value::Enum {
+                variant, fields, ..
+            } => {
+                if fields.is_empty() {
+                    variant.clone()
+                } else {
+                    let inner: Vec<String> = fields.iter().map(|v| v.debug_repr()).collect();
+                    format!("{}({})", variant, inner.join(", "))
+                }
+            }
         }
     }
 
@@ -237,6 +265,7 @@ impl Value {
             Value::Set(_) => "Set",
             Value::Map(_) => "Map",
             Value::Obj(obj) => return obj.borrow().class.clone(),
+            Value::Enum { enum_name, .. } => enum_name.as_str(),
             Value::Option(_) => "Option",
             Value::Unit => "void",
         }
@@ -324,6 +353,7 @@ pub struct VarView {
 pub struct Interp<'a> {
     prog: &'a Program,
     classes: HashMap<&'a str, &'a ClassDecl>,
+    enums: HashMap<&'a str, &'a EnumDecl>,
     frames: Vec<Frame>,
     pub debug: Option<Debugger>,
     steps: u64,
@@ -336,9 +366,14 @@ impl<'a> Interp<'a> {
         for c in &prog.classes {
             classes.insert(c.name.as_str(), c);
         }
+        let mut enums = HashMap::new();
+        for e in &prog.enums {
+            enums.insert(e.name.as_str(), e);
+        }
         Interp {
             prog,
             classes,
+            enums,
             frames: Vec::new(),
             debug: None,
             steps: 0,
@@ -647,13 +682,12 @@ impl<'a> Interp<'a> {
             }
             Stmt::Break { .. } => Ok(Flow::Break),
             Stmt::Continue { .. } => Ok(Flow::Continue),
-            Stmt::Switch { line, .. } => Err(RuntimeError::new(
-                *line,
-                "解释器暂不支持 switch / enum",
-            )
-            .with_hint(
-                "带数据 enum 与 switch→match 目前只在转译链路实现；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
-            )),
+            Stmt::Switch {
+                subject,
+                cases,
+                default,
+                line,
+            } => self.exec_switch(subject, cases, default, *line),
             // 解释器无并发：spawn 块同步执行一次（JR-C11）。
             Stmt::Spawn { body, .. } => {
                 let _ = self.exec_block(body)?;
@@ -679,6 +713,175 @@ impl<'a> Interp<'a> {
                 "raw 是原样内联的 Rust 源码；用 `jrust build` 生成 Rust 后交给 cargo 运行。",
             )),
         }
+    }
+
+    // ---------- switch / enum ----------
+
+    /// `switch` 按 Java 语义顺序匹配：首个命中且 guard 为真的 case 执行其分支体；
+    /// 分支体里的 `break` 只结束 switch，`return` / `continue` 继续向外传播。
+    fn exec_switch(
+        &mut self,
+        subject: &Expr,
+        cases: &[SwitchCase],
+        default: &Option<Vec<Stmt>>,
+        line: usize,
+    ) -> Result<Flow, RuntimeError> {
+        let subj = self.eval(subject)?;
+        for case in cases {
+            let mut bindings = Vec::new();
+            if !self.case_matches(case, &subj, &mut bindings, line)? {
+                continue;
+            }
+            if let Some(f) = self.frames.last_mut() {
+                f.scopes.push(bindings);
+            }
+            let guard = match &case.guard {
+                Some(g) => match self.eval(g) {
+                    Ok(v) => self.as_bool(&v),
+                    Err(e) => Err(e),
+                },
+                None => Ok(true),
+            };
+            let guard = match guard {
+                Ok(b) => b,
+                Err(e) => {
+                    self.pop_scope();
+                    return Err(e);
+                }
+            };
+            if !guard {
+                self.pop_scope();
+                continue;
+            }
+            let r = self.exec_block(&case.body);
+            self.pop_scope();
+            return match r? {
+                Flow::Normal | Flow::Break => Ok(Flow::Normal),
+                Flow::Return(v) => Ok(Flow::Return(v)),
+                Flow::Continue => Ok(Flow::Continue),
+            };
+        }
+        if let Some(body) = default {
+            return match self.exec_block(body)? {
+                Flow::Normal | Flow::Break => Ok(Flow::Normal),
+                Flow::Return(v) => Ok(Flow::Return(v)),
+                Flow::Continue => Ok(Flow::Continue),
+            };
+        }
+        Ok(Flow::Normal)
+    }
+
+    /// 判断 case 是否命中；`Variant` 命中时把分支数据按声明顺序绑定进 `bindings_out`。
+    fn case_matches(
+        &mut self,
+        case: &SwitchCase,
+        subj: &Value,
+        bindings_out: &mut Vec<(String, Slot)>,
+        line: usize,
+    ) -> Result<bool, RuntimeError> {
+        match &case.pattern {
+            CasePattern::Bool(b) => Ok(matches!(subj, Value::Bool(v) if v == b)),
+            CasePattern::Variant {
+                enum_name,
+                name,
+                bindings,
+            } => {
+                let Value::Enum {
+                    enum_name: en,
+                    variant,
+                    fields,
+                } = subj
+                else {
+                    return Ok(false);
+                };
+                if let Some(q) = enum_name {
+                    if q != en {
+                        return Ok(false);
+                    }
+                }
+                if variant != name {
+                    return Ok(false);
+                }
+                if bindings.len() != fields.len() {
+                    return Err(RuntimeError::new(
+                        line,
+                        format!(
+                            "分支 `{}` 需要 {} 个绑定，实际写了 {} 个",
+                            name,
+                            fields.len(),
+                            bindings.len()
+                        ),
+                    ));
+                }
+                let params = self
+                    .enums
+                    .get(en.as_str())
+                    .and_then(|ed| ed.variants.iter().find(|v| &v.name == name))
+                    .map(|v| v.params.clone())
+                    .unwrap_or_default();
+                for (i, b) in bindings.iter().enumerate() {
+                    let ty = params
+                        .get(i)
+                        .map(|p| p.ty.clone())
+                        .unwrap_or_else(|| dynamic_type(&fields[i]));
+                    bindings_out.push((
+                        b.clone(),
+                        Slot {
+                            value: fields[i].clone(),
+                            moved: false,
+                            ty,
+                        },
+                    ));
+                }
+                Ok(true)
+            }
+            CasePattern::Other(expr) => {
+                let v = self.eval(expr)?;
+                Ok(values_equal(subj, &v))
+            }
+        }
+    }
+
+    /// `Shape.Circle(2.0)` / `Shape.Empty` 构造枚举值。
+    fn eval_enum_variant(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        args: &[Expr],
+    ) -> Result<Value, RuntimeError> {
+        let line = self.cur_line;
+        let params = self
+            .enums
+            .get(enum_name)
+            .and_then(|ed| ed.variants.iter().find(|v| v.name == variant))
+            .map(|v| v.params.clone());
+        let params = match params {
+            Some(p) => p,
+            None => {
+                return Err(RuntimeError::new(
+                    line,
+                    format!("枚举 `{}` 没有分支 `{}`", enum_name, variant),
+                ))
+            }
+        };
+        let argv = self.eval_args(args)?;
+        if argv.len() != params.len() {
+            return Err(RuntimeError::new(
+                line,
+                format!(
+                    "枚举分支 `{}::{}` 需要 {} 个参数，实际给了 {} 个",
+                    enum_name,
+                    variant,
+                    params.len(),
+                    argv.len()
+                ),
+            ));
+        }
+        Ok(Value::Enum {
+            enum_name: enum_name.to_string(),
+            variant: variant.to_string(),
+            fields: argv,
+        })
     }
 
     // ---------- 变量 ----------
@@ -911,6 +1114,22 @@ impl<'a> Interp<'a> {
             Expr::Ident(name) => self.read_var(name),
             Expr::This(_) => self.read_this(),
             Expr::Field(recv, name) => {
+                // `Shape.Empty`：不带数据的枚举分支当常量用。
+                if let Expr::Ident(en) = strip_paren(recv) {
+                    if let Some(ed) = self.enums.get(en.as_str()) {
+                        if ed
+                            .variants
+                            .iter()
+                            .any(|v| &v.name == name && v.params.is_empty())
+                        {
+                            return Ok(Value::Enum {
+                                enum_name: en.clone(),
+                                variant: name.clone(),
+                                fields: Vec::new(),
+                            });
+                        }
+                    }
+                }
                 let v = self.eval(recv)?;
                 self.read_field(&v, name)
             }
@@ -1353,6 +1572,14 @@ impl<'a> Interp<'a> {
                 return Err(RuntimeError::new(line, format!("assert 失败: {}", msg)));
             }
             return Ok(Value::Unit);
+        }
+        // `Shape.Circle(2.0)`：枚举分支构造（在求值 recv 之前拦截，避免把类型名当变量）。
+        if let Some(recv_expr) = recv {
+            if let Expr::Ident(en) = strip_paren(recv_expr) {
+                if self.enums.contains_key(en.as_str()) {
+                    return self.eval_enum_variant(en, name, args);
+                }
+            }
         }
         if let Some(r) = recv {
             let rv = self.eval(r)?;
@@ -1805,6 +2032,23 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             (Some(p), Some(q)) => values_equal(p, q),
             _ => false,
         },
+        (
+            Value::Enum {
+                enum_name: en1,
+                variant: v1,
+                fields: f1,
+            },
+            Value::Enum {
+                enum_name: en2,
+                variant: v2,
+                fields: f2,
+            },
+        ) => {
+            en1 == en2
+                && v1 == v2
+                && f1.len() == f2.len()
+                && f1.iter().zip(f2.iter()).all(|(a, b)| values_equal(a, b))
+        }
         _ => false,
     }
 }

@@ -9,13 +9,10 @@
 # 不会被当成「不支持」静默跳过。
 
 # 缺少的具体能力见每行注释。
-ok_bool_switch         # 解释器暂不支持 switch / enum
 ok_borrow_list         # @ref / 借用语义（使用已移动的值）
 ok_borrow_param        # @ref / 借用语义（使用已移动的值）
 ok_const               # 类内 const 常量
 ok_custom_exception     # 异常 `?` 传播
-ok_enum_switch         # 带数据 enum + switch
-ok_generic_iface_enum  # 泛型接口 + 泛型 enum
 ok_iface_default       # 接口默认方法
 ok_illegal_arg         # 接口作类型（Box<dyn>）
 ok_override_ref        # @ref 覆盖 + 借用语义

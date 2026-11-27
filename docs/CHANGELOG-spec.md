@@ -389,3 +389,23 @@ L1 **129 通过 0 失败**，`./verify.sh` 七步全绿。
 `tests/interp_unsupported.txt` 移除 `ok_pick_lifetime` / `ok_iter_chain` / `ok_closure_capture` /
 `ok_set` / `ok_for_mutable` 五条；解释/编译对拍由「L1 18 通过、清单跳过 18」变为
 **L1 23 通过、清单跳过 13**；`./verify.sh` 七步全绿（L1 仍 131 项）。
+
+## v1.29 — 2026-11-26
+
+### 解释器能力（批次 2：switch / enum）
+
+- **带数据 enum**：新增 `Value::Enum { enum_name, variant, fields }`，支持
+  `Shape.Circle(2.0)` 构造与 `Shape.Empty` 无数据分支；`deep_clone` / `display` /
+  `debug_repr` / `type_name` / `values_equal` / `dynamic_type` 同步。
+- **switch → 解释执行**（对应 JR-E7 的 match 产物）：按 case 出现顺序匹配，
+  支持 `case true/false`、`case 变体(绑定)` / `case 枚举.变体(绑定)`、`if` guard、
+  `default`；绑定按 enum 声明顺序入作用域，guard 与分支体共见。
+  `break` 只结束 switch，`return` / `continue` 向外传播。
+- 顺带收益：`ok_generic_iface_enum`（泛型接口 + 泛型 enum + switch）也可解释执行并与
+  `expected.txt` 一致，按清单机制一并移除。
+
+### 验收
+
+`tests/interp_unsupported.txt` 移除 `ok_bool_switch` / `ok_enum_switch` /
+`ok_generic_iface_enum` 三条；解释/编译对拍由「L1 23 通过、清单跳过 13」变为
+**L1 26 通过、清单跳过 10**；`./verify.sh` 七步全绿（L1 仍 131 项）。
